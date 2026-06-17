@@ -1,0 +1,27 @@
+{
+  "book_id": "the-silver-gate",
+  "title": "The Silver Gate",
+  "author": "Sample Author",
+  "characters": [
+    {"id": "elara", "name": "Elara", "aliases": ["the mage"], "gender": "female", "age": "young", "importance": "primary", "description": "A young silver-haired mage in a travel-worn blue cloak.", "appearance_changes": []},
+    {"id": "garrick", "name": "Garrick", "aliases": [], "gender": "male", "age": "adult", "importance": "primary", "description": "A grizzled knight with a scarred jaw and dented steel pauldrons.", "appearance_changes": []},
+    {"id": "child", "name": "Pip", "aliases": ["the boy"], "gender": "male", "age": "child", "importance": "secondary", "description": "A small street urchin, all elbows and grin.", "appearance_changes": []}
+  ],
+  "scenes": [
+    {"id": "scene-0001", "chapter": 1, "title": "The Gate at Dusk", "location": "castle gate", "background_desc": "A weathered stone castle gate at dusk in heavy rain, torches guttering.", "reuse_background_of": null, "time_skip_before": false, "present_character_ids": ["elara", "garrick"],
+      "lines": [
+        {"character_id": "narrator", "text": "Rain hammered the old stones of the castle gate, and the torches guttered low.", "kind": "narration"},
+        {"character_id": "elara", "text": "We should not be here, Garrick. The wards still hold a grudge.", "kind": "dialogue"},
+        {"character_id": "garrick", "text": "Too late to turn back now. The gate already knows our names.", "kind": "dialogue"},
+        {"character_id": "elara", "text": "Then let us be quick, and quiet.", "kind": "dialogue"}
+      ]},
+    {"id": "scene-0002", "chapter": 1, "title": "The Inner Courtyard", "location": "inner courtyard", "background_desc": "A moonlit inner courtyard with a dry stone fountain.", "reuse_background_of": null, "time_skip_before": false, "present_character_ids": ["elara", "garrick", "child"],
+      "lines": [
+        {"character_id": "narrator", "text": "Beyond the gate, a small figure crouched beside a dry fountain.", "kind": "narration"},
+        {"character_id": "child", "text": "You're the mage! The real one! Can you do the light trick? Please?", "kind": "dialogue"},
+        {"character_id": "garrick", "text": "Quiet, boy. Half the keep can hear you.", "kind": "dialogue"},
+        {"character_id": "elara", "text": "It's alright. Watch closely, Pip.", "kind": "dialogue"},
+        {"character_id": "narrator", "text": "A pale spark bloomed above her palm, and for a moment the courtyard was full of stars.", "kind": "narration"}
+      ]}
+  ]
+}

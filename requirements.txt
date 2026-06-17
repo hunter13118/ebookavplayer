@@ -1,0 +1,8 @@
+# Visual Audiobook Engine — backend
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pydantic>=2.6
+python-multipart>=0.0.9
+edge-tts>=7.0          # Edge neural voices (copied pattern from parallel-reader)
+google-genai>=0.3      # Gemini mega-pass + image generation (host-side)
+beautifulsoup4>=4.12   # optional: robust EPUB HTML stripping

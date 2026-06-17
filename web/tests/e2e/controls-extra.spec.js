@@ -1,0 +1,52 @@
+import { test, expect } from "@playwright/test";
+import { bootPlayer, SAMPLE_BOOK } from "./fixtures.js";
+
+test.describe("Controls — remaining surfaces", () => {
+  test("Sprite-borders toggle adds the bordered class to sprites", async ({ page }) => {
+    await bootPlayer(page, { audio: { clipMs: 4000 } });
+    // a sprite is present on the opening scene
+    const sprite = page.locator('[data-testid="sprite"]').first();
+    await expect(sprite).not.toHaveClass(/bordered/);
+    await page.getByTestId("sprite-borders-input").check();
+    await expect(sprite).toHaveClass(/bordered/);
+  });
+
+  test("Speed select persists and reaches the orchestrator", async ({ page }) => {
+    await bootPlayer(page, { audio: { clipMs: 4000 } });
+    await page.getByTestId("select-speed").selectOption("1.5");
+    // persisted for next session
+    const stored = await page.evaluate(() => localStorage.getItem("vae-speed"));
+    expect(stored).toBe("1.5");
+    // and the running <audio> picks up the rate (stub exposes playbackRate)
+    await page.getByTestId("play").click();
+    await expect.poll(() => page.evaluate(() => window.__lastRate ?? null)).toBe(1.5);
+  });
+
+  test("Narrator select persists the chosen gender", async ({ page }) => {
+    await bootPlayer(page, { audio: { clipMs: 4000 } });
+    await page.getByTestId("select-narrator").selectOption("female");
+    const stored = await page.evaluate(() => localStorage.getItem("vae-narrator-gender"));
+    expect(stored).toBe("female");
+  });
+
+  test("Click-to-skip reveals the full line immediately (typewriter skip)", async ({ page }) => {
+    // long duration => slow typewriter, so we can catch it mid-reveal and skip
+    await bootPlayer(page, { audio: { clipMs: 9000, durationSec: 9 } });
+    await page.getByTestId("play").click();
+    const dialogue = page.getByTestId("dialogue");
+    await dialogue.waitFor();
+    // shortly after the line starts the text is still partial; click to reveal all
+    await dialogue.click();
+    const full = SAMPLE_BOOK.scenes[0].lines[0].text;
+    await expect(page.getByTestId("dialogue-text")).toHaveText(full, { timeout: 4000 });
+  });
+
+  test("Dialogue click advances in click-through mode", async ({ page }) => {
+    await bootPlayer(page, { audio: { clipMs: 40 } });
+    await page.getByTestId("select-advance").selectOption("click");
+    await page.getByTestId("play").click();
+    await expect(page.getByTestId("progress")).toHaveAttribute("data-status", "paused");
+    await page.getByTestId("dialogue").click();
+    await expect(page.getByTestId("progress")).toHaveAttribute("data-index", "1");
+  });
+});

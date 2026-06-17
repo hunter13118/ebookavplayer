@@ -1,0 +1,12 @@
+.PHONY: install api web sample test
+install:
+	pip install -r requirements.txt
+	cd web && npm install
+api:
+	uvicorn server.app:app --host 0.0.0.0 --port 8600 --reload
+web:
+	cd web && npm run dev
+sample:
+	python3 -m server.sample.build_sample
+test:
+	python3 -m pytest tests -q

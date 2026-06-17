@@ -1,0 +1,192 @@
+// Auto-embedded demo book — lets the player run with no backend.
+export const sampleBook = {
+  "book_id": "the-silver-gate",
+  "title": "The Silver Gate",
+  "author": "Sample Author",
+  "characters": {
+    "narrator": {
+      "name": "Narrator",
+      "importance": "primary",
+      "gender": "male",
+      "sprite": "sprite:narrator",
+      "voice": "en-US-AndrewMultilingualNeural",
+      "pitch": "+0Hz",
+      "rate": "+0%",
+      "description": ""
+    },
+    "elara": {
+      "name": "Elara",
+      "importance": "primary",
+      "gender": "female",
+      "sprite": "sprite:gradient:280,40",
+      "voice": "en-US-AvaMultilingualNeural",
+      "pitch": "+20Hz",
+      "rate": "+0%",
+      "description": "A young silver-haired mage in a travel-worn blue cloak."
+    },
+    "garrick": {
+      "name": "Garrick",
+      "importance": "primary",
+      "gender": "male",
+      "sprite": "sprite:gradient:20,200",
+      "voice": "en-US-AndrewMultilingualNeural",
+      "pitch": "-15Hz",
+      "rate": "+0%",
+      "description": "A grizzled knight with a scarred jaw and dented steel pauldrons."
+    },
+    "child": {
+      "name": "Pip",
+      "importance": "secondary",
+      "gender": "male",
+      "sprite": "sprite:gradient:120,60",
+      "voice": "en-GB-RyanNeural",
+      "pitch": "+45Hz",
+      "rate": "+4%",
+      "description": "A small street urchin, all elbows and grin."
+    }
+  },
+  "scenes": [
+    {
+      "id": "scene-0001",
+      "chapter": 1,
+      "title": "The Gate at Dusk",
+      "background": "gradient:255,210",
+      "art_style": "semi-real",
+      "present": [
+        {
+          "character_id": "elara",
+          "name": "Elara",
+          "sprite": "sprite:gradient:280,40",
+          "importance": "primary"
+        },
+        {
+          "character_id": "garrick",
+          "name": "Garrick",
+          "sprite": "sprite:gradient:20,200",
+          "importance": "primary"
+        }
+      ],
+      "lines": [
+        {
+          "idx": 0,
+          "character_id": "narrator",
+          "speaker_name": "Narrator",
+          "text": "Rain hammered the old stones of the castle gate, and the torches guttered low.",
+          "kind": "narration",
+          "voice": "en-US-AndrewMultilingualNeural",
+          "pitch": "+0Hz",
+          "rate": "+0%"
+        },
+        {
+          "idx": 1,
+          "character_id": "elara",
+          "speaker_name": "Elara",
+          "text": "We should not be here, Garrick. The wards still hold a grudge.",
+          "kind": "dialogue",
+          "voice": "en-US-AvaMultilingualNeural",
+          "pitch": "+20Hz",
+          "rate": "+0%"
+        },
+        {
+          "idx": 2,
+          "character_id": "garrick",
+          "speaker_name": "Garrick",
+          "text": "Too late to turn back now. The gate already knows our names.",
+          "kind": "dialogue",
+          "voice": "en-US-AndrewMultilingualNeural",
+          "pitch": "-15Hz",
+          "rate": "+0%"
+        },
+        {
+          "idx": 3,
+          "character_id": "elara",
+          "speaker_name": "Elara",
+          "text": "Then let us be quick, and quiet.",
+          "kind": "dialogue",
+          "voice": "en-US-AvaMultilingualNeural",
+          "pitch": "+20Hz",
+          "rate": "+0%"
+        }
+      ]
+    },
+    {
+      "id": "scene-0002",
+      "chapter": 1,
+      "title": "The Inner Courtyard",
+      "background": "gradient:200,140",
+      "art_style": "semi-real",
+      "present": [
+        {
+          "character_id": "elara",
+          "name": "Elara",
+          "sprite": "sprite:gradient:280,40",
+          "importance": "primary"
+        },
+        {
+          "character_id": "garrick",
+          "name": "Garrick",
+          "sprite": "sprite:gradient:20,200",
+          "importance": "primary"
+        },
+        {
+          "character_id": "child",
+          "name": "Pip",
+          "sprite": "sprite:gradient:120,60",
+          "importance": "secondary"
+        }
+      ],
+      "lines": [
+        {
+          "idx": 4,
+          "character_id": "narrator",
+          "speaker_name": "Narrator",
+          "text": "Beyond the gate, a small figure crouched beside a dry fountain.",
+          "kind": "narration",
+          "voice": "en-US-AndrewMultilingualNeural",
+          "pitch": "+0Hz",
+          "rate": "+0%"
+        },
+        {
+          "idx": 5,
+          "character_id": "child",
+          "speaker_name": "Pip",
+          "text": "You're the mage! The real one! Can you do the light trick? Please?",
+          "kind": "dialogue",
+          "voice": "en-GB-RyanNeural",
+          "pitch": "+45Hz",
+          "rate": "+4%"
+        },
+        {
+          "idx": 6,
+          "character_id": "garrick",
+          "speaker_name": "Garrick",
+          "text": "Quiet, boy. Half the keep can hear you.",
+          "kind": "dialogue",
+          "voice": "en-US-AndrewMultilingualNeural",
+          "pitch": "-15Hz",
+          "rate": "+0%"
+        },
+        {
+          "idx": 7,
+          "character_id": "elara",
+          "speaker_name": "Elara",
+          "text": "It's alright. Watch closely, Pip.",
+          "kind": "dialogue",
+          "voice": "en-US-AvaMultilingualNeural",
+          "pitch": "+20Hz",
+          "rate": "+0%"
+        },
+        {
+          "idx": 8,
+          "character_id": "narrator",
+          "speaker_name": "Narrator",
+          "text": "A pale spark bloomed above her palm, and for a moment the courtyard was full of stars.",
+          "kind": "narration",
+          "voice": "en-US-AndrewMultilingualNeural",
+          "pitch": "+0Hz",
+          "rate": "+0%"
+        }
+      ]
+    }
+  ]
+};

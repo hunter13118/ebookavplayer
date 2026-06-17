@@ -1,0 +1,62 @@
+"""Library pure logic + sidecar IO (stdlib only; no pydantic needed)."""
+import os
+import tempfile
+
+
+def _fresh_library():
+    d = tempfile.mkdtemp()
+    os.environ["DATA_DIR"] = d
+    import importlib
+    from server.playback import library as L
+    importlib.reload(L)
+    return L
+
+
+def test_imaging_progress_band():
+    L = _fresh_library()
+    assert L.imaging_progress(0, 4) == L.ANALYSIS_END
+    assert L.imaging_progress(4, 4) == 1.0
+    assert L.ANALYSIS_END < L.imaging_progress(2, 4) < 1.0
+    assert L.imaging_progress(0, 0) == 1.0
+
+
+def test_select_cover_priority():
+    L = _fresh_library()
+    assert L.select_cover({"cover": "/m/c.png"}) == "/m/c.png"
+    assert L.select_cover({"backgrounds": {"s2": "/m/b2.png"}},
+                          [{"id": "s1"}, {"id": "s2"}]) == "/m/b2.png"
+    assert L.select_cover({"backgrounds": {}}, [{"id": "s1"}]) is None
+
+
+def test_catalog_entry_counts_lines():
+    L = _fresh_library()
+    scenes = [{"id": "s1", "lines": [1, 2, 3]}, {"id": "s2", "lines": [4, 5]}]
+    e = L.catalog_entry("bk", {"status": "processing", "progress": 0.5, "title": "T"},
+                        {"backgrounds": {"s1": "/m/b.png"}}, len(scenes), scenes)
+    assert e["lines"] == 5
+    assert e["status"] == "processing" and e["progress"] == 0.5
+    assert e["cover"] == "/m/b.png"
+
+
+def test_status_media_resume_roundtrip():
+    L = _fresh_library()
+    L.write_status("bk", status="processing", stage="imaging", progress=0.6, title="My Book")
+    s = L.read_status("bk")
+    assert s["status"] == "processing" and s["title"] == "My Book"
+
+    L.set_media("bk", "characters", "elara", "/m/e.png")
+    L.set_media("bk", "cover", "cover", "/m/cover.png")
+    m = L.read_media("bk")
+    assert m["characters"]["elara"] == "/m/e.png" and m["cover"] == "/m/cover.png"
+
+    L.write_resume("bk", 7, "scene-0002", 2)
+    r = L.read_resume("bk")
+    assert r["line"] == 7 and r["sceneId"] == "scene-0002" and r["chapter"] == 2
+
+
+def test_catalog_lists_processing_book():
+    L = _fresh_library()
+    L.write_status("bk", status="processing", stage="parsing", progress=0.1, title="WIP")
+    cat = L.list_catalog()
+    ids = {e["book_id"]: e for e in cat}
+    assert "bk" in ids and ids["bk"]["status"] == "processing"
