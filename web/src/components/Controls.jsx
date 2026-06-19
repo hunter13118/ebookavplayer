@@ -1,7 +1,8 @@
 import { KEYS, setPref } from "../audio/voicePrefs.js";
 
-// Playback + display controls. Changes persist via voicePrefs (localStorage).
-export default function Controls({ prefs, setPrefs, status, onPlay, onPause, onNext, onRestart }) {
+export default function Controls({
+  prefs, setPrefs, status, onPlay, onPause, onNext, onRestart,
+}) {
   const upd = (key, prefKey, value) => {
     setPref(prefKey, value);
     setPrefs((p) => ({ ...p, [key]: value }));
@@ -45,14 +46,6 @@ export default function Controls({ prefs, setPrefs, status, onPlay, onPause, onN
           onChange={(e) => upd("theme", KEYS.theme, e.target.value)}>
           <option value="dark">Dark</option>
           <option value="light">Light</option>
-        </select>
-      </label>
-
-      <label>Narrator
-        <select data-testid="select-narrator" value={prefs.narratorGender}
-          onChange={(e) => upd("narratorGender", KEYS.narratorGender, e.target.value)}>
-          <option value="male">Male</option>
-          <option value="female">Female</option>
         </select>
       </label>
 

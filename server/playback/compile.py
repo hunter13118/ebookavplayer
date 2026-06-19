@@ -8,11 +8,17 @@ the client renders something even before image gen runs).
 from __future__ import annotations
 
 import hashlib
+import os
+from pathlib import Path
 
 from ..analyze.schema import (
     BookAnalysis, PlaybackBook, PlaybackScene, PlaybackLine,
 )
 from ..audio.voices import assign_voices, narrator_voice
+from ..audio.voice_expression import (
+    infer_expression_from_text, normalize_environment, normalize_expression,
+)
+from .illustrations import resolve_line_illustration
 
 
 def _gradient_token(seed: str) -> str:
@@ -23,15 +29,27 @@ def _gradient_token(seed: str) -> str:
     return f"gradient:{a},{b}"
 
 
+def _media_file_exists(url: str) -> bool:
+    """True when a /media/... URL points at a real file on disk."""
+    if not url or not url.startswith("/media/"):
+        return False
+    root = Path(os.environ.get("DATA_DIR", "./data")) / "media"
+    return (root / url.removeprefix("/media/")).is_file()
+
+
 def _sprite_for(character_id: str, media: dict | None) -> str:
     if media and character_id in media.get("characters", {}):
-        return media["characters"][character_id]
+        url = media["characters"][character_id]
+        if url.startswith("/media/") and not _media_file_exists(url):
+            return f"sprite:{_gradient_token(character_id)}"
+        return url
     return f"sprite:{_gradient_token(character_id)}"
 
 
 def compile_book(analysis: BookAnalysis, *, art_style: str = "semi-real",
                  narrator_gender: str = "male",
-                 media: dict | None = None) -> PlaybackBook:
+                 media: dict | None = None,
+                 illustrations: list[str] | None = None) -> PlaybackBook:
     """media (optional): {'characters': {id: url}, 'backgrounds': {scene_id: url}}"""
     char_dicts = [c.model_dump() for c in analysis.characters]
     voice_map = assign_voices(char_dicts)
@@ -66,6 +84,8 @@ def compile_book(analysis: BookAnalysis, *, art_style: str = "semi-real",
             bg = bg_by_scene[s.reuse_background_of]
         elif media and s.id in media.get("backgrounds", {}):
             bg = media["backgrounds"][s.id]
+            if bg.startswith("/media/") and not _media_file_exists(bg):
+                bg = _gradient_token(s.location or s.background_desc or s.id)
         else:
             bg = _gradient_token(s.location or s.background_desc or s.id)
         bg_by_scene[s.id] = bg
@@ -81,13 +101,36 @@ def compile_book(analysis: BookAnalysis, *, art_style: str = "semi-real",
             })
 
         lines_out = []
-        for ln in s.lines:
+        scene_env = normalize_environment(s.location or s.background_desc or "open")
+        scene_illus = getattr(s, "illustration_ref", None)
+        for li, ln in enumerate(s.lines):
             cid = ln.character_id
             info = characters_out.get(cid) or characters_out["narrator"]
+            raw_expr = getattr(ln, "expression", None)
+            intensity = float(getattr(ln, "intensity", 1.0) or 1.0)
+            if raw_expr and str(raw_expr).strip().lower() not in ("", "normal"):
+                expr = normalize_expression(raw_expr)
+            else:
+                expr, inferred_i = infer_expression_from_text(ln.text, ln.kind)
+                if intensity == 1.0:
+                    intensity = inferred_i
+            raw_env = getattr(ln, "environment", None)
+            env = normalize_environment(raw_env) if raw_env else scene_env
+            line_illus = getattr(ln, "illustration_ref", None)
+            ill_ref, ill_url = resolve_line_illustration(
+                line_illus, scene_illus,
+                is_first_line_in_scene=(li == 0),
+                catalog=illustrations or [],
+            )
             lines_out.append(PlaybackLine(
                 idx=idx, character_id=cid, speaker_name=info["name"],
                 text=ln.text, kind=ln.kind, voice=info["voice"],
                 pitch=info["pitch"], rate=info["rate"],
+                expression=expr or "normal",
+                environment=env if env else "open",
+                intensity=intensity,
+                illustration_ref=ill_ref,
+                illustration_url=ill_url,
             ))
             idx += 1
 

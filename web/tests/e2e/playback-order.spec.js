@@ -42,4 +42,16 @@ test.describe("TTS invocation order + per-character voice", () => {
     const elara = EXPECTED_LINES[1];
     expect(ttsCalls[1].pitch).toBe(elara.pitch);
   });
+
+  test("passes expression tags through to /tts", async ({ page }) => {
+    const { ttsCalls } = await bootPlayer(page);
+    await page.getByTestId("play").click();
+    await expect.poll(() => ttsCalls.length).toBeGreaterThanOrEqual(7);
+    // Garrick "Quiet, boy…" is tagged whisper in the sample book
+    const garrick = ttsCalls[6];
+    expect(garrick.text).toContain("Quiet, boy");
+    expect(garrick.expression).toBe("whisper");
+    expect(garrick.environment).toBe("hall");
+    expect(garrick.intensity).toBeCloseTo(0.85, 2);
+  });
 });

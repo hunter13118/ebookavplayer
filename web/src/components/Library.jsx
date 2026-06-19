@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import BookCard from "./BookCard.jsx";
 import Uploader from "./Uploader.jsx";
-import { fetchCatalog, apiBase } from "../api.js";
+import BannerStack from "./BannerStack.jsx";
+import { bannersFromCatalog } from "../banners.js";
+import { fetchCatalog, backendConfigured } from "../api.js";
 
 // Landing view: a grid library on top, the upload tray below. While anything
 // is processing, it polls the catalog so progress/cover update live and a
@@ -16,7 +18,7 @@ export default function Library({ catalog, onOpen, onCatalog, offline }) {
     (b) => b.status === "processing" || (b.status !== "error" && b.progress < 1));
 
   useEffect(() => {
-    if (offline || !apiBase() || !anyProcessing) return undefined;
+    if (offline || !backendConfigured() || !anyProcessing) return undefined;
     pollRef.current = setInterval(async () => {
       try {
         const list = await fetchCatalog();
@@ -39,6 +41,7 @@ export default function Library({ catalog, onOpen, onCatalog, offline }) {
 
   return (
     <div className="vae-library" data-testid="library">
+      <BannerStack banners={bannersFromCatalog(items)} bookId="library" />
       <h2 className="vae-lib-heading">Your library</h2>
       {items.length === 0
         ? <div className="vae-lib-empty" data-testid="library-empty">

@@ -3,7 +3,8 @@ import { bootPlayer, EXPECTED_LINES } from "./fixtures.js";
 
 test.describe("UI follows the spoken line", () => {
   test("speaker label + spotlight track the current speaker", async ({ page }) => {
-    await bootPlayer(page);
+    // Slow clips so Garrick's line is still on screen after Elara's assertion.
+    await bootPlayer(page, { audio: { clipMs: 2500 } });
     await page.getByTestId("play").click();
 
     // Narrator narration first (no speaker label, kind=narration)
@@ -33,7 +34,7 @@ test.describe("UI follows the spoken line", () => {
   });
 
   test("group scene spotlights the speaker and dims extras", async ({ page }) => {
-    await bootPlayer(page);
+    await bootPlayer(page, { audio: { clipMs: 2500 } });
     await page.getByTestId("play").click();
 
     // Pip speaks in the 3-character courtyard scene

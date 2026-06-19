@@ -2,8 +2,15 @@ __pycache__/
 *.pyc
 .env
 .env.local
+web/.env.local
 node_modules/
 web/dist/
+web/test-results/
+.cline-context/
 data/uploads/
 data/media/
+data/books/*.analysis.json
+data/books/*.media.json
+data/books/*.progress.json
+data/books/*.status.json
 out.mp3

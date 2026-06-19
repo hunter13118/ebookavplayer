@@ -12,6 +12,7 @@ export default function Uploader({ onStarted }) {
   const inputRef = useRef(null);
   const [busy, setBusy] = useState(false);
   const [dryRun, setDryRun] = useState(false);
+  const [useGenAi, setUseGenAi] = useState(true);
   const [artStyle, setArtStyle] = useState(getPrefs().artStyle || "semi-real");
   const [err, setErr] = useState("");
 
@@ -22,7 +23,7 @@ export default function Uploader({ onStarted }) {
     if (!file) return;
     setBusy(true); setErr("");
     try {
-      const res = await ingestBook(file, { artStyle, dryRun });
+      const res = await ingestBook(file, { artStyle, dryRun, generateArt: useGenAi && !dryRun });
       onStarted?.(res, file);
     } catch (e) {
       setErr("Upload failed — is the backend running?");
@@ -48,11 +49,19 @@ export default function Uploader({ onStarted }) {
           <select data-testid="upload-art-style" value={artStyle}
             onChange={(e) => chooseStyle(e.target.value)}>
             <option value="semi-real">Semi-realistic</option>
-            <option value="pixel">Pixel-art</option>
             <option value="anime">Anime (light novels)</option>
+            <option value="cartoon">Cartoon / comic</option>
+            <option value="pixel">Pixel-art</option>
           </select>
         </label>
       </div>
+
+      <label className="vae-upload-dry" data-testid="gen-ai-toggle">
+        <input type="checkbox" checked={useGenAi && !dryRun} disabled={dryRun}
+          data-testid="gen-ai-input"
+          onChange={(e) => setUseGenAi(e.target.checked)} />
+        Generate art with AI (Gemini, then local SD when on your network)
+      </label>
 
       <label className="vae-upload-dry" data-testid="dry-run-toggle">
         <input type="checkbox" checked={dryRun}

@@ -5,4 +5,6 @@ pydantic>=2.6
 python-multipart>=0.0.9
 edge-tts>=7.0          # Edge neural voices (copied pattern from parallel-reader)
 google-genai>=0.3      # Gemini mega-pass + image generation (host-side)
+python-dotenv>=1.0     # optional: load .env (LOCAL_IMAGE_URL, keys)
+requests>=2.31         # local SD HTTP fallback
 beautifulsoup4>=4.12   # optional: robust EPUB HTML stripping

@@ -5,7 +5,7 @@
 import {
   speakLine, speakLinesViaEdge, stopAllSpeech, setEdgePlaybackRate,
 } from "./playSpeech.js";
-import { apiBase } from "../api.js";
+import { backendConfigured } from "../api.js";
 import { estimateDurationSec, revealedCount, isCheckpoint } from "./timing.js";
 
 export class Orchestrator {
@@ -17,6 +17,7 @@ export class Orchestrator {
     this.speed = 1;
     this.checkpointEvery = 0;
     this.autoAdvance = true;
+    this.voiceOverrides = null;
     this.status = "idle";          // idle | playing | paused | checkpoint | done
     this.index = 0;
     this._raf = null;
@@ -25,10 +26,11 @@ export class Orchestrator {
     this._token = 0;               // typewriter loop guard
   }
 
-  configure({ speed, checkpointEvery, autoAdvance }) {
+  configure({ speed, checkpointEvery, autoAdvance, voiceOverrides }) {
     if (speed != null) { this.speed = speed; setEdgePlaybackRate(speed); }
     if (checkpointEvery != null) this.checkpointEvery = checkpointEvery;
     if (autoAdvance != null) this.autoAdvance = autoAdvance;
+    if (voiceOverrides !== undefined) this.voiceOverrides = voiceOverrides;
   }
 
   _emit(extra = {}) {
@@ -68,7 +70,7 @@ export class Orchestrator {
     this.status = "playing";
     this._emit({ revealed: 0 });
 
-    if (apiBase()) {
+    if (backendConfigured()) {
       if (this.autoAdvance) await this._playAuto(startIndex);
       else await this._playSingle(startIndex);   // click-through: one line, then wait
     } else {
@@ -82,6 +84,7 @@ export class Orchestrator {
     await speakLinesViaEdge(this.lines, {
       rate: this.speed,
       startIndex,
+      voiceOverrides: this.voiceOverrides,
       onLine: (i, line, durSec) => {
         this.index = i;
         this.status = "playing";
@@ -108,6 +111,7 @@ export class Orchestrator {
     if (!line) { this._finish(); return; }
     await speakLine(line, {
       rate: this.speed,
+      voiceOverrides: this.voiceOverrides,
       onStart: (durSec) => this._runTypewriter(line.text, durSec),
       onEnd: () => {
         if (this.status !== "playing") return;

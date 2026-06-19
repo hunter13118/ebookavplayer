@@ -29,6 +29,7 @@ SCHEMA_HINT = {
         "importance": "primary|secondary|background",
         "description": "concise visual description for image generation",
         "appearance_changes": ["notable look change warranting new art"],
+        "illustration_ref": 0,
     }],
     "scenes": [{
         "id": "scene-0001",
@@ -39,10 +40,15 @@ SCHEMA_HINT = {
         "reuse_background_of": "scene-id or null (recurring location)",
         "time_skip_before": False,
         "present_character_ids": ["slug"],
+        "illustration_ref": 0,
         "lines": [{
             "character_id": "slug or 'narrator'",
             "text": "the spoken/narrated text, verbatim",
             "kind": "dialogue|narration|thought",
+            "expression": "normal|whisper|yell|sad|angry",
+            "environment": "open|indoor|hall|cave",
+            "intensity": 0.0,
+            "illustration_ref": 0,
         }],
     }],
 }
@@ -62,13 +68,41 @@ Rules:
 - description/background_desc: 1-2 vivid sentences, concrete and visual. If
   reference images are attached, keep palette/style consistent with them.
 - Preserve text verbatim in line.text. Do not summarize or paraphrase.
+- expression (per line): how the line is delivered for TTS — normal, whisper,
+  yell, sad, or angry. Use whisper for hushed/secret speech; yell for shouting;
+  sad/angry when clearly emotional. Default normal when delivery is neutral.
+- environment (per line): acoustic space for reverb — open (outdoors), indoor,
+  hall (large enclosed), cave (echoey). Default from scene location when unclear.
+- intensity: 0.0–1.0 strength of expression (0.5 = subtle, 1.0 = full). Use
+  higher values for emphatic whispers/yells; ~0.85 for calm narration.
+"""
+
+ILLUSTRATION_RULES = """
+- illustration_ref uses attached image indices 0, 1, 2, … (attachment order).
+- On characters: best portrait/plate for that character — used as REFERENCE when
+  generating an individual sprite (image may contain multiple people; still pick
+  the closest plate). Do NOT assume it becomes the on-screen sprite.
+- On scenes: establishing insert for that location — flashed briefly when the
+  scene begins (first line) unless a specific line overrides it.
+- On lines: set illustration_ref when an insert should appear exactly as that
+  line is spoken (splash page, reaction shot, group illustration). This is a
+  timed full-screen flash, then normal sprites return.
+- Use null when no embedded image fits. Prefer line-level refs for timing.
 """
 
 
 def build_prompt(book_id: str, title: str, author: str, body_text: str,
                  has_reference_images: bool = False) -> str:
-    ref = ("\nReference images are attached; match their color palette and "
-           "character/world style.\n" if has_reference_images else "")
+    ref = ""
+    if has_reference_images:
+        ref = (
+            "\nReference images are attached (numbered 0..N-1 in order); match "
+            "their palette/style and emit illustration_ref when an image clearly "
+            "belongs to a character or scene.\n"
+            f"{ILLUSTRATION_RULES}"
+        )
+    else:
+        ref = "\nNo reference images attached — omit illustration_ref (null).\n"
     return (
         f"{SYSTEM_INSTRUCTION}\n\n"
         f"Return JSON exactly matching this shape (types shown):\n"

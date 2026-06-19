@@ -46,6 +46,7 @@ async def synthesize_edge_mp3(
     *,
     rate: str | None = None,
     pitch: str | None = None,
+    volume: str | None = None,
 ) -> bytes:
     """Return MP3 bytes for `text` using an Edge neural voice.
 
@@ -64,6 +65,8 @@ async def synthesize_edge_mp3(
         kwargs["rate"] = rate
     if pitch:
         kwargs["pitch"] = pitch
+    if volume:
+        kwargs["volume"] = volume
     chunks: list[bytes] = []
     communicate = edge_tts.Communicate(text, voice, **kwargs)
     async for chunk in communicate.stream():

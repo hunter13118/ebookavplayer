@@ -98,3 +98,6 @@ MVP scaffold. End-to-end path is wired and verified except where a host is
 required (live TTS network, `npm run build`, Gemini API). See
 [`docs/HOST_CHECKLIST.md`](docs/HOST_CHECKLIST.md). Phase 2 (per the brief):
 character art variants, offline caching, advanced audio effects (cave echo).
+
+**Cursor / host handoff:** [`CURSOR_HANDOFF.md`](CURSOR_HANDOFF.md) (short status +
+guardrails), [`HANDOFF.md`](HANDOFF.md) (full contract + stub registry).

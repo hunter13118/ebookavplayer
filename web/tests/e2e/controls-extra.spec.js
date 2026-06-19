@@ -22,11 +22,11 @@ test.describe("Controls — remaining surfaces", () => {
     await expect.poll(() => page.evaluate(() => window.__lastRate ?? null)).toBe(1.5);
   });
 
-  test("Narrator select persists the chosen gender", async ({ page }) => {
+  test("Voices menu opens from player toolbar", async ({ page }) => {
     await bootPlayer(page, { audio: { clipMs: 4000 } });
-    await page.getByTestId("select-narrator").selectOption("female");
-    const stored = await page.evaluate(() => localStorage.getItem("vae-narrator-gender"));
-    expect(stored).toBe("female");
+    await page.getByTestId("open-voices").click();
+    await expect(page.getByTestId("reader-menu")).toBeVisible();
+    await expect(page.getByTestId("voice-narrator")).toBeVisible();
   });
 
   test("Click-to-skip reveals the full line immediately (typewriter skip)", async ({ page }) => {

@@ -23,7 +23,10 @@ def main() -> None:
     book = compile_book(analysis, art_style="semi-real", narrator_gender="male")
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(book.model_dump_json(indent=2), encoding="utf-8")
+    analysis_out = OUT.parent / "the-silver-gate.analysis.json"
+    analysis_out.write_text(json.dumps(data, indent=2), encoding="utf-8")
     print(f"wrote {OUT} ({len(book.scenes)} scenes)")
+    print(f"wrote {analysis_out}")
 
 
 if __name__ == "__main__":

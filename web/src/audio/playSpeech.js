@@ -3,7 +3,8 @@
 // the parallel-reader routed voices by language; here every LINE already
 // carries its own character voice/pitch/rate, so we route by character and
 // never by screen position.
-import { apiBase, apiUrl } from "../api.js";
+import { apiUrl } from "../api.js";
+import { lineWithVoice } from "./voiceOverrides.js";
 
 let edgeAudio = null;
 let edgeObjectUrl = null;
@@ -32,20 +33,24 @@ function fetchTimeout(ms) {
  * typewriter against the real clip duration — keeps text/audio in sync).
  * Resolves true once it has played.
  */
-async function edgeFetchPlay(line, rate, { onStart, onEnd } = {}) {
-  const text = (line.text || "").trim();
+async function edgeFetchPlay(line, rate, { onStart, onEnd, voiceOverrides } = {}) {
+  const resolved = lineWithVoice(line, voiceOverrides);
+  const text = (resolved.text || "").trim();
   if (!text) { onEnd?.(); return false; }
   stopEdgeAudio();
-  if (!apiBase()) { onEnd?.(); return false; }
   try {
     const res = await fetch(apiUrl("/tts"), {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+        body: JSON.stringify({
         text,
-        voice: line.voice,          // chosen by CHARACTER, never screen position
-        pitch: line.pitch || undefined,
-        rate: line.rate || undefined,
+        voice: resolved.voice,
+        pitch: resolved.pitch || undefined,
+        rate: resolved.rate || undefined,
+        character: line.character_id || undefined,
+        expression: line.expression || undefined,
+        environment: line.environment || undefined,
+        intensity: line.intensity != null ? line.intensity : undefined,
       }),
       signal: fetchTimeout(20000),
     });
@@ -74,9 +79,9 @@ async function edgeFetchPlay(line, rate, { onStart, onEnd } = {}) {
  * Speak a single line. Voice comes from the line itself.
  * @returns {Promise<boolean>}
  */
-export async function speakLine(line, { rate, onStart, onEnd } = {}) {
+export async function speakLine(line, { rate, onStart, onEnd, voiceOverrides } = {}) {
   stopEdgeSpeech();
-  return edgeFetchPlay(line, rate, { onStart, onEnd });
+  return edgeFetchPlay(line, rate, { onStart, onEnd, voiceOverrides });
 }
 
 /**
@@ -88,10 +93,10 @@ export async function speakLine(line, { rate, onStart, onEnd } = {}) {
  * @returns {Promise<boolean>} true if at least one line played
  */
 export async function speakLinesViaEdge(lines, {
-  rate, startIndex = 0, onLine, onAdvance, onEnd,
+  rate, startIndex = 0, onLine, onAdvance, onEnd, voiceOverrides,
 } = {}) {
   const list = (lines || []).filter((l) => (l.text || "").trim());
-  if (!apiBase() || !list.length) { onEnd?.(); return false; }
+  if (!list.length) { onEnd?.(); return false; }
   stopEdgeSpeech();                 // cancel anything prior + bump token
   const myToken = seqToken;         // claim this generation
   let playedAny = false;
@@ -103,6 +108,7 @@ export async function speakLinesViaEdge(lines, {
       edgeFetchPlay(line, rate, {
         onStart: (dur) => onLine?.(i, line, dur),
         onEnd: () => resolve("ended"),
+        voiceOverrides,
       }).then((started) => { if (!started) resolve(false); });
     });
     if (seqToken !== myToken) return playedAny;

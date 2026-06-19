@@ -3,7 +3,7 @@ import { AuthGate } from "./lib/portfolioAuth.jsx";
 import Library from "./components/Library.jsx";
 import Player from "./components/Player.jsx";
 import { getPrefs } from "./audio/voicePrefs.js";
-import { fetchCatalog, fetchBook, apiBase } from "./api.js";
+import { fetchCatalog, fetchBook, backendConfigured } from "./api.js";
 import { sampleBook } from "./sampleBook.js";
 
 // Two views: the library landing and the player. Backend-less mode synthesizes
@@ -30,7 +30,7 @@ export default function App() {
   useEffect(() => {
     let alive = true;
     (async () => {
-      if (!apiBase()) {
+      if (!backendConfigured()) {
         if (!alive) return;
         setOffline(true); setCatalog(sampleCatalog());
         setNote("No backend detected — showing the embedded demo (text + sprites; connect the server for voices, uploads, and your real library).");
@@ -39,6 +39,8 @@ export default function App() {
       try {
         const list = await fetchCatalog();
         if (!alive) return;
+        setOffline(false);
+        setNote("");
         setCatalog(list);
       } catch {
         if (!alive) return;
@@ -50,7 +52,7 @@ export default function App() {
   }, []);
 
   async function openBook(entry) {
-    if (offline || !apiBase()) { setBook(sampleBook); setView("player"); return; }
+    if (offline) { setBook(sampleBook); setView("player"); return; }
     try {
       const full = await fetchBook(entry.book_id);
       setBook(full); setView("player");
@@ -63,7 +65,7 @@ export default function App() {
   async function backToLibrary() {
     setView("library");
     window.location.hash = "#/";
-    if (apiBase() && !offline) { try { setCatalog(await fetchCatalog()); } catch {} }
+    if (!offline) { try { setCatalog(await fetchCatalog()); } catch {} }
   }
 
   return (

@@ -15,7 +15,9 @@ test.describe("UI screenshots", () => {
     await bootPlayer(page, { audio: { clipMs: 4000 } });
     await page.getByTestId("select-advance").selectOption("click");
     await page.getByTestId("play").click();
-    await page.getByTestId("speaker").waitFor();           // a character is speaking
+    // Click-through: line 0 is narrator (no speaker label) — advance to Elara.
+    await page.getByTestId("next").click();
+    await page.getByTestId("speaker").waitFor();
     await page.locator('[data-testid="dialogue"]').waitFor();
     await page.screenshot({ path: shot("01-smooth-dialogue") });
   });
@@ -41,8 +43,7 @@ test.describe("UI screenshots", () => {
   });
 
   test("group scene — speaker spotlight + dimmed extras", async ({ page }) => {
-    // checkpoint off; small clips so we reach Pip's line, then capture
-    await bootPlayer(page, { audio: { clipMs: 40 } });
+    await bootPlayer(page, { audio: { clipMs: 2500 } });
     await page.getByTestId("play").click();
     await page.getByTestId("speaker").filter({ hasText: "Pip" }).waitFor({ timeout: 15000 });
     await page.screenshot({ path: shot("05-group-spotlight") });

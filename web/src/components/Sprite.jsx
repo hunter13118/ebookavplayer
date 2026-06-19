@@ -1,16 +1,21 @@
-import { spriteVisual } from "../media.js";
+import { useState } from "react";
+import { spriteVisual, gradientFromSeed } from "../media.js";
 
-export default function Sprite({ character, spotlight, dim, borders }) {
-  const v = spriteVisual(character.sprite);
+export default function Sprite({ character, spotlight, dim, borders, pixelFilter }) {
+  const [broken, setBroken] = useState(false);
+  const v = broken ? gradientFromSeed(character.character_id || character.id || character.name)
+    : spriteVisual(character.sprite);
   const cls = [
     "vae-sprite",
     spotlight ? "spot" : "",
     dim ? "dim" : "",
     borders ? "bordered" : "",
+    pixelFilter ? "pixel-filter" : "",
   ].join(" ").trim();
   const inner =
     v.type === "image" ? (
-      <img src={v.url} alt={character.name} draggable={false} />
+      <img src={v.url} alt={character.name} draggable={false}
+        onError={() => setBroken(true)} />
     ) : v.type === "gradient" ? (
       <div className="vae-sprite-fill" style={{ background: v.css }}>
         <span>{(character.name || "?").slice(0, 1)}</span>

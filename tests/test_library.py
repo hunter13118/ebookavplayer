@@ -47,11 +47,32 @@ def test_status_media_resume_roundtrip():
     L.set_media("bk", "characters", "elara", "/m/e.png")
     L.set_media("bk", "cover", "cover", "/m/cover.png")
     m = L.read_media("bk")
-    assert m["characters"]["elara"] == "/m/e.png" and m["cover"] == "/m/cover.png"
+    assert m["styles"]["semi-real"]["characters"]["elara"] == "/m/e.png"
+    assert m["styles"]["semi-real"]["cover"] == "/m/cover.png"
 
     L.write_resume("bk", 7, "scene-0002", 2)
     r = L.read_resume("bk")
     assert r["line"] == 7 and r["sceneId"] == "scene-0002" and r["chapter"] == 2
+
+
+def test_analysis_from_playback():
+    L = _fresh_library()
+    playback = {
+        "book_id": "demo", "title": "Demo", "author": "A",
+        "characters": {
+            "hero": {"name": "Hero", "gender": "male", "importance": "primary",
+                     "description": "A brave knight."},
+        },
+        "scenes": [{
+            "id": "s1", "chapter": 1, "title": "Opening",
+            "present": [{"character_id": "hero"}],
+            "lines": [{"character_id": "hero", "text": "Hi.", "kind": "dialogue"}],
+        }],
+    }
+    a = L.analysis_from_playback(playback)
+    assert a.book_id == "demo"
+    assert len(a.characters) == 1 and a.characters[0].id == "hero"
+    assert a.scenes[0].background_desc == "Opening"
 
 
 def test_catalog_lists_processing_book():

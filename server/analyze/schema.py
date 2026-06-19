@@ -27,12 +27,17 @@ class AnalysisCharacter(BaseModel):
     importance: Importance = "secondary"
     description: str = ""         # visual description for image gen
     appearance_changes: list[str] = []  # notable look changes warranting new art
+    illustration_ref: Optional[int] = None  # index into EPUB extracted images
 
 
 class AnalysisLine(BaseModel):
     character_id: str = Field(..., description="'narrator' for narration")
     text: str
     kind: Literal["dialogue", "narration", "thought"] = "dialogue"
+    expression: str = "normal"       # whisper|yell|sad|angry|normal (loose ok)
+    environment: str = "open"        # open|indoor|hall|cave
+    intensity: float = 1.0           # 0..1
+    illustration_ref: Optional[int] = None  # flash EPUB insert at this line
 
 
 class AnalysisScene(BaseModel):
@@ -45,6 +50,7 @@ class AnalysisScene(BaseModel):
     time_skip_before: bool = False
     present_character_ids: list[str] = []
     lines: list[AnalysisLine] = []
+    illustration_ref: Optional[int] = None  # index into EPUB extracted images
 
 
 class BookAnalysis(BaseModel):
@@ -66,6 +72,11 @@ class PlaybackLine(BaseModel):
     voice: str                       # resolved Edge voice id
     pitch: str = "+0Hz"
     rate: str = "+0%"
+    expression: str = "normal"
+    environment: str = "open"
+    intensity: float = 1.0
+    illustration_ref: Optional[int] = None
+    illustration_url: Optional[str] = None
 
 
 class PlaybackScene(BaseModel):
@@ -73,7 +84,7 @@ class PlaybackScene(BaseModel):
     chapter: int
     title: str = ""
     background: str                  # media url or css-gradient token
-    art_style: str = "semi-real"     # semi-real | pixel
+    art_style: str = "semi-real"     # semi-real | pixel | anime | cartoon
     present: list[dict] = []         # [{character_id, name, sprite, importance}]
     lines: list[PlaybackLine] = []
 

@@ -28,8 +28,10 @@ export function clearResume(bookId) {
 export function readingFraction(bookId, totalLines, serverResume) {
   const r = serverResume || getResume(bookId);
   if (!r) return 0;
+  if (r.completed) return 1;
   const total = totalLines || r.total || 0;
   if (!total) return 0;
+  // line is 0-based index while playing; line === total means finished.
   return Math.min(1, (r.line || 0) / total);
 }
 
@@ -37,6 +39,7 @@ export function readingFraction(bookId, totalLines, serverResume) {
 export function resumeIndex(bookId, totalLines, serverResume) {
   const r = serverResume || getResume(bookId);
   if (!r) return 0;
+  if (r.completed) return 0;
   const i = r.line | 0;
   return i > 0 && i < totalLines ? i : 0;
 }

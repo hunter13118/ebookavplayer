@@ -20,6 +20,7 @@ import os
 from dataclasses import dataclass
 
 from ..analyze.schema import BookAnalysis
+from ..playback.illustrations import reference_bytes_for_character
 
 
 @dataclass
@@ -33,7 +34,16 @@ class MediaPlan:
         return len(self.characters_to_generate) + len(self.backgrounds_to_generate)
 
 
-def plan_media(analysis: BookAnalysis) -> MediaPlan:
+def plan_media(analysis: BookAnalysis, *, force_all: bool = False) -> MediaPlan:
+    if force_all:
+        gen_c = [c.id for c in analysis.characters]
+        gen_b, reuse_b = [], []
+        for s in analysis.scenes:
+            if s.reuse_background_of:
+                reuse_b.append(s.id)
+            else:
+                gen_b.append(s.id)
+        return MediaPlan(gen_c, [], gen_b, reuse_b)
     gen_c, stock_c = [], []
     for c in analysis.characters:
         (gen_c if c.importance == "primary" else stock_c).append(c.id)
@@ -46,11 +56,29 @@ def plan_media(analysis: BookAnalysis) -> MediaPlan:
     return MediaPlan(gen_c, stock_c, gen_b, reuse_b)
 
 
-def media_work_items(analysis: BookAnalysis) -> int:
-    """Total generation steps (cover + primary chars + non-reused backgrounds).
-    Stock-pool sprites are free (no request) and excluded from the count."""
-    plan = plan_media(analysis)
-    return 1 + len(plan.characters_to_generate) + len(plan.backgrounds_to_generate)
+def media_work_items(analysis: BookAnalysis, *, force_all: bool = False,
+                     scope: str = "all",
+                     character_ids: list[str] | None = None,
+                     scene_ids: list[str] | None = None,
+                     include_cover: bool = False) -> int:
+    """Total generation steps (cover + chars + non-reused backgrounds)."""
+    plan = plan_media(analysis, force_all=force_all)
+    char_filter = set(character_ids or [])
+    scene_filter = set(scene_ids or [])
+    n = 0
+    if scope in ("all", "cover") or (scope == "selected" and include_cover):
+        n += 1
+    if scope in ("all", "characters") or (scope == "selected" and char_filter):
+        chars = plan.characters_to_generate
+        if char_filter:
+            chars = [c for c in chars if c in char_filter]
+        n += len(chars)
+    if scope in ("all", "backgrounds") or (scope == "selected" and scene_filter):
+        bgs = plan.backgrounds_to_generate
+        if scene_filter:
+            bgs = [b for b in bgs if b in scene_filter]
+        n += len(bgs)
+    return n
 
 
 def _stock_sprite(character_id: str, gender: str) -> str:
@@ -62,60 +90,89 @@ def _stock_sprite(character_id: str, gender: str) -> str:
     return f"/media/stock/{g}{h:02d}.png"
 
 
-def _gen_one(prompt: str, reference_images: list[bytes] | None,
-             out_path: str) -> str | None:
-    """Generate a single image. Returns path on success, None to fall back.
-    Host-side; import-safe without a key. Wire Gemini image model here, then
-    Cloudflare/HF/local-SD fallbacks (Brief step 3)."""
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        return None
-    try:
-        from google import genai
-        from google.genai import types
-    except ImportError:
-        return None
-    try:
-        client = genai.Client(api_key=api_key)
-        # Current image models (2026): gemini-3.1-flash-image (Nano Banana 2,
-        # fast default), gemini-3-pro-image (Nano Banana Pro), gemini-2.5-flash-image.
-        model = os.environ.get("GEMINI_IMAGE_MODEL", "gemini-3.1-flash-image")
-        parts = [prompt]
-        for img in (reference_images or [])[:3]:
-            parts.append(types.Part.from_bytes(data=img, mime_type="image/jpeg"))
-        resp = client.models.generate_content(model=model, contents=parts)
-        os.makedirs(os.path.dirname(out_path), exist_ok=True)
-        for part in (resp.candidates[0].content.parts or []):
-            inline = getattr(part, "inline_data", None)
-            if inline and getattr(inline, "data", None):
-                with open(out_path, "wb") as f:
-                    f.write(inline.data)
-                return out_path
-            # newer SDK convenience: part.as_image() -> PIL Image
-            as_img = getattr(part, "as_image", None)
-            if callable(as_img):
-                img = as_img()
-                if img is not None:
-                    img.save(out_path)
-                    return out_path
-    except Exception:
-        return None
-    return None
+def _stable_seed(key: str) -> int:
+    return int(hashlib.sha256(key.encode()).hexdigest()[:8], 16) % (2**31)
+
+
+def _style_out_dir(out_dir: str, art_style: str) -> str:
+    d = os.path.join(out_dir, art_style)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _media_public_url(book_id: str, art_style: str, filename: str) -> str:
+    return f"/media/{book_id}/{art_style}/{filename}"
+
+
+from .backends import generate_image
+
+
+def _gen_one(
+    description: str,
+    reference_images: list[bytes] | None,
+    out_path: str,
+    *,
+    subject_type: str = "character",
+    art_style: str = "semi-real",
+    kind: str = "character",
+    allow_gemini: bool = True,
+    allow_freemium: bool = True,
+    allow_local: bool = True,
+    seed: int | None = None,
+    prefer_provider: str | None = None,
+    on_event=None,
+) -> tuple[str | None, dict]:
+    """Gemini → freemium → local SD. Returns (path, metadata) on success."""
+    ok, meta = generate_image(
+        description,
+        out_path,
+        reference_images=reference_images,
+        subject_type=subject_type,
+        art_style=art_style,
+        kind=kind,
+        allow_gemini=allow_gemini,
+        allow_freemium=allow_freemium,
+        allow_local=allow_local,
+        seed=seed,
+        prefer_provider=prefer_provider,
+        on_event=on_event,
+    )
+    return (out_path, meta) if ok else (None, meta)
 
 
 def generate_media(analysis: BookAnalysis, out_dir: str,
                    reference_images: list[bytes] | None = None,
                    art_style: str = "semi-real",
-                   on_item=None) -> dict:
+                   on_item=None, *, force_all: bool = False,
+                   scope: str = "all",
+                   character_ids: list[str] | None = None,
+                   scene_ids: list[str] | None = None,
+                   include_cover: bool = False,
+                   allow_gemini: bool = True,
+                   allow_freemium: bool = True,
+                   allow_local: bool = True,
+                   on_event=None,
+                   image_pins: dict | None = None,
+                   existing_media: dict | None = None) -> dict:
     """Returns {'characters': {id: url}, 'backgrounds': {scene_id: url}, 'cover'}.
 
     `on_item(kind, key, url)` (optional) fires as each asset resolves. Anything
     not generated is simply absent -> compiler emits a gradient placeholder.
     """
-    plan = plan_media(analysis)
-    style_tag = "pixel-art sprite" if art_style == "pixel" else \
-        "semi-realistic digital painting"
+    plan = plan_media(analysis, force_all=force_all)
+    pins = dict(image_pins or {})
     media = {"characters": {}, "backgrounds": {}, "cover": None}
+    style_dir = _style_out_dir(out_dir, art_style)
+    url_prefix = lambda fn: _media_public_url(analysis.book_id, art_style, fn)
+    char_filter = set(character_ids or [])
+    scene_filter = set(scene_ids or [])
+    want_cover = scope in ("all", "cover") or (scope == "selected" and include_cover)
+    want_chars = scope in ("all", "characters") or (scope == "selected" and char_filter)
+    want_bgs = scope in ("all", "backgrounds") or (scope == "selected" and scene_filter)
+    skip = existing_media or {}
+    skip_chars = set((skip.get("characters") or {}).keys())
+    skip_bgs = set((skip.get("backgrounds") or {}).keys())
+    skip_cover = bool(skip.get("cover"))
 
     def _emit(kind, key, url):
         if kind == "cover":
@@ -126,32 +183,71 @@ def generate_media(analysis: BookAnalysis, out_dir: str,
             on_item(kind, key, url)
 
     # Cover first so a real thumbnail replaces the spinner early.
-    cover_prompt = (f"{style_tag}, evocative book cover key art for "
-                    f"'{analysis.title}'. No text.")
-    cpath = _gen_one(cover_prompt, reference_images,
-                     os.path.join(out_dir, "cover.png"))
-    if cpath:
-        _emit("cover", "cover", f"/media/{analysis.book_id}/cover.png")
+    if want_cover and not skip_cover:
+        cover_desc = f"Evocative book cover key art for '{analysis.title}'. No text."
+        cpath, _ = _gen_one(
+            cover_desc, reference_images, os.path.join(style_dir, "cover.png"),
+            subject_type="background", art_style=art_style, kind="cover",
+            allow_gemini=allow_gemini, allow_freemium=allow_freemium,
+            allow_local=allow_local, on_event=on_event,
+        )
+        if cpath:
+            _emit("cover", "cover", url_prefix("cover.png"))
 
     by_id = {c.id: c for c in analysis.characters}
-    for cid in plan.characters_to_generate:
-        c = by_id[cid]
-        prompt = (f"{style_tag}, full-body character portrait, transparent "
-                  f"background. {c.name}: {c.description}")
-        path = _gen_one(prompt, reference_images,
-                        os.path.join(out_dir, f"char_{cid}.png"))
-        if path:
-            _emit("characters", cid, f"/media/{analysis.book_id}/char_{cid}.png")
-    for cid in plan.characters_from_stock:
-        _emit("characters", cid, _stock_sprite(cid, by_id[cid].gender))
+    if want_chars:
+        for cid in plan.characters_to_generate:
+            if char_filter and cid not in char_filter:
+                continue
+            if cid in skip_chars:
+                continue
+            c = by_id[cid]
+            desc = f"{c.name}: {c.description}".strip(": ")
+            char_refs = reference_bytes_for_character(cid, analysis, reference_images)
+            pin = pins.get(cid) or {}
+            seed = pin.get("seed")
+            if seed is None:
+                seed = _stable_seed(cid)
+            path, meta = _gen_one(
+                desc, char_refs, os.path.join(style_dir, f"char_{cid}.png"),
+                subject_type="character", art_style=art_style, kind="character",
+                allow_gemini=allow_gemini, allow_freemium=allow_freemium,
+                allow_local=allow_local, seed=seed,
+                prefer_provider=pin.get("provider"),
+                on_event=on_event,
+            )
+            if path:
+                _emit("characters", cid, url_prefix(f"char_{cid}.png"))
+                if meta.get("provider"):
+                    pins[cid] = {"provider": meta["provider"], "seed": meta.get("seed", seed)}
+        for cid in plan.characters_from_stock:
+            if char_filter and cid not in char_filter:
+                continue
+            if cid in skip_chars:
+                continue
+            url = _stock_sprite(cid, by_id[cid].gender)
+            stock_path = os.path.join(
+                os.environ.get("DATA_DIR", "./data"), "media",
+                url.removeprefix("/media/"))
+            if os.path.isfile(stock_path):
+                _emit("characters", cid, url)
 
     by_scene = {s.id: s for s in analysis.scenes}
-    for sid in plan.backgrounds_to_generate:
-        s = by_scene[sid]
-        prompt = (f"{style_tag}, wide scene background, no characters. "
-                  f"{s.location}. {s.background_desc}")
-        path = _gen_one(prompt, reference_images,
-                        os.path.join(out_dir, f"bg_{sid}.png"))
-        if path:
-            _emit("backgrounds", sid, f"/media/{analysis.book_id}/bg_{sid}.png")
+    if want_bgs:
+        for sid in plan.backgrounds_to_generate:
+            if scene_filter and sid not in scene_filter:
+                continue
+            if sid in skip_bgs:
+                continue
+            s = by_scene[sid]
+            desc = f"{s.location}. {s.background_desc}".strip(". ")
+            path, _ = _gen_one(
+                desc, reference_images, os.path.join(style_dir, f"bg_{sid}.png"),
+                subject_type="background", art_style=art_style, kind="background",
+                allow_gemini=allow_gemini, allow_freemium=allow_freemium,
+                allow_local=allow_local, on_event=on_event,
+            )
+            if path:
+                _emit("backgrounds", sid, url_prefix(f"bg_{sid}.png"))
+    media["image_pins"] = pins
     return media

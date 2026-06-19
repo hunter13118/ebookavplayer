@@ -35,7 +35,7 @@ def main() -> int:
         print("! GEMINI_API_KEY not set — set it and retry."); return 2
 
     from server.epub.parse import parse_epub
-    from server.analyze.gemini import analyze_book
+    from server.analyze.extract import extract_book
     from server.images.generate import generate_media, plan_media
 
     print(f"[1/3] parsing {epub} ...")
@@ -43,8 +43,8 @@ def main() -> int:
     print(f"      title={book.title!r} author={book.author!r} "
           f"chapters={len(book.chapters)} embedded_images={len(book.images)}")
 
-    print("[2/3] Gemini mega-pass (one request) ...")
-    analysis = analyze_book(book.book_id, book.title, book.author,
+    print("[2/3] text extraction (Gemini → freemium fallback) ...")
+    analysis = extract_book(book.book_id, book.title, book.author,
                             book.body_text, reference_images=book.images)
     n_primary = sum(1 for c in analysis.characters if c.importance == "primary")
     n_lines = sum(len(s.lines) for s in analysis.scenes)
