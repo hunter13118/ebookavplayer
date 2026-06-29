@@ -58,11 +58,7 @@ export default function BannerStack({ banners, bookId, className = "", autoDismi
     [banners, dismissed],
   );
 
-  // Show only the newest banner — avoids a wall of ingest notices on refresh.
-  const visible = useMemo(() => {
-    if (!pending.length) return [];
-    return [pending[pending.length - 1]];
-  }, [pending]);
+  const visible = useMemo(() => pending, [pending]);
 
   useEffect(() => {
     visible.forEach((b) => {
