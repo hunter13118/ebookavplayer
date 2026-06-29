@@ -263,7 +263,7 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
 
 
 
-  const processing = bk.status !== "error" && bk.status !== "ready"
+  const processing = bk.status !== "error" && (bk.status !== "ready" || bk.stage !== "done")
     && (bk.progress != null && bk.progress < 1);
 
   const imaging = imagingJob.active;
