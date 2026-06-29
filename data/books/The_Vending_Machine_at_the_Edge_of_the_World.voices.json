@@ -1,0 +1,16 @@
+{
+  "characters": {
+    "mei": {
+      "source": "edge",
+      "voice": "en-ZA-LeahNeural"
+    },
+    "kuro": {
+      "source": "edge",
+      "voice": "en-NG-AbeoNeural"
+    }
+  },
+  "narrator": {
+    "source": "edge",
+    "voice": "en-US-GuyNeural"
+  }
+}

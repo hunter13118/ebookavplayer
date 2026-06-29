@@ -1,0 +1,58 @@
+{
+  "extract": {
+    "order": [
+      "gemini",
+      "cerebras",
+      "groq",
+      "mistral",
+      "openrouter"
+    ],
+    "disabled": [
+      "gemini"
+    ]
+  },
+  "image": {
+    "order": [
+      "gemini_image",
+      "freemium_image",
+      "local_sd"
+    ],
+    "disabled": [
+      "gemini_image"
+    ]
+  },
+  "image_freemium_character": {
+    "order": [
+      "cloudflare",
+      "pollinations-anon",
+      "huggingface",
+      "pollinations-seed"
+    ],
+    "disabled": []
+  },
+  "image_freemium_background": {
+    "order": [
+      "cloudflare",
+      "pollinations-anon",
+      "pollinations-seed",
+      "huggingface"
+    ],
+    "disabled": []
+  },
+  "gemini_text": {
+    "order": [
+      "gemini-2.5-flash",
+      "gemini-2.0-flash",
+      "gemini-1.5-flash"
+    ],
+    "disabled": []
+  },
+  "gemini_image_models": {
+    "order": [
+      "gemini-2.5-flash-image",
+      "gemini-3.1-flash-image",
+      "gemini-3-pro-image"
+    ],
+    "disabled": []
+  }
+}

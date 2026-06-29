@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Freemium gallery · 2026-06-24T22:12:31.130Z</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #0f1117; color: #e8eaef; padding: 24px; }
+    h1 { font-size: 1.25rem; margin-bottom: 8px; }
+    .sub { color: #9aa3b2; font-size: 0.85rem; margin-bottom: 20px; max-width: 900px; line-height: 1.45; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
+    .card { background: #1a1d29; border: 1px solid #2a3040; border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
+    .card header { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; font-size: 0.85rem; border-bottom: 1px solid #2a3040; }
+    .badge { font-size: 0.7rem; padding: 2px 8px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.04em; }
+    .badge.ok { background: #1e3a2f; color: #7dffb2; }
+    .badge.fail { background: #3a1e1e; color: #ff8a8a; }
+    .badge.skip { background: #2a2a1e; color: #d4c86a; }
+    .thumb { aspect-ratio: 3/4; background: repeating-conic-gradient(#2a3040 0% 25%, #222633 0% 50%) 50% / 16px 16px; display: flex; align-items: center; justify-content: center; }
+    .thumb img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+    .thumb.empty { color: #6b7280; font-size: 0.85rem; }
+    .meta, .chain { font-size: 0.75rem; color: #9aa3b2; padding: 8px 12px; }
+    .chain { border-top: 1px solid #2a3040; color: #6b7280; }
+    .err { color: #ff8a8a; }
+    a { color: #7eb6ff; }
+  </style>
+</head>
+<body>
+  <h1>Freemium image providers — same prompt</h1>
+  <p class="sub">young woman with dark hair, gentle smile, visual novel portrait<br/><a href="results.md">results.md</a></p>
+  <div class="grid">
+      <article class="card fail">
+        <header><strong>gemini_image</strong><span class="badge fail">fail</span></header>
+        <div class="thumb empty">failed</div>
+        <p class="meta err">gemini_image: all models failed (3) — gemini gemini-2.5-flash-image HTTP 429: {
+  &quot;error&quot;: {
+    &quot;code&quot;: 429,
+    &quot;message&quot;: &quot;Your prepayment credits are depl</p>
+      </article>
+
+      <article class="card skip">
+        <header><strong>workers-ai</strong><span class="badge skip">skip</span></header>
+        <div class="thumb empty">skipped</div>
+        <p class="meta err">edge-only: Workers AI needs env.AI binding (deployed portfolio worker or globalThis.__WRANGLER_AI__ in wrangler dev)</p>
+      </article>
+
+      <article class="card ok">
+        <header><strong>cloudflare</strong><span class="badge ok">ok · 2.4s</span></header>
+        <div class="thumb"><img src="images/cloudflare.png" alt="cloudflare" loading="lazy" /></div>
+        <p class="meta">@cf/black-forest-labs/flux-1-schnell · 414795 bytes</p>
+        <p class="chain">cloudflare</p>
+      </article>
+
+      <article class="card ok">
+        <header><strong>pollinations-anon</strong><span class="badge ok">ok · 1.4s</span></header>
+        <div class="thumb"><img src="images/pollinations-anon.png" alt="pollinations-anon" loading="lazy" /></div>
+        <p class="meta">flux-free · 551173 bytes</p>
+        <p class="chain">pollinations-anon</p>
+      </article>
+
+      <article class="card ok">
+        <header><strong>pollinations-seed</strong><span class="badge ok">ok · 1.6s</span></header>
+        <div class="thumb"><img src="images/pollinations-seed.png" alt="pollinations-seed" loading="lazy" /></div>
+        <p class="meta">flux-free · 551173 bytes</p>
+        <p class="chain">pollinations-seed</p>
+      </article>
+
+      <article class="card fail">
+        <header><strong>huggingface</strong><span class="badge fail">fail</span></header>
+        <div class="thumb empty">failed</div>
+        <p class="meta err">huggingface: HTTP 402 — Inference Provider credits exhausted for black-forest-labs/FLUX.1-schnell. You have depleted your monthly included credits. Purchase pre-paid credits to continue using Inference Providers. Alternatively, subscribe to PRO to get 20x more included usage.</p>
+      </article>
+
+      <article class="card ok">
+        <header><strong>cascade (no workers-ai)</strong><span class="badge ok">ok · 2.0s</span></header>
+        <div class="thumb"><img src="images/cascade_no_workers-ai_.png" alt="cascade (no workers-ai)" loading="lazy" /></div>
+        <p class="meta">flux-free · 551173 bytes</p>
+        <p class="chain">gemini_image → pollinations-seed</p>
+      </article></div>
+</body>
+</html>

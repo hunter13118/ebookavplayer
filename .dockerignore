@@ -1,0 +1,19 @@
+web/
+.git/
+.github/
+.pytest_cache/
+__pycache__/
+*.pyc
+.env
+.env.*
+!.env.example
+data/books/
+data/media/
+data/uploads/
+data/packs/
+data/audio/
+terminals/
+*.md
+!deploy/
+IMAGE AND VOICE HANDOFF/
+agent-tools/

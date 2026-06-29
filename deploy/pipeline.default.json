@@ -1,0 +1,18 @@
+{
+  "extract": {
+    "order": ["gemini", "cerebras", "groq", "mistral", "openrouter", "cloudflare"],
+    "disabled": []
+  },
+  "image": {
+    "order": ["gemini_image", "freemium_image", "local_sd"],
+    "disabled": []
+  },
+  "image_freemium_character": {
+    "order": ["pollinations-anon", "pollinations-seed", "huggingface", "cloudflare", "workers-ai"],
+    "disabled": []
+  },
+  "image_freemium_background": {
+    "order": ["pollinations-anon", "pollinations-seed", "huggingface", "cloudflare", "workers-ai"],
+    "disabled": []
+  }
+}

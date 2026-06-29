@@ -1,0 +1,124 @@
+{
+  "scenes": 2,
+  "lines": 45,
+  "characters": [
+    {
+      "id": "mei",
+      "name": "Mei Asano"
+    },
+    {
+      "id": "kuro",
+      "name": "Kuro"
+    }
+  ],
+  "word_coverage": {
+    "source_words": 964,
+    "script_words": 802,
+    "unique_missing": 104,
+    "unique_extra": 0,
+    "missing_counts": {
+      "the": 17,
+      "for": 6,
+      "a": 5,
+      "and": 4,
+      "machine": 4,
+      "chapter": 4,
+      "you": 3,
+      "of": 3,
+      "that": 3,
+      "to": 3,
+      "vending": 3,
+      "kuro": 3,
+      "at": 3,
+      "afterword": 2,
+      "volume": 2,
+      "i": 2,
+      "it": 2,
+      "her": 2,
+      "edge": 2,
+      "world": 2
+    },
+    "extra_counts": {},
+    "coverage_ratio": 0.832
+  },
+  "structural_issues": [
+    {
+      "line": 3,
+      "code": "tag_merged_with_narration",
+      "text": "he said, climbing out and brushing imaginary dust from a uniform that matched the boys’ uniform ",
+      "hint": "split after 'he said'"
+    }
+  ],
+  "chapter_coverage": [
+    {
+      "chapter": 1,
+      "title": "Afterword",
+      "words": 95,
+      "overlap_ratio": 0.6027,
+      "likely_missing": false
+    },
+    {
+      "chapter": 2,
+      "title": "The Vending Machine at the Edge of the World",
+      "words": 26,
+      "overlap_ratio": 0.7143,
+      "likely_missing": false
+    },
+    {
+      "chapter": 3,
+      "title": "Chapter 2",
+      "words": 470,
+      "overlap_ratio": 0.9587,
+      "likely_missing": false
+    },
+    {
+      "chapter": 4,
+      "title": "Chapter 1",
+      "words": 373,
+      "overlap_ratio": 0.977,
+      "likely_missing": false
+    }
+  ],
+  "chapter_signature_misses": [
+    {
+      "chapter": 1,
+      "title": "Afterword",
+      "signature": "afterword afterword thank you very much for picking"
+    },
+    {
+      "chapter": 2,
+      "title": "The Vending Machine at the Edge of the World",
+      "signature": "the vending machine at the edge of the"
+    },
+    {
+      "chapter": 3,
+      "title": "Chapter 2",
+      "signature": "chapter 2 chapter two the boy who came"
+    },
+    {
+      "chapter": 4,
+      "title": "Chapter 1",
+      "signature": "chapter 1 chapter one the machine that shouldn"
+    },
+    {
+      "chapter": 5,
+      "title": "Contents",
+      "signature": "contents contents title page chapter one the machine"
+    }
+  ],
+  "illustrations": {
+    "epub_images": 2,
+    "epub_markers": {
+      "3": 1,
+      "4": 1
+    },
+    "analysis_refs": 2
+  },
+  "substring_misses": [],
+  "kind_counts": {
+    "narration": 26,
+    "dialogue": 19
+  },
+  "book_id": "The_Vending_Machine_at_the_Edge_of_the_World",
+  "epub": "C:\\Users\\mtuhr\\Documents\\Project Repos\\ebookavplayer\\data\\uploads\\The_Vending_Machine_at_the_Edge_of_the_World.epub"
+}

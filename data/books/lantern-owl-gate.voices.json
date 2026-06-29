@@ -1,0 +1,20 @@
+{
+  "narrator": {
+    "source": "edge",
+    "voice": "en-AU-WilliamMultilingualNeural"
+  },
+  "characters": {
+    "mira": {
+      "source": "edge",
+      "voice": "en-IN-NeerjaNeural"
+    },
+    "orin": {
+      "source": "edge",
+      "voice": "en-NG-AbeoNeural"
+    },
+    "sable": {
+      "source": "edge",
+      "voice": "en-HK-SamNeural"
+    }
+  }
+}

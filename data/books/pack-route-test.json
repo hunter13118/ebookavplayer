@@ -1,0 +1,18 @@
+{
+  "book_id": "pack-route-test",
+  "title": "Pack Route",
+  "author": "QA",
+  "scenes": [
+    {
+      "id": "s1",
+      "background": "/media/pack-route-test/semi-real/bg.png",
+      "lines": [
+        {
+          "idx": 0,
+          "text": "Line.",
+          "character_id": "narrator"
+        }
+      ]
+    }
+  ]
+}

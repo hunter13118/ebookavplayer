@@ -1,0 +1,100 @@
+{
+  "meta": {
+    "when": "2026-06-24T22:03:30.662Z",
+    "promptDescription": "young woman with dark hair, gentle smile, visual novel portrait",
+    "promptFull": "Portrait bust character sprite, head and shoulders, large readable face, centered composition, expressive eyes and hair, front-facing or 3/4 view, young woman with dark hair, gentle smile, visual novel portrait character cutout on a fully transparent background (alpha channel), no backdrop, no floor shadow, no scenery, even lighting, face and hair fill most of the frame, thumbnail-friendly, visual novel dialogue portrait ready. Art style: clean digital illustration.",
+    "subject": "character",
+    "style": "neutral"
+  },
+  "rows": [
+    {
+      "provider": "gemini_image",
+      "ok": true,
+      "model": "flux-free",
+      "winner": "pollinations-seed",
+      "bytes": 551173,
+      "contentType": "image/png",
+      "attempts": [
+        "gemini_image",
+        "pollinations-seed"
+      ],
+      "ms": 3261,
+      "imageFile": "images/gemini_image.png"
+    },
+    {
+      "provider": "workers-ai",
+      "ok": false,
+      "skipped": true,
+      "error": "no Workers AI binding in this Node process (edge-only)",
+      "ms": 0
+    },
+    {
+      "provider": "cloudflare",
+      "ok": true,
+      "model": "flux-free",
+      "winner": "pollinations-seed",
+      "bytes": 551173,
+      "contentType": "image/png",
+      "attempts": [
+        "cloudflare",
+        "pollinations-seed"
+      ],
+      "ms": 1630,
+      "imageFile": "images/cloudflare.png"
+    },
+    {
+      "provider": "pollinations-anon",
+      "ok": true,
+      "model": "flux-free",
+      "winner": "pollinations-anon",
+      "bytes": 551173,
+      "contentType": "image/png",
+      "attempts": [
+        "pollinations-anon"
+      ],
+      "ms": 692,
+      "imageFile": "images/pollinations-anon.png"
+    },
+    {
+      "provider": "pollinations-seed",
+      "ok": true,
+      "model": "flux-free",
+      "winner": "pollinations-seed",
+      "bytes": 551173,
+      "contentType": "image/png",
+      "attempts": [
+        "pollinations-seed"
+      ],
+      "ms": 1186,
+      "imageFile": "images/pollinations-seed.png"
+    },
+    {
+      "provider": "huggingface",
+      "ok": true,
+      "model": "flux-free",
+      "winner": "pollinations-seed",
+      "bytes": 551173,
+      "contentType": "image/png",
+      "attempts": [
+        "huggingface",
+        "pollinations-seed"
+      ],
+      "ms": 1526,
+      "imageFile": "images/huggingface.png"
+    },
+    {
+      "provider": "cascade (no workers-ai)",
+      "ok": true,
+      "winner": "pollinations-seed",
+      "model": "flux-free",
+      "bytes": 551173,
+      "contentType": "image/png",
+      "attempts": [
+        "gemini_image",
+        "pollinations-seed"
+      ],
+      "ms": 1687,
+      "imageFile": "images/cascade_no_workers-ai_.png"
+    }
+  ]
+}

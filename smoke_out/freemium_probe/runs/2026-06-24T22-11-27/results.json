@@ -1,0 +1,89 @@
+{
+  "meta": {
+    "when": "2026-06-24T22:11:27.086Z",
+    "promptDescription": "young woman with dark hair, gentle smile, visual novel portrait",
+    "promptFull": "Portrait bust character sprite, head and shoulders, large readable face, centered composition, expressive eyes and hair, front-facing or 3/4 view, young woman with dark hair, gentle smile, visual novel portrait character cutout on a fully transparent background (alpha channel), no backdrop, no floor shadow, no scenery, even lighting, face and hair fill most of the frame, thumbnail-friendly, visual novel dialogue portrait ready. Art style: clean digital illustration.",
+    "subject": "character",
+    "style": "neutral"
+  },
+  "rows": [
+    {
+      "provider": "gemini_image",
+      "ok": false,
+      "error": "gemini_image: all models failed (3) — gemini gemini-2.5-flash-image HTTP 429: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"Your prepayment credits are depl",
+      "attempts": [
+        "gemini_image"
+      ],
+      "ms": 719
+    },
+    {
+      "provider": "workers-ai",
+      "ok": false,
+      "skipped": true,
+      "error": "edge-only: Workers AI needs env.AI binding (deployed portfolio worker or globalThis.__WRANGLER_AI__ in wrangler dev)",
+      "ms": 0
+    },
+    {
+      "provider": "cloudflare",
+      "ok": true,
+      "model": "@cf/black-forest-labs/flux-1-schnell",
+      "winner": "cloudflare",
+      "bytes": 410522,
+      "contentType": "image/png",
+      "attempts": [
+        "cloudflare"
+      ],
+      "ms": 2593,
+      "imageFile": "images/cloudflare.png"
+    },
+    {
+      "provider": "pollinations-anon",
+      "ok": true,
+      "model": "flux-free",
+      "winner": "pollinations-anon",
+      "bytes": 551173,
+      "contentType": "image/png",
+      "attempts": [
+        "pollinations-anon"
+      ],
+      "ms": 1340,
+      "imageFile": "images/pollinations-anon.png"
+    },
+    {
+      "provider": "pollinations-seed",
+      "ok": true,
+      "model": "flux-free",
+      "winner": "pollinations-seed",
+      "bytes": 551173,
+      "contentType": "image/png",
+      "attempts": [
+        "pollinations-seed"
+      ],
+      "ms": 1401,
+      "imageFile": "images/pollinations-seed.png"
+    },
+    {
+      "provider": "huggingface",
+      "ok": false,
+      "error": "huggingface: HTTP 400 {\"error\":\"Model not supported by provider fal-ai\"}",
+      "attempts": [
+        "huggingface"
+      ],
+      "ms": 395
+    },
+    {
+      "provider": "cascade (no workers-ai)",
+      "ok": true,
+      "winner": "pollinations-seed",
+      "model": "flux-free",
+      "bytes": 551173,
+      "contentType": "image/png",
+      "attempts": [
+        "gemini_image",
+        "pollinations-seed"
+      ],
+      "ms": 1898,
+      "imageFile": "images/cascade_no_workers-ai_.png"
+    }
+  ]
+}

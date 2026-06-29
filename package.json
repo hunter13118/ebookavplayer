@@ -1,0 +1,32 @@
+{
+  "name": "ebookavplayer",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "fflate": "^0.8.2",
+    "jpeg-js": "^0.4.4",
+    "pngjs": "^7.0.0",
+    "wrangler": "^4.0.0"
+  },
+  "scripts": {
+    "dev:worker": "node scripts/sync-dev-vars.mjs && wrangler dev --config worker/wrangler.toml",
+    "local:edge": "npm run dev:worker",
+    "dev:web": "npm --prefix web run dev",
+    "test:sprite-purge": "node tests/sprite-bg-purge.test.mjs",
+    "test:freemium-image": "node tests/freemium-image.test.mjs",
+    "test:imaging-lock": "node tests/imaging-lock.test.mjs",
+    "test:moment-route": "node tests/moment-route.test.mjs",
+    "test:compile-playback-inserts": "node tests/compile-playback-inserts.test.mjs",
+    "test:reference-images": "node tests/reference-images.test.mjs",
+    "test:illustration-refs": "node tests/illustration-refs.test.mjs",
+    "test:external-refs": "node tests/external-refs.test.mjs",
+    "test:job-sse": "node tests/job-sse-stream.test.mjs",
+    "test:kv-budget": "node tests/kv-budget.test.mjs",
+    "test:pollinations-live": "node scripts/test-freemium-image-live.mjs --preflight",
+    "test:pack-edge": "node tests/pack-build-edge.test.mjs",
+    "test:offline-pack": "npm --prefix web run test && node tests/pack-build-edge.test.mjs",
+    "test:freemium-gallery": "node scripts/freemium-gallery-probe.mjs",
+    "test:freemium-live": "node scripts/test-freemium-image-live.mjs --remote-health",
+    "test:freemium-live-local": "node scripts/test-freemium-image-live.mjs --local"
+  }
+}
