@@ -2,7 +2,7 @@
 // Falls back to offline pack audio when an audiobook-tier pack is active.
 import { apiUrl } from "../api.js";
 import { lineWithVoice } from "./voiceOverrides.js";
-import { lineGapMs, estimateDurationSec } from "./timing.js";
+import { lineGapMs, estimateDurationSec, isCheckpoint } from "./timing.js";
 import { getOfflineAudioBlob } from "../offline/packBridge.js";
 import {
   buildSpeechUnits, unitToLine, lineUsesOfflineWholeLine, TTS_CHUNK_MAX_CHARS,
@@ -156,7 +156,7 @@ export async function speakLine(line, { rate, onStart, onEnd, voiceOverrides, on
  * while the current one plays. Line callbacks fire once per script line.
  */
 export async function speakLinesViaEdge(lines, {
-  rate, getRate, startIndex = 0, onLine, onLinePart, onAdvance, onEnd, voiceOverrides,
+  rate, getRate, startIndex = 0, checkpointEvery = 0, onLine, onLinePart, onAdvance, onEnd, voiceOverrides,
 } = {}) {
   const list = lines || [];
   if (!list.length) { onEnd?.(); return false; }
@@ -181,7 +181,12 @@ export async function speakLinesViaEdge(lines, {
     const speakLineObj = unit.offlineWhole ? unit.line : unitToLine(unit);
     const blobPromise = prefetch;
     const next = units[u + 1];
-    prefetch = next
+    const isLineEnd = unit.partIndex === unit.partTotal - 1;
+    // Don't prefetch the next line if the current line (about to finish) is a checkpoint.
+    // This gives the orchestrator time to halt before the next line's audio is queued.
+    const isCurrentLineCheckpoint = isLineEnd && isCheckpoint(unit.lineIndex, checkpointEvery);
+    const shouldPrefetchNext = !next || !isCurrentLineCheckpoint;
+    prefetch = shouldPrefetchNext && next
       ? fetchTtsBlob(next.offlineWhole ? next.line : unitToLine(next), voiceOverrides)
       : null;
 
@@ -189,7 +194,6 @@ export async function speakLinesViaEdge(lines, {
     const preparedBlob = await blobPromise.catch(() => null);
 
     const isLineStart = unit.partIndex === 0;
-    const isLineEnd = unit.partIndex === unit.partTotal - 1;
     const lineIdx = unit.lineIndex;
 
     // eslint-disable-next-line no-await-in-loop

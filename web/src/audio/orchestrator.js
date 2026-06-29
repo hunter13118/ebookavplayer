@@ -93,6 +93,7 @@ export class Orchestrator {
     await speakLinesViaEdge(this.lines, {
       getRate: () => this.speed,
       startIndex,
+      checkpointEvery: this.checkpointEvery,
       voiceOverrides: this.voiceOverrides,
       onLine: (i, line) => {
         this.index = i;
