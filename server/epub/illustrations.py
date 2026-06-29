@@ -11,6 +11,11 @@ def _guess_ext(blob: bytes) -> str:
         return ".jpg"
     if len(blob) > 12 and blob[:4] == b"RIFF" and blob[8:12] == b"WEBP":
         return ".webp"
+    head = blob[:256].lstrip()
+    if head.startswith(b"<?xml") or head.startswith(b"<svg"):
+        return ".svg"
+    if b"<svg" in head:
+        return ".svg"
     return ".jpg"
 
 

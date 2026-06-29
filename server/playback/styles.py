@@ -105,6 +105,8 @@ def flat_media_from_slot(slot: dict | None) -> dict:
     return {
         "characters": dict(slot.get("characters") or {}),
         "backgrounds": dict(slot.get("backgrounds") or {}),
+        "expressions": dict(slot.get("expressions") or {}),
+        "inserts": dict(slot.get("inserts") or {}),
         "cover": slot.get("cover"),
     }
 
@@ -202,9 +204,27 @@ def enable_pixel_filter(media: dict, *, source_style: str | None = None) -> dict
     return m
 
 
+def generation_target_style(media: dict | None, requested: str) -> str:
+    """Raster assets live on the source style when pixel filter mode is active."""
+    m = ensure_manifest(media, default_active=requested)
+    style = normalize_style_id(requested)
+    slot = m.get("styles", {}).get(style) or {}
+    if is_filter_style(slot):
+        return normalize_style_id(slot.get("filter_source") or first_ready_style(m, exclude=("pixel",)) or "semi-real")
+    return style
+
+
 def mark_style_generating(media: dict, style: str) -> dict:
     m = ensure_manifest(media)
     style = normalize_style_id(style)
+    slot = m.get("styles", {}).get(style) or {}
+    if is_filter_style(slot):
+        # Never mutate the filter slot — generate into the source style instead.
+        source = generation_target_style(m, style)
+        slot = _style_slot(m, source)
+        slot.pop("mode", None)
+        slot["complete"] = False
+        return m
     slot = _style_slot(m, style)
     slot.pop("mode", None)
     slot["complete"] = False

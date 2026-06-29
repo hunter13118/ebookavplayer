@@ -4,7 +4,7 @@ import { setActiveStyle, generateArtStyle } from "../api.js";
 const BADGE = { ready: "●", generating: "◐", empty: "○", filter: "▤" };
 
 /** In-player art style switcher (ART_STYLES P2–P4). */
-export default function ArtStyleSwitcher({ book, disabled, onRefresh, onJobStarted }) {
+export default function ArtStyleSwitcher({ book, disabled, onRefresh, onJobStarted, onRegenFailed }) {
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState(null);
   const [err, setErr] = useState("");
@@ -30,13 +30,20 @@ export default function ArtStyleSwitcher({ book, disabled, onRefresh, onJobStart
   async function startGenerate(styleId) {
     setBusy(true);
     setErr("");
+    const st = styles.find((s) => s.id === styleId);
     try {
-      const { job_id: jobId } = await generateArtStyle(book.book_id, styleId);
+      const res = await generateArtStyle(book.book_id, styleId);
+      if (!res?.job_id) throw new Error("generate-style: no job id in response");
       setConfirm(null);
-      onJobStarted?.(jobId);
+      onJobStarted?.(res.job_id, {
+        label: st?.label ? `${st.label} style` : "art style",
+        count: 1,
+      });
       await onRefresh?.();
-    } catch {
-      setErr("Could not start art generation.");
+    } catch (e) {
+      const msg = e?.message || "Could not start art generation.";
+      setErr(msg);
+      onRegenFailed?.(msg);
     } finally {
       setBusy(false);
     }
@@ -79,8 +86,11 @@ export default function ArtStyleSwitcher({ book, disabled, onRefresh, onJobStart
       {confirm && (
         <div className="vae-style-confirm" data-testid="style-generate-dialog">
           <p>
-            Generate <strong>{confirm.label}</strong> art? This runs in the background and may
-            take several minutes.
+            Generate <strong>{confirm.label}</strong> art?
+            {confirm.id === "pixel" && (
+              <> This creates new Stardew-style portraits (not just a CSS filter).</>
+            )}
+            {" "}Runs in the background and may take several minutes.
           </p>
           <div className="vae-style-confirm-actions">
             <button type="button" onClick={() => setConfirm(null)}>Cancel</button>

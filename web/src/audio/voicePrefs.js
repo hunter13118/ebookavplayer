@@ -9,6 +9,13 @@ export const KEYS = {
   theme: "vae-theme",                  // light | dark
   spriteBorders: "vae-sprite-borders",
   checkpointEvery: "vae-checkpoint-every",
+  rewindSteps: "vae-rewind-steps",
+  nextSteps: "vae-next-steps",
+  portraitLayout: "vae-portrait-layout",
+  progressScope: "vae-progress-scope",
+  narratorPitch: "vae-narrator-pitch",
+  narratorRate: "vae-narrator-rate",
+  narratorVolume: "vae-narrator-volume",
 };
 
 const NARRATOR_M = "en-US-AndrewMultilingualNeural";
@@ -22,10 +29,18 @@ export function getPrefs() {
     speed: parseFloat(g(KEYS.speed, "1")) || 1,
     autoAdvance: g(KEYS.autoAdvance, "true") !== "false",
     displayStyle: g(KEYS.displayStyle, "smooth"),
-    artStyle: g(KEYS.artStyle, "semi-real"),
+    artStyle: g(KEYS.artStyle, "anime"),
     theme: g(KEYS.theme, "dark"),
     spriteBorders: g(KEYS.spriteBorders, "false") === "true",
     checkpointEvery: parseInt(g(KEYS.checkpointEvery, "40"), 10) || 0,
+    rewindSteps: parseInt(g(KEYS.rewindSteps, "3"), 10) || 3,
+    nextSteps: parseInt(g(KEYS.nextSteps, "1"), 10) || 1,
+    portraitLayout: g(KEYS.portraitLayout, "false") === "true",
+    progressScope: g(KEYS.progressScope, "chapter"),
+    narratorPitch: g(KEYS.narratorPitch, "+0Hz"),
+    narratorRate: g(KEYS.narratorRate, "+0%"),
+    narratorVolume: g(KEYS.narratorVolume, "+0%"),
+    fullscreen: false,
   };
 }
 export function setPref(key, value) {

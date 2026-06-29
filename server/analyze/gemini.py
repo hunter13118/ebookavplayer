@@ -12,6 +12,7 @@ import os
 from typing import Any, Callable
 
 from ..images.model_lists import GEMINI_TEXT_MODELS
+from ..pipeline.registry import resolved_gemini_text_models
 from .gemini_errors import (
     call_with_rate_limit_retry,
     is_quota_exhausted,
@@ -113,7 +114,9 @@ def analyze_book(book_id: str, title: str, author: str, body_text: str,
         raise GeminiUnavailable(f"google-genai not installed: {e}", code="no_sdk") from e
 
     models = [model] if model else []
-    models += [m for m in GEMINI_TEXT_MODELS if m not in models]
+    models += [m for m in resolved_gemini_text_models() if m not in models]
+    if not models:
+        models += [m for m in GEMINI_TEXT_MODELS if m not in models]
     client = genai.Client(api_key=api_key)
     max_chars = int(os.environ.get("GEMINI_MAX_CHARS", "120000"))
     if max_chars and len(body_text) > max_chars:

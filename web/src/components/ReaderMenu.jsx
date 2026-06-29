@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { fetchEdgeVoices, saveVoiceOverrides } from "../api.js";
-import { parseVoiceSelect, voiceSelectValue } from "../audio/voiceOverrides.js";
+import VoiceField from "./VoiceField.jsx";
 
 /** Hamburger sheet: narrator + per-character Edge TTS overrides. */
 export default function ReaderMenu({ book, open, onClose, onSaved }) {
@@ -20,19 +20,21 @@ export default function ReaderMenu({ book, open, onClose, onSaved }) {
     const map = book?.characters || {};
     return Object.entries(map)
       .filter(([id]) => id !== "narrator")
-      .map(([id, c]) => ({ id, name: c.name, voice: c.voice }));
+      .map(([id, c]) => ({
+        id, name: c.name, voice: c.voice, pitch: c.pitch, rate: c.rate,
+      }));
   }, [book]);
 
   const narratorCompiled = book?.characters?.narrator?.voice || "";
 
-  function setNarrator(value) {
-    setOverrides((o) => ({ ...o, narrator: parseVoiceSelect(value) }));
+  function setNarrator(ov) {
+    setOverrides((o) => ({ ...o, narrator: ov }));
   }
 
-  function setCharacter(cid, value) {
+  function setCharacter(cid, ov) {
     setOverrides((o) => ({
       ...o,
-      characters: { ...(o.characters || {}), [cid]: parseVoiceSelect(value) },
+      characters: { ...(o.characters || {}), [cid]: ov },
     }));
   }
 
@@ -49,27 +51,6 @@ export default function ReaderMenu({ book, open, onClose, onSaved }) {
 
   if (!open) return null;
 
-  function voiceOptions(compiledVoice, label) {
-    const opts = [
-      <option key="def" value={`default:${compiledVoice}`}>
-        {label} (from book{compiledVoice ? ` — ${compiledVoice.split("-").slice(-1)[0]}` : ""})
-      </option>,
-      <option key="up" value="uploaded" disabled title="Coming soon">
-        Uploaded voice (coming soon)
-      </option>,
-    ];
-    voices.forEach((v) => {
-      const short = v.id || v.ShortName;
-      const label = v.label || v.FriendlyName || v.Name || short;
-      opts.push(
-        <option key={short} value={`edge:${short}`}>
-          {label}
-        </option>,
-      );
-    });
-    return opts;
-  }
-
   return (
     <div className="vae-sheet-backdrop" data-testid="reader-menu" onClick={onClose}>
       <div className="vae-sheet" onClick={(e) => e.stopPropagation()}>
@@ -78,24 +59,31 @@ export default function ReaderMenu({ book, open, onClose, onSaved }) {
           <button type="button" className="vae-sheet-close" onClick={onClose}>×</button>
         </header>
 
-        <label className="vae-sheet-field">
-          Narrator
-          <select data-testid="voice-narrator"
-            value={voiceSelectValue(overrides.narrator, narratorCompiled)}
-            onChange={(e) => setNarrator(e.target.value)}>
-            {voiceOptions(narratorCompiled, "Default narrator")}
-          </select>
-        </label>
+        <p className="vae-sheet-hint">Active shows what plays now. ▶ previews the fox phrase.</p>
+
+        <VoiceField
+          label="Narrator"
+          testId="voice-narrator"
+          compiledVoice={narratorCompiled}
+          compiledPitch={book?.characters?.narrator?.pitch}
+          compiledRate={book?.characters?.narrator?.rate}
+          override={overrides.narrator}
+          voices={voices}
+          onChange={setNarrator}
+        />
 
         {characters.map((c) => (
-          <label key={c.id} className="vae-sheet-field">
-            {c.name}
-            <select data-testid={`voice-char-${c.id}`}
-              value={voiceSelectValue(overrides.characters?.[c.id], c.voice)}
-              onChange={(e) => setCharacter(c.id, e.target.value)}>
-              {voiceOptions(c.voice, `Default (${c.name})`)}
-            </select>
-          </label>
+          <VoiceField
+            key={c.id}
+            label={c.name}
+            testId={`voice-char-${c.id}`}
+            compiledVoice={c.voice}
+            compiledPitch={c.pitch}
+            compiledRate={c.rate}
+            override={overrides.characters?.[c.id]}
+            voices={voices}
+            onChange={(ov) => setCharacter(c.id, ov)}
+          />
         ))}
 
         {err && <p className="vae-sheet-err">{err}</p>}

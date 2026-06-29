@@ -3,9 +3,9 @@ import { bootLibrary, SAMPLE_BOOK } from "./fixtures.js";
 
 const MIXED = [
   { book_id: "ready-one", title: "A Ready Book", author: "X", status: "ready",
-    stage: "done", progress: 1, cover: "gradient:255,210", scenes: 2, lines: 9 },
+    stage: "done", progress: 1, cover: "gradient:255,210", scenes: 2, lines: 9, server_available: true },
   { book_id: "cooking", title: "Still Cooking", author: "Y", status: "processing",
-    stage: "imaging", progress: 0.45, cover: null, scenes: 3, lines: 12 },
+    stage: "imaging", progress: 0.45, cover: null, scenes: 3, lines: 12, server_available: true },
 ];
 
 test.describe("Library landing", () => {
@@ -27,8 +27,16 @@ test.describe("Library landing", () => {
   });
 
   test("clicking a ready book opens the player", async ({ page }) => {
-    await bootLibrary(page, { backend: { catalog: MIXED, detail: SAMPLE_BOOK } });
+    await bootLibrary(page, {
+      backend: {
+        catalog: MIXED,
+        detail: { ...SAMPLE_BOOK, book_id: "ready-one", title: "A Ready Book" },
+        packBook: { ...SAMPLE_BOOK, book_id: "ready-one", title: "A Ready Book" },
+      },
+    });
     await page.locator('[data-book="ready-one"]').click();
+    const skip = page.getByTestId("download-recommend-skip");
+    if (await skip.isVisible({ timeout: 20_000 }).catch(() => false)) await skip.click();
     await expect(page.getByTestId("progress")).toBeVisible();
     await expect(page.getByTestId("back")).toBeVisible();
   });

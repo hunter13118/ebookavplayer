@@ -2,12 +2,72 @@
 // placeholders are deterministic css-gradient tokens emitted by the backend
 // compiler so the experience renders before image-gen runs.
 import { apiBase } from "./api.js";
+import { lookupCachedMediaUrl, getActiveOfflinePackId } from "./offline/packBridge.js";
+
+/** Extract art-style folder from `/media/{bookId}/{style}/...` paths. */
+export function parseArtStyleFromMediaUrl(url) {
+  if (!url || typeof url !== "string") return null;
+  const path = url.split("?")[0];
+  const m = path.match(/^\/media\/[^/]+\/([^/]+)\//);
+  return m?.[1] || null;
+}
+
+/** Resolve art style for revert/commit — prefer comparison payload, then URL path. */
+export function resolveCompareArtStyle(book, comparison) {
+  if (comparison?.art_style) return comparison.art_style;
+  const fromUrl = parseArtStyleFromMediaUrl(comparison?.after_url || comparison?.before_url);
+  if (fromUrl) return fromUrl;
+  if (book?.active_style || book?.art_style) {
+    return book.active_style || book.art_style;
+  }
+  return "anime";
+}
+
+/** Resolve a /media/... path or absolute URL for <img> / CSS. Preserves ?v= cache-bust query. */
+export function mediaImageSrc(token) {
+  if (!token) return "";
+  if (token.startsWith("http://") || token.startsWith("https://")) return token;
+  if (!token.startsWith("/")) return token;
+
+  const qIdx = token.indexOf("?");
+  const path = qIdx >= 0 ? token.slice(0, qIdx) : token;
+  const query = qIdx >= 0 ? token.slice(qIdx) : "";
+
+  const isMomentAsset = /\/insert_\d+/i.test(path) || path.includes(".prev.");
+  if (!isMomentAsset && getActiveOfflinePackId()) {
+    const cached = lookupCachedMediaUrl(path);
+    if (cached) return cached;
+  }
+
+  const base = apiBase();
+  const resolved = base ? `${base}${path}` : path;
+  return `${resolved}${query}`;
+}
 
 /** Resolve a /media/... path or absolute URL for <img> / CSS. */
 export function mediaUrl(token) {
   if (!token) return "";
+  if (token.startsWith("http://") || token.startsWith("https://")) return token.split("?")[0];
+  if (token.startsWith("/")) {
+    const qIdx = token.indexOf("?");
+    const path = qIdx >= 0 ? token.slice(0, qIdx) : token;
+    if (getActiveOfflinePackId() && !/\/insert_\d+/i.test(path)) {
+      const cached = lookupCachedMediaUrl(path);
+      if (cached) return cached;
+    }
+    const base = apiBase();
+    return base ? `${base}${path}` : path;
+  }
+  return token;
+}
+
+/** Async resolver — checks installed offline pack blobs first. */
+export async function mediaUrlAsync(token) {
+  if (!token) return "";
   if (token.startsWith("http://") || token.startsWith("https://")) return token;
   if (token.startsWith("/")) {
+    const local = await resolveOfflineMediaUrl(token);
+    if (local) return local;
     const base = apiBase();
     return base ? `${base}${token}` : token;
   }

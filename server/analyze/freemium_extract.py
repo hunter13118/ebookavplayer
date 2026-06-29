@@ -18,14 +18,17 @@ log = logging.getLogger(__name__)
 PER_PROVIDER_TIMEOUT_SEC = 90
 MAX_CHUNK_TOKENS = int(os.environ.get("EXTRACT_CHUNK_MAX_TOKENS", "24000"))
 
-DEFAULT_CHAIN = ["gemini", "cerebras", "groq", "mistral", "openrouter"]
+DEFAULT_CHAIN = ["gemini", "cerebras", "groq", "mistral", "openrouter", "cloudflare"]
 
 _PROVIDER_MODELS = {
     "gemini": "gemini-2.5-flash",
-    "cerebras": "llama-3.3-70b",
+    "cerebras": os.environ.get("CEREBRAS_EXTRACT_MODEL", "gpt-oss-120b"),
     "groq": "llama-3.3-70b-versatile",
     "mistral": "mistral-small-latest",
     "openrouter": "meta-llama/llama-3.3-70b-instruct:free",
+    "cloudflare": os.environ.get(
+        "CLOUDFLARE_EXTRACT_MODEL", "@cf/meta/llama-3.1-8b-instruct",
+    ),
 }
 
 _PROVIDER_URLS = {
@@ -72,6 +75,17 @@ def parse_model_json(raw: str) -> Any:
 
 
 def build_chain(prefer_provider: str | None = None) -> list[str]:
+    try:
+        from ..pipeline.registry import resolved_extract_providers
+        base = resolved_extract_providers()
+        if prefer_provider:
+            if prefer_provider in base:
+                return [prefer_provider] + [p for p in base if p != prefer_provider]
+            # Book extract pin overrides global disable.
+            return [prefer_provider] + [p for p in base if p != prefer_provider]
+        return list(base)
+    except Exception:
+        pass
     if prefer_provider and prefer_provider in _PROVIDER_MODELS:
         return [prefer_provider] + [p for p in DEFAULT_CHAIN if p != prefer_provider]
     return list(DEFAULT_CHAIN)
@@ -84,7 +98,49 @@ def _cfg() -> dict[str, str | None]:
         "groq": os.environ.get("GROQ_API_KEY"),
         "mistral": os.environ.get("MISTRAL_API_KEY"),
         "openrouter": os.environ.get("OPENROUTER_API_KEY"),
+        "cloudflare_account": os.environ.get("CLOUDFLARE_ACCOUNT_ID"),
+        "cloudflare_token": os.environ.get("CLOUDFLARE_API_TOKEN"),
     }
+
+
+def _cloudflare_extract(
+    *,
+    account_id: str | None,
+    token: str | None,
+    model: str,
+    system_prompt: str,
+    user_text: str,
+) -> dict[str, Any]:
+    if not account_id or not token:
+        raise RuntimeError("cloudflare: missing account id or token (skipped)")
+    url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}"
+    body = {
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_text},
+        ],
+        "max_tokens": 8192,
+        "temperature": 0.2,
+    }
+    r = requests.post(
+        url,
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        json=body,
+        timeout=PER_PROVIDER_TIMEOUT_SEC,
+    )
+    if not r.ok:
+        raise RuntimeError(f"cloudflare: HTTP {r.status_code} {r.text[:200]}")
+    data = r.json()
+    if not data.get("success", True) and data.get("errors"):
+        raise RuntimeError(f"cloudflare: {data['errors']}")
+    result = data.get("result") or {}
+    content = result.get("response") or result.get("text") or ""
+    if not content and isinstance(result, dict):
+        content = result.get("message", {}).get("content", "")
+    if not content:
+        raise RuntimeError("cloudflare: no content in response")
+    parsed = parse_model_json(content)
+    return {"provider": "cloudflare", "model": model, "data": parsed}
 
 
 def _openai_compatible_extract(
@@ -147,14 +203,23 @@ def freemium_extract(
     failures: list[Exception] = []
     for pid in chain:
         try:
-            result = _openai_compatible_extract(
-                provider_id=pid,
-                base_url=_PROVIDER_URLS[pid],
-                api_key=cfg.get(pid),
-                model=_PROVIDER_MODELS[pid],
-                system_prompt=system_prompt,
-                user_text=user_text,
-            )
+            if pid == "cloudflare":
+                result = _cloudflare_extract(
+                    account_id=cfg.get("cloudflare_account"),
+                    token=cfg.get("cloudflare_token"),
+                    model=_PROVIDER_MODELS[pid],
+                    system_prompt=system_prompt,
+                    user_text=user_text,
+                )
+            else:
+                result = _openai_compatible_extract(
+                    provider_id=pid,
+                    base_url=_PROVIDER_URLS[pid],
+                    api_key=cfg.get(pid),
+                    model=_PROVIDER_MODELS[pid],
+                    system_prompt=system_prompt,
+                    user_text=user_text,
+                )
             log.info(
                 "freemium extract via %s (%s) prefer=%s",
                 result["provider"], result["model"], prefer_provider,

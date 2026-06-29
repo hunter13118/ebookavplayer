@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 .env
 .env.local
+deploy/fly-secrets.env
 web/.env.local
 node_modules/
 web/dist/

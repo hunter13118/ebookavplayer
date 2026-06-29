@@ -51,6 +51,16 @@ cd web; npm install; echo "VITE_API_BASE=http://localhost:8600" > .env.local; np
 # E2E
 cd web; npm run test:install; npm run test:e2e
 
+# Local edge worker (same routes as production CF deploy)
+cd ebookavplayer
+copy worker\.dev.vars.example worker\.dev.vars   # add GEMINI_API_KEY etc.
+npm install
+npm run dev:worker    # http://127.0.0.1:8600/projects/ebookavplayer/api/health
+
+# Bridge deployed SPA → local edge (same machine)
+# https://hunterthemilkman.com/projects/ebookavplayer/?localApi=1
+# Or Settings → Developer → Local backend bridge
+
 # Gemini smoke (needs GEMINI_API_KEY in .env or env)
 python scripts/smoke_extract.py path\to\book.epub
 python scripts/smoke_extract.py path\to\book.epub --image

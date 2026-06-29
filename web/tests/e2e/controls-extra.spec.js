@@ -1,6 +1,11 @@
 import { test, expect } from "@playwright/test";
 import { bootPlayer, SAMPLE_BOOK } from "./fixtures.js";
 
+async function setSpeedControl(page, value) {
+  await page.getByTestId("speed-pill").click();
+  await page.getByTestId("speed-menu").getByRole("button", { name: `${value}×` }).click();
+}
+
 test.describe("Controls — remaining surfaces", () => {
   test("Sprite-borders toggle adds the bordered class to sprites", async ({ page }) => {
     await bootPlayer(page, { audio: { clipMs: 4000 } });
@@ -11,14 +16,21 @@ test.describe("Controls — remaining surfaces", () => {
     await expect(sprite).toHaveClass(/bordered/);
   });
 
-  test("Speed select persists and reaches the orchestrator", async ({ page }) => {
+  test("Speed slider persists and reaches the orchestrator", async ({ page }) => {
     await bootPlayer(page, { audio: { clipMs: 4000 } });
-    await page.getByTestId("select-speed").selectOption("1.5");
-    // persisted for next session
+    await setSpeedControl(page, 1.5);
     const stored = await page.evaluate(() => localStorage.getItem("vae-speed"));
     expect(stored).toBe("1.5");
-    // and the running <audio> picks up the rate (stub exposes playbackRate)
     await page.getByTestId("play").click();
+    await expect.poll(() => page.evaluate(() => window.__lastRate ?? null)).toBe(1.5);
+  });
+
+  test("Speed persists across lines in auto-advance", async ({ page }) => {
+    await bootPlayer(page, { audio: { clipMs: 80, durationSec: 0.08 } });
+    await setSpeedControl(page, 1.5);
+    await page.getByTestId("play").click();
+    await expect(page.getByTestId("progress")).toHaveAttribute("data-index", "0");
+    await expect.poll(() => page.getByTestId("progress").getAttribute("data-index")).toBe("1");
     await expect.poll(() => page.evaluate(() => window.__lastRate ?? null)).toBe(1.5);
   });
 

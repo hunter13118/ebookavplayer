@@ -6,7 +6,8 @@ import {
   speakLine, speakLinesViaEdge, stopAllSpeech, setEdgePlaybackRate,
 } from "./playSpeech.js";
 import { backendConfigured } from "../api.js";
-import { estimateDurationSec, revealedCount, isCheckpoint } from "./timing.js";
+import { getActivePack, packSupportsOfflineAudio } from "../offline/packBridge.js";
+import { estimateDurationSec, revealedCount, isCheckpoint, effectiveLineDuration } from "./timing.js";
 
 export class Orchestrator {
   constructor({ onState, onCheckpoint, onEnd } = {}) {
@@ -47,20 +48,27 @@ export class Orchestrator {
     });
   }
 
-  // Drive the typewriter for the current line off a real/estimated duration.
-  _runTypewriter(text, durSec) {
+  // Drive typewriter reveal for a character range within a line (sentence-sized TTS).
+  _runTypewriterRange(fullText, charStart, charEnd, durSec) {
     cancelAnimationFrame(this._raf);
     const myToken = ++this._token;
+    const segment = (fullText || "").slice(charStart, charEnd);
     this._lineStart = performance.now();
-    this._lineDur = Math.max(0.4, durSec || estimateDurationSec(text, this.speed));
+    this._lineDur = effectiveLineDuration(segment, durSec, this.speed);
     const tick = () => {
       if (myToken !== this._token || this.status !== "playing") return;
       const elapsed = (performance.now() - this._lineStart) / 1000;
-      const n = revealedCount(text, elapsed, this._lineDur);
+      const segReveal = revealedCount(segment, elapsed, this._lineDur);
+      const n = Math.min(charEnd, charStart + segReveal);
       this._emit({ revealed: n });
-      if (n < text.length) this._raf = requestAnimationFrame(tick);
+      if (n < charEnd) this._raf = requestAnimationFrame(tick);
     };
     this._raf = requestAnimationFrame(tick);
+  }
+
+  // Drive the typewriter for the current line off a real/estimated duration.
+  _runTypewriter(text, durSec) {
+    this._runTypewriterRange(text, 0, (text || "").length, durSec);
   }
 
   /** Begin playback from `startIndex`. */
@@ -70,26 +78,31 @@ export class Orchestrator {
     this.status = "playing";
     this._emit({ revealed: 0 });
 
-    if (backendConfigured()) {
+    const pack = await getActivePack();
+    const canSpeak = backendConfigured() || packSupportsOfflineAudio(pack);
+    if (canSpeak) {
       if (this.autoAdvance) await this._playAuto(startIndex);
-      else await this._playSingle(startIndex);   // click-through: one line, then wait
+      else await this._playSingle(startIndex);
     } else {
       await this._playSilent(startIndex);
     }
   }
 
-  // Auto-advance: one /tts call per line, sequenced (mirrors the parallel-
-  // reader's speakSentencesViaEdge). Typewriter paced to each clip's length.
+  // Auto-advance: ~160-char TTS clips with prefetch; typewriter per clip.
   async _playAuto(startIndex) {
     await speakLinesViaEdge(this.lines, {
-      rate: this.speed,
+      getRate: () => this.speed,
       startIndex,
       voiceOverrides: this.voiceOverrides,
-      onLine: (i, line, durSec) => {
+      onLine: (i, line) => {
         this.index = i;
         this.status = "playing";
         this._emit({ revealed: 0 });
-        this._runTypewriter(line.text, durSec);
+      },
+      onLinePart: (i, line, part) => {
+        this.index = i;
+        this.status = "playing";
+        this._runTypewriterRange(line.text, part.charStart, part.charEnd, part.durSec);
       },
       onAdvance: (i) => {
         this._emit({ revealed: this.lines[i].text.length });
@@ -112,7 +125,10 @@ export class Orchestrator {
     await speakLine(line, {
       rate: this.speed,
       voiceOverrides: this.voiceOverrides,
-      onStart: (durSec) => this._runTypewriter(line.text, durSec),
+      onPartStart: (unit, durSec) => {
+        if (unit.partIndex === 0) this._emit({ revealed: 0 });
+        this._runTypewriterRange(line.text, unit.charStart, unit.charEnd, durSec);
+      },
       onEnd: () => {
         if (this.status !== "playing") return;
         this._emit({ revealed: line.text.length });
@@ -137,7 +153,7 @@ export class Orchestrator {
       const dur = estimateDurationSec(line.text, this.speed);
       this._runTypewriter(line.text, dur);
       // eslint-disable-next-line no-await-in-loop
-      await new Promise((r) => setTimeout(r, (dur + 0.5) * 1000));
+      await new Promise((r) => setTimeout(r, (dur + 0.04) * 1000));
       if (this.status !== "playing") return;
       this._emit({ revealed: line.text.length });
       if (isCheckpoint(i, this.checkpointEvery) && i < this.lines.length - 1) {
@@ -163,9 +179,31 @@ export class Orchestrator {
     if (line) { this._token++; cancelAnimationFrame(this._raf); this._emit({ revealed: line.text.length }); }
   }
 
+  /** Jump to line index (scrub). */
+  seek(index) {
+    const i = Math.max(0, Math.min(index, this.lines.length - 1));
+    stopAllSpeech();
+    cancelAnimationFrame(this._raf);
+    this.index = i;
+    this.status = "paused";
+    this._emit({ revealed: 0 });
+  }
+
+  /** Rewind N lines from current position. */
+  rewind(steps = 1) {
+    const target = Math.max(0, this.index - Math.max(1, steps));
+    if (target === this.index && this.status === "playing") {
+      this.play(this.lines, target);
+    } else {
+      this.seek(target);
+    }
+  }
+
   /** Manual next line (click-through advance / skip). */
-  next() {
-    if (this.index < this.lines.length - 1) this.play(this.lines, this.index + 1);
+  next(steps = 1) {
+    const n = Math.max(1, steps || 1);
+    const target = Math.min(this.index + n, this.lines.length - 1);
+    if (this.index < this.lines.length - 1) this.play(this.lines, target);
     else this._finish();
   }
 

@@ -33,11 +33,15 @@ class AnalysisCharacter(BaseModel):
 class AnalysisLine(BaseModel):
     character_id: str = Field(..., description="'narrator' for narration")
     text: str
-    kind: Literal["dialogue", "narration", "thought"] = "dialogue"
+    kind: Literal["dialogue", "narration", "thought", "delivery"] = "dialogue"
     expression: str = "normal"       # whisper|yell|sad|angry|normal (loose ok)
     environment: str = "open"        # open|indoor|hall|cave
     intensity: float = 1.0           # 0..1
     illustration_ref: Optional[int] = None  # flash EPUB insert at this line
+    visual_moment: bool = False  # key visual / fan-service beat → generated insert
+    moment_prompt: Optional[str] = None  # custom image-gen description for moment art
+    line_weight: Literal["normal", "minor"] = "normal"  # minor = brief narrator delivery tag
+    delivery_verb: Optional[str] = None  # sang|yelled|whispered|… on delivery lines
 
 
 class AnalysisScene(BaseModel):
@@ -77,6 +81,10 @@ class PlaybackLine(BaseModel):
     intensity: float = 1.0
     illustration_ref: Optional[int] = None
     illustration_url: Optional[str] = None
+    illustration_caption: Optional[str] = None
+    sprite_url: Optional[str] = None
+    line_weight: str = "normal"
+    delivery_verb: Optional[str] = None
 
 
 class PlaybackScene(BaseModel):

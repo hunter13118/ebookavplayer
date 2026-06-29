@@ -16,6 +16,7 @@ from .freemium_extract import (
     merge_analysis_dicts,
 )
 from .gemini import GeminiUnavailable, analyze_book, analysis_from_json
+from .repair import repair_analysis
 from .prompt import SYSTEM_INSTRUCTION, RULES, ILLUSTRATION_RULES, SCHEMA_HINT
 from .schema import BookAnalysis
 
@@ -158,7 +159,7 @@ def extract_book(
             )
             used = model or pin_model or os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
             L.write_extract_pin(book_id, "gemini", used)
-            return analysis
+            return repair_analysis(analysis)
         except GeminiUnavailable as e:
             _emit(on_event, "gemini_text_exhausted",
                   quota=e.code == "quota_exhausted",
@@ -181,7 +182,7 @@ def extract_book(
             on_event=on_event,
         )
         L.write_extract_pin(book_id, pin["provider"], pin["model"])
-        return analysis
+        return repair_analysis(analysis)
     except Exception as e:
         raise ExtractUnavailable(
             f"all extract providers failed: {e}",

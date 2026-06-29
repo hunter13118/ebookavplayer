@@ -21,12 +21,26 @@ test.describe("Replace art sheet", () => {
       }));
   });
 
-  test("preview picker posts selected character ids and closes modal on start", async ({ page }) => {
+    test("preview picker posts selected character ids and closes modal on start", async ({ page }) => {
     let body = null;
+    let pollN = 0;
     await page.route("**/books/*/generate-media", async (route) => {
       body = route.request().postDataJSON();
       return route.fulfill({
         json: { job_id: "replace-job-1", book_id: SAMPLE_BOOK.book_id, status: "queued" },
+      });
+    });
+    await page.route("**/ingest/replace-job-1", async (route) => {
+      pollN += 1;
+      const done = pollN >= 3;
+      return route.fulfill({
+        json: {
+          job_id: "replace-job-1",
+          status: done ? "done" : "imaging",
+          stage: "imaging",
+          progress: done ? 1 : 0.4 + pollN * 0.15,
+          banners: [],
+        },
       });
     });
 
@@ -50,8 +64,13 @@ test.describe("Replace art sheet", () => {
     await page.getByTestId("replace-submit").click();
 
     await expect(page.getByTestId("replace-sheet")).not.toBeVisible();
+    await expect(page.getByTestId("banner")).toBeVisible();
+    await expect(page.getByTestId("banner")).toHaveAttribute("data-code", "regen_started");
+    await expect(page.getByTestId("processing-bar")).toBeVisible();
+    await expect(page.getByTestId("processing-bar")).toHaveAttribute("data-source", "job");
     expect(body).toMatchObject({
       scope: "selected",
+      force_all: false,
       include_cover: false,
       character_ids: ["elara"],
     });
@@ -72,6 +91,21 @@ test.describe("Replace art sheet", () => {
     await page.getByTestId("replace-submit").click();
     await expect(page.getByTestId("replace-sheet")).not.toBeVisible();
     expect(body).toMatchObject({ scope: "all", force_all: true });
+  });
+
+  test("failed regen POST shows error banner", async ({ page }) => {
+    await page.route("**/books/*/generate-media", async (route) =>
+      route.fulfill({ status: 500, body: "server error" }));
+
+    await bootPlayer(page);
+    await page.getByTestId("open-replace").click();
+    await page.getByTestId("replace-select-all").click();
+    await page.getByTestId("replace-submit").click();
+
+    await expect(page.getByTestId("banner")).toBeVisible();
+    await expect(page.getByTestId("banner")).toHaveAttribute("data-level", "error");
+    await expect(page.getByTestId("banner")).toHaveAttribute("data-code", "regen_request_failed");
+    await expect(page.getByTestId("replace-sheet")).toBeVisible();
   });
 
   test("upload mode replaces a single picked slot", async ({ page }) => {

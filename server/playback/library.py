@@ -5,6 +5,8 @@ Sidecar files per book:
   data/books/{id}.analysis.json   BookAnalysis dump
   data/books/{id}.media.json      style-namespaced media manifest (see styles.py)
   data/books/{id}.status.json     status, stage, progress, art_style, generating_style
+  data/books/{id}.progress.json   resume position
+  data/books/{id}.voices.json     per-book voice overrides
   data/media/{id}/{style}/        generated assets per art style
 """
 from __future__ import annotations
@@ -26,6 +28,15 @@ MEDIA_DIR = DATA_DIR / "media"
 PARSE_END = 0.10
 ANALYSIS_END = 0.40   # at this point lines are playable
 # imaging spans ANALYSIS_END .. 1.0
+
+
+def client_banners(status: dict | None) -> list:
+    """Operational ingest banners — hide after the book is ready."""
+    st = status or {}
+    if st.get("stage") == "done" and float(st.get("progress", 1)) >= 1.0:
+        return []
+    raw = list(st.get("banners") or [])
+    return raw[-1:] if raw else []
 
 
 def _read_json(p: Path, default=None):
@@ -159,7 +170,7 @@ def catalog_entry(book_id: str, status: dict | None, media: dict | None,
         "error": status.get("error", ""),
         "updated": status.get("updated", 0),
         "resume": resume,
-        "banners": list(status.get("banners") or []),
+        "banners": client_banners(status),
     }
 
 
@@ -277,8 +288,37 @@ def finish_style_generation(book_id: str, style: str) -> dict:
     m = read_media(book_id)
     m = S.mark_style_complete(m, style)
     write_media(book_id, m)
-    write_status(book_id, generating_style=None)
+    write_status(
+        book_id,
+        generating_style=None,
+        stage="done",
+        progress=1.0,
+        status="ready",
+    )
     return m
+
+
+def release_imaging_lock(book_id: str) -> dict:
+    """Clear a stuck imaging / generating lock after a crashed or lost job."""
+    st = read_status(book_id) or {}
+    gen = st.get("generating_style")
+    m = read_media(book_id)
+    if gen:
+        m = S.mark_style_complete(m, gen)
+        write_media(book_id, m)
+    elif st.get("stage") == "imaging":
+        active = S.active_style(m, fallback=st.get("art_style", "semi-real"))
+        slot = (m.get("styles") or {}).get(active) or {}
+        if slot and slot.get("complete") is False:
+            m = S.mark_style_complete(m, active)
+            write_media(book_id, m)
+    return write_status(
+        book_id,
+        generating_style=None,
+        stage="done",
+        progress=1.0,
+        status="ready",
+    )
 
 
 def discard_style(book_id: str, style: str) -> dict:
@@ -336,7 +376,7 @@ def list_catalog() -> list[dict]:
     for cp in sorted(BOOKS_DIR.glob("*.json")):
         name = cp.name
         if name.endswith((".status.json", ".media.json", ".analysis.json",
-                          ".progress.json")):
+                          ".progress.json", ".voices.json")):
             continue
         book_id = cp.stem
         if book_id in seen:
@@ -355,12 +395,27 @@ def list_catalog() -> list[dict]:
 def load_playback(book_id: str) -> dict | None:
     """Compile from analysis + media when possible; else legacy static JSON."""
     status = read_status(book_id) or {}
-    from .epub.illustrations import load_image_index
-    from .playback.illustrations import catalog_from_urls
+    from ..epub.illustrations import load_image_index
+    from .illustrations import catalog_from_urls
     illus_catalog = catalog_from_urls(load_image_index(MEDIA_DIR, book_id))
     analysis = load_analysis(book_id)
     if analysis is not None:
+        from ..analyze.repair import chapter_remap, renormalize_chapters
         from .compile import compile_book
+        remap = chapter_remap(analysis)
+        analysis = renormalize_chapters(analysis)
+        illus_count = int(status.get("illustration_count") or 0)
+        raw_markers = status.get("illustration_markers") or {}
+        if raw_markers:
+            from ..epub.placements import apply_illustration_placements
+            chapter_markers = {
+                remap.get(int(ch), int(ch)): [(int(i), str(t)) for i, t in pairs]
+                for ch, pairs in raw_markers.items()
+            }
+            analysis = apply_illustration_placements(analysis, chapter_markers)
+        elif illus_count:
+            from ..epub.placements import apply_single_illustration_fallback
+            analysis = apply_single_illustration_fallback(analysis, illus_count)
         media = read_media(book_id)
         fallback = status.get("art_style", "semi-real")
         flat_media, display_style, art_filter = S.resolve_compile_media(
@@ -376,6 +431,7 @@ def load_playback(book_id: str) -> dict | None:
             media, generating=status.get("generating_style"),
         )
         out["art_filter"] = art_filter
+        out["inserts"] = flat_media.get("inserts") or {}
     else:
         out = _read_json(_path(book_id, ".json"))
         if out is None:
@@ -397,7 +453,7 @@ def load_playback(book_id: str) -> dict | None:
         out.get("scenes", []),
     )
     out["voice_overrides"] = read_voice_overrides(book_id)
-    out["banners"] = list(status.get("banners") or [])
+    out["banners"] = client_banners(status)
     out["illustration_mode"] = status.get("illustration_mode", "reference")
     out["illustration_count"] = int(status.get("illustration_count") or 0)
     out["illustrations"] = illus_catalog

@@ -8,12 +8,14 @@ import { getPrefs, setPref, KEYS } from "../audio/voicePrefs.js";
 //     Anime suits light novels. (Swapping styles later = the multi-style system
 //     in docs/ART_STYLES.md.)
 //   - Extract only (dry run): skip image generation to preview the script first.
-export default function Uploader({ onStarted }) {
+//   - BYO art: extract + skip AI imaging; copy prompts and upload your own art.
+export default function Uploader({ onStarted, compact = false }) {
   const inputRef = useRef(null);
   const [busy, setBusy] = useState(false);
   const [dryRun, setDryRun] = useState(false);
   const [useGenAi, setUseGenAi] = useState(true);
-  const [artStyle, setArtStyle] = useState(getPrefs().artStyle || "semi-real");
+  const [byoMode, setByoMode] = useState(false);
+  const [artStyle, setArtStyle] = useState(getPrefs().artStyle || "anime");
   const [err, setErr] = useState("");
 
   function chooseStyle(v) { setArtStyle(v); setPref(KEYS.artStyle, v); }
@@ -23,17 +25,22 @@ export default function Uploader({ onStarted }) {
     if (!file) return;
     setBusy(true); setErr("");
     try {
-      const res = await ingestBook(file, { artStyle, dryRun, generateArt: useGenAi && !dryRun });
+      const res = await ingestBook(file, {
+        artStyle,
+        dryRun,
+        generateArt: useGenAi && !dryRun && !byoMode,
+        byoMode: byoMode && !dryRun,
+      });
       onStarted?.(res, file);
     } catch (e) {
-      setErr("Upload failed — is the backend running?");
+      setErr(e.message || "Upload failed — is the backend running?");
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <div className="vae-uploader" data-testid="uploader"
+    <div className={`vae-uploader${compact ? " vae-uploader-compact" : ""}`} data-testid="uploader"
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => { e.preventDefault(); handleFiles(e.dataTransfer.files); }}>
       <input ref={inputRef} type="file" accept=".epub" hidden
@@ -48,8 +55,8 @@ export default function Uploader({ onStarted }) {
         <label className="vae-upload-style">Art style
           <select data-testid="upload-art-style" value={artStyle}
             onChange={(e) => chooseStyle(e.target.value)}>
-            <option value="semi-real">Semi-realistic</option>
             <option value="anime">Anime (light novels)</option>
+            <option value="semi-real">Semi-realistic</option>
             <option value="cartoon">Cartoon / comic</option>
             <option value="pixel">Pixel-art</option>
           </select>
@@ -57,16 +64,30 @@ export default function Uploader({ onStarted }) {
       </div>
 
       <label className="vae-upload-dry" data-testid="gen-ai-toggle">
-        <input type="checkbox" checked={useGenAi && !dryRun} disabled={dryRun}
+        <input type="checkbox" checked={useGenAi && !dryRun && !byoMode} disabled={dryRun || byoMode}
           data-testid="gen-ai-input"
           onChange={(e) => setUseGenAi(e.target.checked)} />
         Generate art with AI (Gemini, then local SD when on your network)
       </label>
 
+      <label className="vae-upload-dry" data-testid="byo-mode-toggle">
+        <input type="checkbox" checked={byoMode} disabled={dryRun}
+          data-testid="byo-mode-input"
+          onChange={(e) => {
+            const on = e.target.checked;
+            setByoMode(on);
+            if (on) setUseGenAi(false);
+          }} />
+        BYO art — extract script, copy prompts, upload your own images
+      </label>
+
       <label className="vae-upload-dry" data-testid="dry-run-toggle">
         <input type="checkbox" checked={dryRun}
           data-testid="dry-run-input"
-          onChange={(e) => setDryRun(e.target.checked)} />
+          onChange={(e) => {
+            setDryRun(e.target.checked);
+            if (e.target.checked) setByoMode(false);
+          }} />
         Extract only (skip art — preview the script first)
       </label>
       <div className="vae-upload-hint">

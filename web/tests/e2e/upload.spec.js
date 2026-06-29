@@ -29,6 +29,7 @@ test.describe("Upload → processing → ready", () => {
     await page.goto("/");
     await expect(page.getByTestId("library-empty")).toBeVisible();
 
+    await page.getByTestId("library-add").click();
     await page.getByTestId("upload-input").setInputFiles(EPUB);
 
     // optimistic placeholder appears immediately with a spinner
@@ -52,6 +53,7 @@ test.describe("Upload → processing → ready", () => {
     });
 
     await page.goto("/");
+    await page.getByTestId("library-add").click();
     await page.getByTestId("dry-run-input").check();
     await page.getByTestId("upload-input").setInputFiles(EPUB);
 
@@ -71,6 +73,7 @@ test.describe("Upload → processing → ready", () => {
     });
 
     await page.goto("/");
+    await page.getByTestId("library-add").click();
     await page.getByTestId("upload-art-style").selectOption("anime");
     await page.getByTestId("upload-input").setInputFiles(EPUB);
 
@@ -85,6 +88,7 @@ test.describe("Upload → processing → ready", () => {
     await page.route("**/ingest", (route) => route.fulfill({ status: 500, body: "nope" }));
 
     await page.goto("/");
+    await page.getByTestId("library-add").click();
     await page.getByTestId("upload-input").setInputFiles(EPUB);
     await expect(page.getByTestId("upload-err")).toBeVisible();
   });

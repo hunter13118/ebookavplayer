@@ -35,7 +35,8 @@ async def list_edge_voices(locale: str | None = None) -> list[dict]:
             "id": short,
             "label": friendly,
             "locale": loc,
-            "gender": v.get("Gender", ""),
+            "gender": (v.get("Gender") or "").lower(),
+            "neural": "Neural" in short,
         })
     return rows
 

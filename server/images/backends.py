@@ -8,7 +8,7 @@ from typing import Any, Callable
 
 from ..analyze.gemini_errors import call_with_rate_limit_retry, is_rate_limit_error
 from .freemium import art_style_to_freemium, compose_prompt, freemium_image_gen
-from .model_lists import GEMINI_IMAGE_MODELS
+from ..pipeline.registry import resolved_gemini_image_models, image_tier_allowed
 
 log = logging.getLogger(__name__)
 
@@ -62,7 +62,7 @@ def _try_gemini(
     for img in (reference_images or [])[:3]:
         parts.append(types.Part.from_bytes(data=img, mime_type="image/jpeg"))
 
-    models = GEMINI_IMAGE_MODELS
+    models = resolved_gemini_image_models()
     for i, model in enumerate(models):
         try:
             def _call(m=model):
@@ -147,7 +147,10 @@ def _try_local_http(
         r = requests.post(
             url,
             json={"prompt": prompt, "width": w, "height": h, "out_hint": out_path},
-            timeout=int(os.environ.get("LOCAL_IMAGE_TIMEOUT", "180")),
+            timeout=(
+                int(os.environ.get("LOCAL_IMAGE_CONNECT_TIMEOUT", "8")),
+                int(os.environ.get("LOCAL_IMAGE_TIMEOUT", "120")),
+            ),
         )
         if r.status_code != 200:
             log.warning("local image HTTP %s: %s", r.status_code, r.text[:200])
@@ -187,27 +190,39 @@ def generate_image(
     style_key = art_style_to_freemium(art_style)
     composed = compose_prompt(description, subject_type=subject_type, style=style_key)
 
-    if allow_gemini and _try_gemini(composed, reference_images, out_path, on_event=on_event):
-        meta["backend"] = "gemini"
-        return True, meta
-
-    if allow_freemium:
-        fm = _try_freemium(
-            description, out_path,
-            subject_type=subject_type,
-            art_style=art_style,
-            seed=seed,
-            prefer_provider=prefer_provider,
-            on_event=on_event,
-        )
-        if fm:
-            meta.update(fm)
-            meta["backend"] = "freemium"
-            return True, meta
-
-    if allow_local and _try_local_http(composed, out_path, kind=kind, on_event=on_event):
-        meta["backend"] = "local_sd"
-        return True, meta
+    for tier in _image_tier_order():
+        if tier == "gemini_image" and allow_gemini and image_tier_allowed("gemini_image"):
+            if _try_gemini(composed, reference_images, out_path, on_event=on_event):
+                meta["backend"] = "gemini"
+                return True, meta
+        elif tier == "freemium_image" and allow_freemium and image_tier_allowed("freemium_image"):
+            fm = _try_freemium(
+                description, out_path,
+                subject_type=subject_type,
+                art_style=art_style,
+                seed=seed,
+                prefer_provider=prefer_provider,
+                on_event=on_event,
+            )
+            if fm:
+                meta.update(fm)
+                meta["backend"] = "freemium"
+                return True, meta
+        elif tier == "local_sd" and allow_local and image_tier_allowed("local_sd"):
+            if _try_local_http(composed, out_path, kind=kind, on_event=on_event):
+                meta["backend"] = "local_sd"
+                return True, meta
 
     _emit(on_event, "image_failed", kind=kind)
     return False, meta
+
+
+def _image_tier_order() -> list[str]:
+    try:
+        from ..pipeline.registry import resolved_image_tiers
+        order = resolved_image_tiers()
+        if order:
+            return order
+    except Exception:
+        pass
+    return ["gemini_image", "freemium_image", "local_sd"]

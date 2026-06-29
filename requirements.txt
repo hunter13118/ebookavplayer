@@ -7,4 +7,6 @@ edge-tts>=7.0          # Edge neural voices (copied pattern from parallel-reader
 google-genai>=0.3      # Gemini mega-pass + image generation (host-side)
 python-dotenv>=1.0     # optional: load .env (LOCAL_IMAGE_URL, keys)
 requests>=2.31         # local SD HTTP fallback
+boto3>=1.34            # optional: Cloudflare R2 pack storage (S3-compatible)
 beautifulsoup4>=4.12   # optional: robust EPUB HTML stripping
+Pillow>=10.0           # white-key transparency for character sprites

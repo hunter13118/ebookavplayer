@@ -26,9 +26,21 @@ def test_compose_prompt_anime_character():
         subject_type="character",
         style="anime",
     )
-    assert "anime art style" in p
-    assert "Full-body character sprite" in p
+    assert "isekai anime" in p
+    assert "Portrait bust character sprite" in p
+    assert "transparent background" in p.lower()
     assert "sorceress" in p
+
+
+def test_compose_prompt_character_with_sprite_background():
+    p = compose_prompt(
+        "A knight in armor",
+        subject_type="character",
+        style="neutral",
+        sprite_background="a plain flat white background",
+    )
+    assert "plain flat white background" in p
+    assert "transparent background" not in p.lower()
 
 
 def test_compose_prompt_cartoon_background():
@@ -37,7 +49,7 @@ def test_compose_prompt_cartoon_background():
         subject_type="background",
         style="cartoon",
     )
-    assert "comic book" in p
+    assert "Adventure Time" in p
     assert "no characters" in p.lower()
 
 

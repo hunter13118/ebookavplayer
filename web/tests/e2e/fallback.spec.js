@@ -9,9 +9,10 @@ test.describe("Graceful degradation", () => {
     await expect(page.getByTestId("scene-title")).toHaveText("The Gate at Dusk");
   });
 
-  test("empty catalog shows an empty library + uploader (no demo)", async ({ page }) => {
+  test("empty catalog shows empty library with add button", async ({ page }) => {
     await bootLibrary(page, { backend: { booksStatus: "empty" } });
     await expect(page.getByTestId("library-empty")).toBeVisible();
+    await page.getByTestId("library-empty-add").click();
     await expect(page.getByTestId("uploader")).toBeVisible();
   });
 

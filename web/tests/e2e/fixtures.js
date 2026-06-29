@@ -1,6 +1,9 @@
 // Shared test harness: deterministic Audio stub, route mocks, expected data.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { buildTestPackZip, minimalBook, TIER_VISUAL, TIER_AUDIOBOOK } from "../../src/offline/testPackFixtures.js";
+
+export { buildTestPackZip, minimalBook, TIER_VISUAL, TIER_AUDIOBOOK };
 
 const BOOK_PATH = fileURLToPath(
   new URL("../../../data/books/the-silver-gate.json", import.meta.url));
@@ -11,7 +14,7 @@ const LINES = SAMPLE_BOOK.scenes.reduce((n, s) => n + s.lines.length, 0);
 export const CATALOG = [{
   book_id: SAMPLE_BOOK.book_id, title: SAMPLE_BOOK.title, author: SAMPLE_BOOK.author,
   status: "ready", stage: "done", progress: 1, cover: null,
-  scenes: SAMPLE_BOOK.scenes.length, lines: LINES,
+  scenes: SAMPLE_BOOK.scenes.length, lines: LINES, server_available: true,
 }];
 
 export const EXPECTED_LINES = SAMPLE_BOOK.scenes.flatMap((s) =>
@@ -28,8 +31,20 @@ export const PROCESSING_BOOK = {
 };
 
 export async function installAudioStub(page, { clipMs = 40, durationSec = 0.4 } = {}) {
-  await page.addInitScript(({ clipMs, durationSec }) => {
-    try { window.localStorage.setItem("vae-e2e", "1"); } catch {}  // bypass AuthGate
+  await page.addInitScript(async ({ clipMs, durationSec }) => {
+    try {
+      window.localStorage.setItem("vae-e2e", "1");
+      for (let i = window.localStorage.length - 1; i >= 0; i -= 1) {
+        const k = window.localStorage.key(i);
+        if (k?.startsWith("vae-dl-skip-")) window.localStorage.removeItem(k);
+      }
+    } catch {}
+    await new Promise((resolve) => {
+      const req = indexedDB.deleteDatabase("vae-offline");
+      req.onsuccess = () => resolve();
+      req.onerror = () => resolve();
+      req.onblocked = () => resolve();
+    });
     class FakeAudio {
       constructor(src) {
         this.src = src; this.playbackRate = 1; this.paused = true;
@@ -61,9 +76,17 @@ export async function installAudioStub(page, { clipMs = 40, durationSec = 0.4 } 
  *   ttsStatus: 200 | 204 | 4xx/5xx
  * Returns { ttsCalls, detailCalls } live counters.
  */
-export async function installBackendMocks(page, {
-  booksStatus = "ok", catalog = null, detail = null, ttsStatus = 200,
-} = {}) {
+export async function installBackendMocks(page, opts = {}) {
+  const {
+    booksStatus = "ok",
+    catalog = null,
+    detail = null,
+    ttsStatus = 200,
+    packZip = null,
+    packBook = null,
+    packTier = TIER_VISUAL,
+    packStatus = 200,
+  } = opts;
   const ttsCalls = [];
   const detailCalls = { n: 0 };
 
@@ -85,7 +108,71 @@ export async function installBackendMocks(page, {
     return route.fulfill({ json: list });
   });
 
+  await page.route("**/books/*/audio/**", async (route) => {
+    const method = route.request().method();
+    if (method === "GET") {
+      return route.fulfill({ json: { book_id: "pack-e2e", available: false, line_count: 0 } });
+    }
+    return route.fallback();
+  });
+
+  await page.route("**/books/*/pack**", async (route) => {
+    const url = route.request().url();
+    const method = route.request().method();
+    const bookIdMatch = url.match(/\/books\/([^/]+)\/pack/);
+    const bookId = bookIdMatch?.[1] || "pack-e2e";
+
+    if (url.includes("/pack/build")) {
+      if (method === "POST" && url.includes("/cancel")) {
+        return route.fulfill({ json: { job_id: "e2e-pack-job", status: "cancelled" } });
+      }
+      if (method === "POST") {
+        return route.fulfill({
+          json: { job_id: "e2e-pack-job", status: "building", progress: 0, book_id: bookId },
+        });
+      }
+      if (url.includes("/pack/build/e2e-pack-job/file")) {
+        const payload = packZip ?? buildTestPackZip({
+          book: typeof packBook === "function" ? packBook() : (packBook || minimalBook({ book_id: bookId })),
+          tier: packTier || TIER_VISUAL,
+          withAudio: packTier === TIER_AUDIOBOOK,
+        });
+        return route.fulfill({
+          status: 200,
+          contentType: "application/zip",
+          body: Buffer.from(payload),
+        });
+      }
+      if (url.includes("/pack/build/e2e-pack-job")) {
+        if (packStatus >= 400) {
+          return route.fulfill({ json: { job_id: "e2e-pack-job", status: "error", error: "pack failed" } });
+        }
+        return route.fulfill({
+          json: { job_id: "e2e-pack-job", status: "done", progress: 1, ready: true },
+        });
+      }
+      return route.fallback();
+    }
+
+    if (method !== "GET" || !url.match(/\/pack(\?|$)/)) return route.fallback();
+    if (packStatus >= 400) {
+      return route.fulfill({ status: packStatus, body: "pack error" });
+    }
+    const payload = packZip ?? buildTestPackZip({
+      book: typeof packBook === "function" ? packBook() : (packBook || minimalBook()),
+      tier: packTier || TIER_VISUAL,
+      withAudio: packTier === TIER_AUDIOBOOK,
+    });
+    return route.fulfill({
+      status: 200,
+      contentType: "application/zip",
+      body: Buffer.from(payload),
+    });
+  });
+
   await page.route("**/books/*", async (route) => {
+    const url = route.request().url();
+    if (url.includes("/pack")) return route.fallback();
     detailCalls.n += 1;
     const payload = typeof detail === "function"
       ? detail(detailCalls.n)
@@ -100,6 +187,19 @@ export async function installBackendMocks(page, {
   return { ttsCalls, detailCalls };
 }
 
+/** Clear vae-offline IndexedDB before navigation (fresh pack install tests). */
+export async function clearOfflinePacks(page) {
+  await page.addInitScript(async () => {
+    try { window.localStorage.setItem("vae-e2e-cache", "1"); } catch {}
+    await new Promise((resolve) => {
+      const req = indexedDB.deleteDatabase("vae-offline");
+      req.onsuccess = () => resolve();
+      req.onerror = () => resolve();
+      req.onblocked = () => resolve();
+    });
+  });
+}
+
 /** Boot at the library, optionally open the first/chosen book into the player. */
 export async function bootPlayer(page, opts = {}) {
   await installAudioStub(page, opts.audio);
@@ -110,7 +210,13 @@ export async function bootPlayer(page, opts = {}) {
       ? page.locator(`[data-testid="book-card"][data-book="${opts.bookId}"]`)
       : page.getByTestId("book-card").first();
     await card.click();
-    if (opts.expectPlayer !== false) await page.getByTestId("progress").waitFor();
+    const skip = page.getByTestId("download-recommend-skip");
+    if (await skip.isVisible({ timeout: 15_000 }).catch(() => false)) {
+      await skip.click();
+    }
+    if (opts.expectPlayer !== false) {
+      await page.getByTestId("progress").waitFor({ timeout: 20_000 });
+    }
   }
   return mocks;
 }

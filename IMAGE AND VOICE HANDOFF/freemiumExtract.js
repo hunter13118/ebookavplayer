@@ -193,8 +193,7 @@ function tryCerebras(systemPrompt, userText) {
     providerId: 'cerebras',
     baseUrl: 'https://api.cerebras.ai/v1',
     apiKey: CONFIG.cerebrasKey,
-    // TODO: confirm current free model id (e.g. 'llama-3.3-70b' / 'qwen-3-...').
-    model: 'llama-3.3-70b',
+    model: process.env.CEREBRAS_EXTRACT_MODEL || 'gpt-oss-120b',
     systemPrompt,
     userText,
     jsonMode: true,

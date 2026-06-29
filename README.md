@@ -60,7 +60,7 @@ Backend (Python 3.10+):
 ```bash
 pip install -r requirements.txt
 cp .env.example .env          # add GEMINI_API_KEY for ingest; TTS needs no key
-uvicorn server.app:app --host 0.0.0.0 --port 8600 --reload
+uvicorn server.app:app --host 0.0.0.0 --port 8600 --reload --reload-dir server
 ```
 
 Frontend:

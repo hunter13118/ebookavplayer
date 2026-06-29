@@ -19,6 +19,7 @@ from ..audio.voice_expression import (
     infer_expression_from_text, normalize_environment, normalize_expression,
 )
 from .illustrations import resolve_line_illustration
+from .sprites import resolve_line_sprite
 
 
 def _gradient_token(seed: str) -> str:
@@ -29,12 +30,19 @@ def _gradient_token(seed: str) -> str:
     return f"gradient:{a},{b}"
 
 
+def _media_path_from_url(url: str) -> Path | None:
+    """Map a /media/... URL (optional ?v= query) to a file under DATA_DIR/media."""
+    if not url or not url.startswith("/media/"):
+        return None
+    path_part = url.split("?", 1)[0].removeprefix("/media/")
+    root = Path(os.environ.get("DATA_DIR", "./data")) / "media"
+    return root / path_part
+
+
 def _media_file_exists(url: str) -> bool:
     """True when a /media/... URL points at a real file on disk."""
-    if not url or not url.startswith("/media/"):
-        return False
-    root = Path(os.environ.get("DATA_DIR", "./data")) / "media"
-    return (root / url.removeprefix("/media/")).is_file()
+    p = _media_path_from_url(url)
+    return p.is_file() if p else False
 
 
 def _sprite_for(character_id: str, media: dict | None) -> str:
@@ -122,6 +130,21 @@ def compile_book(analysis: BookAnalysis, *, art_style: str = "semi-real",
                 is_first_line_in_scene=(li == 0),
                 catalog=illustrations or [],
             )
+            insert_url = None
+            if media:
+                insert_url = (media.get("inserts") or {}).get(str(idx))
+                if insert_url and insert_url.startswith("/media/") and not _media_file_exists(insert_url):
+                    insert_url = None
+            if insert_url:
+                ill_url = insert_url
+            caption = None
+            if ill_url:
+                caption = (ln.text or "")[:72].strip()
+                if len((ln.text or "")) > 72:
+                    caption += "…"
+            sprite_url = resolve_line_sprite(
+                cid, expr or "normal", media, info["sprite"],
+            )
             lines_out.append(PlaybackLine(
                 idx=idx, character_id=cid, speaker_name=info["name"],
                 text=ln.text, kind=ln.kind, voice=info["voice"],
@@ -131,6 +154,10 @@ def compile_book(analysis: BookAnalysis, *, art_style: str = "semi-real",
                 intensity=intensity,
                 illustration_ref=ill_ref,
                 illustration_url=ill_url,
+                illustration_caption=caption,
+                sprite_url=sprite_url,
+                line_weight=getattr(ln, "line_weight", None) or "normal",
+                delivery_verb=getattr(ln, "delivery_verb", None),
             ))
             idx += 1
 

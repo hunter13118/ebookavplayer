@@ -21,10 +21,10 @@ AZURE_STYLE_FOR_EXPRESSION = {
 
 PROSODY_PRESETS = {
     "normal":  {"rate": "+0%",  "pitch": "+0Hz",  "volume": "+0%"},
-    "whisper": {"rate": "-15%", "pitch": "-2Hz",  "volume": "-40%"},
-    "yell":    {"rate": "+8%",  "pitch": "+12Hz", "volume": "+40%"},
-    "sad":     {"rate": "-12%", "pitch": "-4Hz",  "volume": "-15%"},
-    "angry":   {"rate": "+6%",  "pitch": "+6Hz",  "volume": "+20%"},
+    "whisper": {"rate": "-8%",  "pitch": "-1Hz",  "volume": "-25%"},
+    "yell":    {"rate": "+4%",  "pitch": "+4Hz",  "volume": "+18%"},
+    "sad":     {"rate": "-6%",  "pitch": "-2Hz",  "volume": "-8%"},
+    "angry":   {"rate": "+3%",  "pitch": "+2Hz",  "volume": "+10%"},
 }
 
 DSP_PRESETS: dict[str, list[dict[str, Any]]] = {
@@ -143,8 +143,8 @@ def infer_expression_from_text(text: str, kind: str = "dialogue") -> tuple[str, 
     if "..." in t or t.startswith("("):
         return "whisper", 0.65
     if kind == "narration":
-        return "normal", 0.85
-    return "normal", 1.0
+        return "normal", 0.65
+    return "normal", 0.85
 
 
 def build_expression_plan(tag: dict[str, Any], engine: str = "edge") -> dict[str, Any]:

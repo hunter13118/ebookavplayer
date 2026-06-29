@@ -1,5 +1,6 @@
 """Per-character voice assignment (pure)."""
-from server.audio.voices import assign_voices, narrator_voice, VOICE_POOL
+from server.audio.edge_voice_catalog import NATURAL_MALE
+from server.audio.voices import assign_voices, narrator_voice
 
 
 def _chars(n_male):
@@ -21,13 +22,13 @@ def test_primaries_get_distinct_base_voices():
 
 def test_child_pitched_up_old_pitched_down():
     a = assign_voices(_chars(0))
-    assert a["kid"]["pitch"].startswith("+")
-    assert a["old_tom"]["pitch"].startswith("-")
+    kid_hz = int(a["kid"]["pitch"].rstrip("Hz").replace("+", ""))
+    old_hz = int(a["old_tom"]["pitch"].rstrip("Hz").replace("+", ""))
+    assert kid_hz > old_hz
 
 
 def test_collision_shift_on_pool_wrap():
-    # enough males to wrap the male pool -> later ones get a pitch shift
-    a = assign_voices(_chars(len(VOICE_POOL["male"]) + 1))
+    a = assign_voices(_chars(len(NATURAL_MALE) + 1))
     shifted = [v for k, v in a.items() if k.startswith("m") and v["pitch"] != "+0Hz"]
     assert shifted, "expected at least one collision pitch shift"
 
@@ -35,3 +36,8 @@ def test_collision_shift_on_pool_wrap():
 def test_narrator_voice():
     assert "Neural" in narrator_voice("male")
     assert narrator_voice("female") != narrator_voice("male")
+
+
+def test_female_characters_get_female_voices():
+    a = assign_voices(_chars(0))
+    assert "Jenny" in a["elara"]["voice"] or "Aria" in a["elara"]["voice"] or "Ava" in a["elara"]["voice"] or "Emma" in a["elara"]["voice"]

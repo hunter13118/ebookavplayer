@@ -7,7 +7,9 @@ test.describe("Illustration flash", () => {
     await page.getByTestId("play").click();
     await expect(page.getByTestId("illustration-flash")).toBeVisible({ timeout: 3000 });
     await expect(page.getByTestId("sprite").first()).toBeVisible();
-    await page.waitForTimeout(4800);
+    await page.getByTestId("next").click();
+    await expect(page.getByTestId("illustration-flash")).toBeVisible();
+    await page.waitForTimeout(5200);
     await expect(page.getByTestId("illustration-flash")).not.toBeVisible();
   });
 });

@@ -26,9 +26,13 @@ The goal was image generation that is **(a) free, (b) callable via API key from 
 **DO NOT** add trial-credit providers "for more fallbacks." The user explicitly culled them. More providers ≠ better here; the constraint is *zero money risk*, not maximum redundancy.
 
 ### Pollinations model constraint
-Pollinations exposes ~20 image models through one API, but **only `flux` (and `zimage`) are free/unlimited.** Everything else (`klein`/FLUX.2 Klein 4B, `gptimage*`, `seedream*`, `nanobanana*`, etc.) costs **Pollen** credits. The dashboard UI does **not** show per-model cost — this was confirmed by inspecting the model metadata, not the UI. The module hardcodes `model=flux`.
+Pollinations exposes many image models, but **only unauthenticated `flux` is the
+0-pollen tier** (rate-limited, may watermark). Authenticated `sk_` keys spend
+pollen on `flux`, `zimage`, and everything else — even when FAQ text still calls
+flux "free." With zero balance, the module falls back to **no-auth `flux`**.
 
-**DO NOT** switch the Pollinations model to klein/gptimage/etc. — that moves it onto the metered tier and breaks the $0 guarantee.
+**DO NOT** switch the free-tier fallback to klein/gptimage/zimage-with-auth — those
+are pollen-metered.
 
 ### How $0 is actually enforced
 Not by a billing setting — by **never attaching a payment method** to Cloudflare/Pollinations/HF. With no payment rail, there is no overage to bill into. Staying on Cloudflare's Workers Free plan (no card) is the ceiling.
@@ -39,11 +43,11 @@ Not by a billing setting — by **never attaching a payment method** to Cloudfla
 
 Ordering principle: **cost-safety first, then quality/consistency, then reliability** — but the two subject types weight these differently, so they get **separate chains**.
 
-### Characters (`CHARACTER_CHAIN`): `cloudflare → pollinations-seed → huggingface → pollinations-anon`
-Sprites are regenerated in matched sets (poses, expressions), so **visual consistency dominates**. Anonymous Pollinations is **last** because its watermark is worst on a sprite you'll composite onto a scene. Cloudflare leads: highest volume, no watermark, account-controlled.
+### Characters (`CHARACTER_CHAIN`): `cloudflare → pollinations-anon → pollinations-seed → huggingface`
+Sprites are regenerated in matched sets (poses, expressions), so **visual consistency dominates**. Anonymous Pollinations is **before seed** so 0-pollen anon is tried before authed seed spends pollen. Cloudflare leads: highest volume, no watermark, account-controlled.
 
-### Backgrounds (`BACKGROUND_CHAIN`): `cloudflare → pollinations-seed → pollinations-anon → huggingface`
-Backgrounds are usually one-and-done; consistency barely matters. So the fast free anon route floats **above** HF's tiny monthly quota.
+### Backgrounds (`BACKGROUND_CHAIN`): `cloudflare → pollinations-anon → pollinations-seed → huggingface`
+Backgrounds are usually one-and-done; consistency barely matters. Anon (free flux) floats **above** seed so pollen is not spent unless anon fails.
 
 **DO NOT** merge these into one chain. The split is the point.
 
@@ -63,7 +67,7 @@ Even with seed+provider pinned, FLUX consistency across *different prompts* (idl
 ## 3. Prompt composition (image)
 
 Two independent axes combine: `subjectType` (framing) × `style` (look).
-- `SUBJECT_FRAMING.character` forces full-body, centered, flat background, game-asset-ready.
+- `SUBJECT_FRAMING.character` forces full-body, centered, **transparent cutout by default** (so scene backgrounds show through). Pass `spriteBackground` only when you explicitly want a baked-in backdrop (e.g. plain white for previews). After generation, **`maybe_purge_sprite_background`** runs for character outputs when the bytes are JPEG/other opaque formats (or PNG without meaningful alpha): it samples the **dominant edge color** and keys that solid fill to alpha.
 - `SUBJECT_FRAMING.background` forces wide establishing scene, no characters, layered depth.
 - Composition order is `framing-intro → extracted description → framing-outro → style descriptor`. Style is **last** because trailing terms anchor the overall render; framing brackets the description so the model treats extraction text as the subject, not the whole instruction.
 - `normalizeStyle` fuzzy-matches loose input ("Anime / cel-shaded", "photoreal", "PIXEL") and falls back to a `neutral` style for anything unknown (per the user's choice).

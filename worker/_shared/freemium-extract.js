@@ -1,8 +1,9 @@
 /**
  * Freemium LLM cascade for book extract on the edge (mirrors server/analyze/freemium_extract.py).
  */
-import { SYSTEM, SCHEMA_HINT } from "./extract-prompt.js";
+import { SYSTEM, SCHEMA_HINT, buildSystemPrompt } from "./extract-prompt.js";
 import { resolvedExtractProviders } from "./pipeline-registry.js";
+import { chunkTextByChapters } from "./epub-text.js";
 
 const PER_PROVIDER_TIMEOUT_MS = 90_000;
 const MAX_CHUNK_TOKENS = 24000;
@@ -45,17 +46,14 @@ export function parseModelJson(raw) {
   }
 }
 
-export function buildSystemPrompt() {
-  return (
-    `${SYSTEM}\n\nReturn JSON exactly matching this shape:\n${JSON.stringify(SCHEMA_HINT, null, 2)}\n` +
-    "Output a single valid JSON object only — no markdown, no commentary."
-  );
+export function buildSystemPromptLegacy() {
+  return buildSystemPrompt();
 }
 
 export function buildUserPrompt(book_id, title, author, body_text, chunkIndex, chunkTotal) {
   const chunkNote =
     chunkIndex != null && chunkTotal > 1
-      ? `\nNOTE: chunk ${chunkIndex + 1} of ${chunkTotal}. Extract only this chunk; stable character ids.\n`
+      ? `\nNOTE: chunk ${chunkIndex + 1} of ${chunkTotal}. Extract only this chunk; stable character ids. Respect ## Chapter N headers — scenes in this chunk must use matching chapter numbers.\n`
       : "";
   return `book_id = ${JSON.stringify(book_id)}; title = ${JSON.stringify(title)}; author = ${JSON.stringify(author)}.${chunkNote}\n\nBOOK TEXT START\n${body_text}\nBOOK TEXT END\n`;
 }
@@ -256,7 +254,9 @@ export async function freemiumExtractBook(
   { env, preferProvider, onProgress },
 ) {
   const system = buildSystemPrompt();
-  const chunks = chunkText(body_text);
+  const maxChars = MAX_CHUNK_TOKENS * 4;
+  const chapterChunks = chunkTextByChapters(body_text, maxChars);
+  const chunks = chapterChunks?.length ? chapterChunks : chunkText(body_text);
   if (!chunks.length) throw new Error("empty book text");
 
   let pin = preferProvider;

@@ -40,7 +40,8 @@ def test_chunk_text_splits_paragraphs():
 def test_build_chain_pins_provider():
     chain = build_chain("groq")
     assert chain[0] == "groq"
-    assert "gemini" in chain
+    assert "cerebras" in chain
+    assert "cloudflare" in chain
 
 
 def test_merge_analysis_dicts_dedupes_characters():
@@ -61,10 +62,10 @@ def test_merge_analysis_dicts_dedupes_characters():
 def test_extract_pin_roundtrip(tmp_path, monkeypatch):
     monkeypatch.setattr(L, "BOOKS_DIR", tmp_path / "books")
     monkeypatch.setattr(L, "DATA_DIR", tmp_path)
-    L.write_extract_pin("bk-pin", "cerebras", "llama-3.3-70b")
+    L.write_extract_pin("bk-pin", "cerebras", "gpt-oss-120b")
     pin = L.read_extract_pin("bk-pin")
     assert pin["provider"] == "cerebras"
-    assert pin["model"] == "llama-3.3-70b"
+    assert pin["model"] == "gpt-oss-120b"
 
 
 def test_extract_book_falls_back_to_freemium(tmp_path, monkeypatch):

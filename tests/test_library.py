@@ -75,9 +75,37 @@ def test_analysis_from_playback():
     assert a.scenes[0].background_desc == "Opening"
 
 
+def test_release_imaging_lock_clears_stuck_regen():
+    L = _fresh_library()
+    L.write_status(
+        "bk",
+        status="ready",
+        stage="imaging",
+        progress=0.4,
+        title="T",
+        generating_style="anime",
+    )
+    L.write_media("bk", {"active": "anime", "styles": {"anime": {"complete": False, "characters": {"a": "/x"}}}})
+    out = L.release_imaging_lock("bk")
+    assert out["generating_style"] is None
+    assert out["stage"] == "done"
+    assert out["progress"] == 1.0
+    m = L.read_media("bk")
+    assert m["styles"]["anime"]["complete"] is True
+
+
 def test_catalog_lists_processing_book():
     L = _fresh_library()
     L.write_status("bk", status="processing", stage="parsing", progress=0.1, title="WIP")
     cat = L.list_catalog()
     ids = {e["book_id"]: e for e in cat}
     assert "bk" in ids and ids["bk"]["status"] == "processing"
+
+
+def test_catalog_ignores_voices_sidecar():
+    L = _fresh_library()
+    L.write_status("my-book", status="ready", stage="done", progress=1.0, title="Real Book")
+    L.write_voice_overrides("my-book", {"narrator": {"source": "edge", "voice": "en-US-AvaNeural"}})
+    ids = {e["book_id"] for e in L.list_catalog()}
+    assert "my-book" in ids
+    assert "my-book.voices" not in ids

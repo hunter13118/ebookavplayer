@@ -1,16 +1,16 @@
 /** Unified book access: local offline pack first, then server API. */
 import { fetchBook as fetchBookRemote, fetchCatalog as fetchCatalogRemote, apiUrl } from "../api.js";
 import {
-  listInstalledPacks, getInstalledPackForBook, packSizeBytes, formatBytes,
+  listInstalledPacks, getInstalledPackForBook, packSizeBytes, formatBytes, deletePack,
 } from "./packStore.js";
-import { importPackZip, readFileAsArrayBuffer, isPackArchiveName, downloadInstalledPack } from "./packIo.js";
+import { importPackZip, readFileAsArrayBuffer, isPackArchiveName, downloadInstalledPack, saveBlobAsFile } from "./packIo.js";
 import { getInstalledPack } from "./packStore.js";
 import {
   linkPackFolder, unlinkPackFolder, supportsFolderLibrary, collectFolderPackFiles,
   markFolderFilesImported, scanLinkedFolderSummary, getLinkedFolderInfo,
 } from "./packFolder.js";
 import { activatePackForBook, packSupportsOfflineAudio, warmOfflineMedia } from "./packBridge.js";
-import { TIER_AUDIOBOOK, TIER_VISUAL } from "./packFormat.js";
+import { TIER_AUDIOBOOK, TIER_VISUAL, packFilename } from "./packFormat.js";
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
@@ -81,6 +81,17 @@ export async function downloadPackBuildFile(bookId, jobId) {
   return res.arrayBuffer();
 }
 
+/** Derive catalog cover from packed book JSON or media index. */
+export function coverFromPackRecord(pack) {
+  const book = pack?.book || {};
+  if (book.cover) return String(book.cover).split("?")[0];
+  for (const serverUrl of Object.keys(pack?.media_index || {})) {
+    const base = String(serverUrl).split("?")[0];
+    if (/\/cover\.(png|jpe?g|webp)$/i.test(base)) return base;
+  }
+  return null;
+}
+
 function catalogFromPack(pack) {
   const book = pack.book || {};
   const lines = (book.scenes || []).reduce((n, s) => n + (s.lines?.length || 0), 0);
@@ -91,13 +102,14 @@ function catalogFromPack(pack) {
     status: "ready",
     stage: "done",
     progress: 1,
-    cover: book.cover || null,
+    cover: coverFromPackRecord(pack),
     scenes: (book.scenes || []).length,
     lines,
     offline_pack: true,
     pack_id: pack.pack_id,
     pack_tier: pack.tier,
     pack_style: pack.style,
+    pack_origin: pack.pack_origin || "import",
     offline_audio: packSupportsOfflineAudio(pack),
   };
 }
@@ -120,7 +132,11 @@ export async function mergeCatalog(serverList) {
   for (const e of local) {
     const prev = byId.get(e.book_id);
     if (prev) {
-      byId.set(e.book_id, { ...prev, ...e, offline_pack: true, server_available: true });
+      const merged = { ...prev, ...e, offline_pack: true, server_available: true };
+      if (!e.cover && prev.cover) merged.cover = prev.cover;
+      if (!e.title && prev.title) merged.title = prev.title;
+      if (!e.author && prev.author) merged.author = prev.author;
+      byId.set(e.book_id, merged);
     } else {
       byId.set(e.book_id, { ...e, server_available: false });
     }
@@ -128,25 +144,56 @@ export async function mergeCatalog(serverList) {
   return [...byId.values()].sort((a, b) => (a.title || "").localeCompare(b.title || ""));
 }
 
+function bookFromLocalPack(local) {
+  const out = { ...local.book };
+  out.voice_overrides = local.voices || out.voice_overrides || {};
+  out.offline_pack = {
+    pack_id: local.pack_id,
+    tier: local.tier,
+    style: local.style,
+    audio: packSupportsOfflineAudio(local),
+  };
+  out.status = "ready";
+  out.stage = "done";
+  out.progress = 1;
+  return out;
+}
+
 export async function fetchBook(bookId, opts = {}) {
   const local = await getInstalledPackForBook(bookId);
-  if (local?.book) {
+  const preferLocal = Boolean(opts.preferLocal);
+
+  if (preferLocal && local?.book) {
     await activatePackForBook(bookId);
     await warmOfflineMedia(local);
-    const out = { ...local.book };
-    out.voice_overrides = local.voices || out.voice_overrides || {};
-    out.offline_pack = {
-      pack_id: local.pack_id,
-      tier: local.tier,
-      style: local.style,
-      audio: packSupportsOfflineAudio(local),
-    };
-    out.status = "ready";
-    out.stage = "done";
-    out.progress = 1;
-    return out;
+    return bookFromLocalPack(local);
   }
-  return fetchBookRemote(bookId, opts);
+
+  try {
+    const remote = await fetchBookRemote(bookId, opts);
+    if (local?.book) {
+      await activatePackForBook(bookId);
+      await warmOfflineMedia(local);
+      return {
+        ...remote,
+        voice_overrides: remote.voice_overrides || local.voices || {},
+        offline_pack: {
+          pack_id: local.pack_id,
+          tier: local.tier,
+          style: local.style,
+          audio: packSupportsOfflineAudio(local),
+        },
+      };
+    }
+    return remote;
+  } catch (e) {
+    if (local?.book) {
+      await activatePackForBook(bookId);
+      await warmOfflineMedia(local);
+      return bookFromLocalPack(local);
+    }
+    throw e;
+  }
 }
 
 export async function fetchCatalogMerged() {
@@ -178,7 +225,7 @@ export async function importOfflinePackFiles(files, { onProgress } = {}) {
     }
     try {
       const buf = await readFileAsArrayBuffer(file);
-      const record = await importPackZip(buf);
+      const record = await importPackZip(buf, { origin: "import" });
       await activatePackForBook(record.book_id);
       imported.push(record);
     } catch (e) {
@@ -217,7 +264,7 @@ export async function scanLinkedPackFolder({ force = false, onProgress } = {}) {
     }
     try {
       const buf = await readFileAsArrayBuffer(file);
-      const record = await importPackZip(buf);
+      const record = await importPackZip(buf, { origin: "folder" });
       await activatePackForBook(record.book_id);
       imported.push(record);
       databaseFiles.push(file);
@@ -235,38 +282,99 @@ export {
   scanLinkedFolderSummary, getLinkedFolderInfo,
 };
 
-export async function downloadOfflinePack(bookId, {
-  tier = TIER_VISUAL, style, force = false, onProgress, onJobStarted,
+export async function fetchServerPackZip(bookId, {
+  tier = TIER_VISUAL, style, force = false, onProgress,
 } = {}) {
-  if (tier === TIER_AUDIOBOOK) {
-    const started = await startPackBuild(bookId, { tier, style, force });
-    const jobId = started.job_id;
-    if (!jobId) throw new Error("pack build: no job id");
-    onJobStarted?.(jobId, started);
-    if (started.cached) {
-      onProgress?.(1, "cache hit");
-    }
+  const started = await startPackBuild(bookId, { tier, style, force });
+  const jobId = started.job_id;
+  if (!jobId) throw new Error("pack build: no job id");
+  if (!started.cached) {
     for (;;) {
       const st = await pollPackBuild(bookId, jobId);
       onProgress?.(st.progress ?? 0, st.detail || "", st);
       if (st.status === "done" || st.ready) break;
-      if (st.status === "cancelled") {
-        throw new Error("pack build cancelled");
-      }
+      if (st.status === "cancelled") throw new Error("pack build cancelled");
       if (st.status === "error") {
         throw new Error(st.error || st.detail || "pack build failed");
       }
       await sleep(1200);
     }
-    const buf = await downloadPackBuildFile(bookId, jobId);
-    return importPackZip(buf);
   }
-  const q = new URLSearchParams({ tier });
-  if (style) q.set("style", style);
-  const res = await fetch(apiUrl(`/books/${encodeURIComponent(bookId)}/pack?${q}`));
-  if (!res.ok) throw new Error(`pack download: HTTP ${res.status}`);
-  const buf = await res.arrayBuffer();
-  return importPackZip(buf);
+  return downloadPackBuildFile(bookId, jobId);
+}
+
+export async function pickPackSaveHandle(bookId) {
+  if (typeof window === "undefined" || typeof window.showSaveFilePicker !== "function") {
+    return null;
+  }
+  const pack = await getInstalledPackForBook(bookId);
+  const suggested = pack ? packFilename(pack.manifest) : `${bookId}.visual.vaepack`;
+  return window.showSaveFilePicker({
+    suggestedName: suggested,
+    types: [{
+      description: "Visual Audiobook Pack",
+      accept: { "application/zip": [".vaepack", ".zip"] },
+    }],
+  });
+}
+
+export async function downloadOfflinePack(bookId, {
+  tier = TIER_VISUAL, style, force = false, onProgress, onJobStarted,
+} = {}) {
+  const started = await startPackBuild(bookId, { tier, style, force });
+  const jobId = started.job_id;
+  if (!jobId) throw new Error("pack build: no job id");
+  onJobStarted?.(jobId, started);
+  if (started.cached) onProgress?.(1, "cache hit");
+  else {
+    for (;;) {
+      const st = await pollPackBuild(bookId, jobId);
+      onProgress?.(st.progress ?? 0, st.detail || "", st);
+      if (st.status === "done" || st.ready) break;
+      if (st.status === "cancelled") throw new Error("pack build cancelled");
+      if (st.status === "error") {
+        throw new Error(st.error || st.detail || "pack build failed");
+      }
+      await sleep(1200);
+    }
+  }
+  const buf = await downloadPackBuildFile(bookId, jobId);
+  return importPackZip(buf, { origin: "server" });
+}
+
+/** Silently cache a server book into browser storage (visual tier). */
+export async function ensureBookCached(bookId, opts = {}) {
+  const existing = await getInstalledPackForBook(bookId);
+  if (existing) return existing;
+  return downloadOfflinePack(bookId, { tier: TIER_VISUAL, ...opts });
+}
+
+/** Download .vaepack file — prefer fresh server zip, fall back to local IndexedDB rebuild. */
+export async function exportBookPackFile(bookId, { saveHandle = null, onProgress } = {}) {
+  const pack = await getInstalledPackForBook(bookId);
+  const name = pack ? packFilename(pack.manifest) : `${bookId}.visual.vaepack`;
+  let serverErr = null;
+
+  try {
+    const buf = await fetchServerPackZip(bookId, { tier: TIER_VISUAL, onProgress });
+    await saveBlobAsFile(new Blob([buf], { type: "application/zip" }), name, { saveHandle });
+    return pack || { book_id: bookId };
+  } catch (e) {
+    serverErr = e;
+  }
+
+  if (!pack) {
+    throw serverErr || new Error("Book is not cached on this device yet");
+  }
+  await downloadInstalledPack(pack, { saveHandle });
+  return pack;
+}
+
+/** Remove local pack only (cloud copy unchanged). */
+export async function removeLocalPack(bookId) {
+  const pack = await getInstalledPackForBook(bookId);
+  if (!pack) return false;
+  return deletePack(pack.pack_id);
 }
 
 export { TIER_VISUAL, TIER_AUDIOBOOK };

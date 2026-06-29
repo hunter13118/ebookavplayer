@@ -28,6 +28,8 @@ class ParsedBook:
     author: str = ""
     chapters: list[Chapter] = field(default_factory=list)
     images: list[bytes] = field(default_factory=list)
+    # chapter_index → [(image_index, text_after_marker), …]
+    illustration_markers: dict[int, list[tuple[int, str]]] = field(default_factory=dict)
 
     @property
     def body_text(self) -> str:
@@ -40,7 +42,58 @@ _WS = re.compile(r"[ \t　]+")
 _NL = re.compile(r"\n{3,}")
 
 
+_IMG_SRC = re.compile(r"""<img\b[^>]*/?\s*>""", re.I)
+_IMG_SRC_HREF = re.compile(r"""src=["']([^"']+)["']""", re.I)
+_FIGURE = re.compile(r"<figure[^>]*>.*?</figure>", re.I | re.S)
+_MARKER = "[[ILLUS:{idx}]]"
+
+
+def _image_index(src: str, path_to_index: dict[str, int]) -> int | None:
+    href = _normalize_href(src)
+    idx = path_to_index.get(href)
+    if idx is not None:
+        return idx
+    base = href.rsplit("/", 1)[-1]
+    for path, i in path_to_index.items():
+        if path.rsplit("/", 1)[-1] == base:
+            return i
+    return None
+
+
+def _marker_for_src(src: str, path_to_index: dict[str, int]) -> str:
+    idx = _image_index(src, path_to_index)
+    if idx is None:
+        return ""
+    return f"\n\n{_MARKER.format(idx=idx)}\n\n"
+
+
+def _normalize_href(href: str) -> str:
+    return href.replace("\\", "/").split("#")[0].lstrip("/")
+
+
+def _inject_illustration_markers(raw: str, path_to_index: dict[str, int]) -> tuple[str, list[tuple[int, str]]]:
+    """Replace figure | figure images with [[ILLUS:n]] markers."""
+    from .placements import markers_in_chapter_text
+
+    def repl_figure(m: re.Match) -> str:
+        img = _IMG_SRC.search(m.group(0))
+        if not img:
+            return ""
+        href = _IMG_SRC_HREF.search(img.group(0))
+        return _marker_for_src(href.group(1), path_to_index) if href else ""
+
+    def repl_img(m: re.Match) -> str:
+        href = _IMG_SRC_HREF.search(m.group(0))
+        return _marker_for_src(href.group(1), path_to_index) if href else ""
+
+    marked = _FIGURE.sub(repl_figure, raw)
+    marked = _IMG_SRC.sub(repl_img, marked)
+    markers_found = markers_in_chapter_text(_strip_html(marked))
+    return marked, markers_found
+
+
 def _strip_html(raw: str) -> str:
+    raw = re.sub(r"\[\[ILLUS:(\d+)\]\]", r"\n\n[[ILLUS:\1]]\n\n", raw)
     # Prefer BeautifulSoup if present (handles entities/scripts cleanly).
     try:
         from bs4 import BeautifulSoup
@@ -73,6 +126,21 @@ def _title_from(raw: str, fallback: str) -> str:
     return fallback
 
 
+def _is_front_matter(title: str, text: str) -> bool:
+    """Skip title pages, nav stubs, and other non-story HTML docs."""
+    t = (title or "").strip().lower()
+    if t in {
+        "contents", "title", "nav", "cover", "copyright", "dedication",
+        "acknowledgments", "acknowledgements", "about the author",
+    }:
+        return True
+    if "chapter" in t or re.match(r"^ch(?:apter)?\s*\d", t):
+        return False
+    if len(text.strip()) < 80:
+        return True
+    return False
+
+
 def parse_epub(path: str, book_id: str | None = None) -> ParsedBook:
     book_id = book_id or os.path.splitext(os.path.basename(path))[0]
     book = ParsedBook(book_id=book_id)
@@ -92,24 +160,28 @@ def parse_epub(path: str, book_id: str | None = None) -> ParsedBook:
         # ordering is a host refinement)
         docs = [n for n in names
                 if n.lower().endswith((".xhtml", ".html", ".htm"))]
-        idx = 0
-        for n in docs:
-            raw = z.read(n).decode("utf-8", "ignore")
-            text = _strip_html(raw)
-            if len(text) < 40:        # skip nav/cover stubs
-                continue
-            idx += 1
-            book.chapters.append(
-                Chapter(index=idx, title=_title_from(raw, f"Chapter {idx}"),
-                        text=text))
-        # embedded images for visual reference (cap to keep request small)
         imgs = [n for n in names
-                if n.lower().endswith((".jpg", ".jpeg", ".png", ".webp"))]
-        for n in imgs[:8]:
+                if n.lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".svg"))]
+        path_to_index: dict[str, int] = {}
+        for i, n in enumerate(imgs[:8]):
+            path_to_index[_normalize_href(n)] = i
             try:
                 book.images.append(z.read(n))
             except KeyError:
                 pass
+        idx = 0
+        for n in docs:
+            raw = z.read(n).decode("utf-8", "ignore")
+            marked_raw, ch_markers = _inject_illustration_markers(raw, path_to_index)
+            text = _strip_html(marked_raw)
+            title = _title_from(raw, f"Chapter {idx + 1}")
+            if len(text) < 40 or _is_front_matter(title, text):
+                continue
+            idx += 1
+            book.chapters.append(
+                Chapter(index=idx, title=title, text=text))
+            if ch_markers:
+                book.illustration_markers[idx] = ch_markers
     if not book.title:
         book.title = book_id
     return book

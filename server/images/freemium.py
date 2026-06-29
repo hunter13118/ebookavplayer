@@ -15,15 +15,27 @@ log = logging.getLogger(__name__)
 
 PER_PROVIDER_TIMEOUT_SEC = 30
 
+# Hugging Face Inference Providers (hf-inference router).
+HF_IMAGE_MODEL = os.environ.get(
+    "HF_IMAGE_MODEL", "black-forest-labs/FLUX.1-schnell"
+)
+
+# Pollinations: authed sk_ spends pollen; unauthenticated `flux` is the 0-pollen tier
+# (rate-limited). zimage/flux with Bearer cost ~0.002/0.0018 pollen per image.
+POLLINATIONS_IMAGE_MODEL = os.environ.get("POLLINATIONS_IMAGE_MODEL", "flux")
+POLLINATIONS_FREE_MODEL = os.environ.get("POLLINATIONS_FREE_MODEL", "flux")
+
 SUBJECT_FRAMING = {
     "character": {
         "pre": (
-            "Full-body character sprite, single character, centered composition, "
-            "clean readable silhouette, front-facing or 3/4 view,"
+            "Portrait bust character sprite, head and shoulders, large readable face, "
+            "centered composition, expressive eyes and hair, front-facing or 3/4 view,"
         ),
-        "post": (
-            "isolated on a plain flat background, even lighting, no scenery, "
-            "consistent line weight, game-asset ready."
+        "post_transparent": (
+            "character cutout on a fully transparent background (alpha channel), "
+            "no backdrop, no floor shadow, no scenery, even lighting, "
+            "face and hair fill most of the frame, thumbnail-friendly, "
+            "visual novel dialogue portrait ready."
         ),
     },
     "background": {
@@ -44,31 +56,34 @@ STYLE_TEMPLATES = {
         "natural lighting and shading, lifelike textures"
     ),
     "anime": (
-        "anime art style, cel-shaded, clean bold outlines, vibrant flat colors, "
-        "expressive features, in the style of modern Japanese animation"
+        "blatant low-budget isekai anime screenshot, trash-tier harem anime aesthetic, "
+        "oversized sparkly eyes, exaggerated cel-shading, cheap TV anime coloring, "
+        "fan-service adjacent character design, obvious Japanese animation tropes"
     ),
     "pixel": (
-        "pixel art, crisp pixel grid, limited palette, dithered shading, "
-        "retro 16-bit game aesthetic, sharp edges (no anti-aliasing)"
+        "Stardew Valley style pixel art RPG portrait, chunky readable pixels, "
+        "warm limited palette, cozy farm-sim character sprite, distinct silhouette, "
+        "16-bit game portrait, sharp pixel grid (no anti-aliasing)"
     ),
     "comic": (
-        "comic book / cartoon style, bold inked outlines, flat cel coloring, "
-        "dynamic stylized shapes, halftone-friendly shading"
+        "Adventure Time style cheap cartoon, thin noodly limbs, flat bold colors, "
+        "minimal detail, goofy simplified shapes, thick black outlines, "
+        "low-budget TV animation aesthetic"
     ),
     "neutral": "clean digital illustration, balanced colors, clear detail",
 }
 
 CHARACTER_CHAIN = [
-    "cloudflare",
+    "pollinations-anon",
     "pollinations-seed",
     "huggingface",
-    "pollinations-anon",
+    "cloudflare",
 ]
 BACKGROUND_CHAIN = [
-    "cloudflare",
-    "pollinations-seed",
     "pollinations-anon",
+    "pollinations-seed",
     "huggingface",
+    "cloudflare",
 ]
 
 
@@ -106,18 +121,40 @@ def normalize_subject(subject_type: str | None) -> str:
 
 
 def compose_prompt(description: str, *, subject_type: str = "character",
-                   style: str = "neutral") -> str:
+                   style: str = "neutral",
+                   sprite_background: str | None = None) -> str:
     subj = normalize_subject(subject_type)
     style_key = normalize_style(style)
     framing = SUBJECT_FRAMING[subj]
     style_desc = STYLE_TEMPLATES[style_key]
     desc = " ".join(description.strip().split())
+    if subj == "character":
+        if sprite_background and sprite_background.strip():
+            post = (
+                f"isolated on {sprite_background.strip()}, even lighting, no scenery, "
+                "consistent line weight, game-asset ready."
+            )
+        else:
+            post = framing["post_transparent"]
+    else:
+        post = framing["post"]
     return (
-        f"{framing['pre']} {desc} {framing['post']} Art style: {style_desc}."
+        f"{framing['pre']} {desc} {post} Art style: {style_desc}."
     )
 
 
 def build_chain(subject_type: str, prefer_provider: str | None = None) -> list[str]:
+    try:
+        from ..pipeline.registry import resolved_freemium_chain
+        base = resolved_freemium_chain(subject_type)
+        if prefer_provider:
+            if prefer_provider in base:
+                return [prefer_provider] + [p for p in base if p != prefer_provider]
+            return [prefer_provider] + [p for p in base if p != prefer_provider]
+        if base:
+            return base
+    except Exception:
+        pass
     base = BACKGROUND_CHAIN if subject_type == "background" else CHARACTER_CHAIN
     if prefer_provider and prefer_provider in _PROVIDER_IDS:
         return [prefer_provider] + [p for p in base if p != prefer_provider]
@@ -131,6 +168,138 @@ def _cfg() -> dict[str, str | None]:
         "pollinations_token": os.environ.get("POLLINATIONS_TOKEN"),
         "hf_token": os.environ.get("HF_TOKEN"),
     }
+
+
+def _pollinations_url(
+    prompt: str,
+    seed: int | None,
+    model: str,
+    *,
+    image_format: str | None = None,
+) -> str:
+    url = (
+        f"https://gen.pollinations.ai/image/{requests.utils.quote(prompt)}"
+        f"?model={requests.utils.quote(model)}"
+    )
+    if isinstance(seed, int):
+        url += f"&seed={seed}"
+    if image_format:
+        url += f"&format={requests.utils.quote(image_format)}"
+    return url
+
+
+def _pollinations_get(
+    prompt: str,
+    seed: int | None,
+    *,
+    model: str,
+    token: str | None,
+    image_format: str | None = None,
+) -> requests.Response:
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    return requests.get(
+        _pollinations_url(prompt, seed, model, image_format=image_format),
+        headers=headers,
+        timeout=PER_PROVIDER_TIMEOUT_SEC,
+    )
+
+
+def _parse_pollinations_response(
+    r: requests.Response,
+    *,
+    provider: str,
+    model: str,
+    label: str,
+) -> dict[str, Any]:
+    if not r.ok:
+        raise RuntimeError(f"Pollinations({label}): HTTP {r.status_code} {r.text[:200]}")
+    ct = r.headers.get("content-type", "image/jpeg")
+    if not ct.startswith("image/"):
+        raise RuntimeError(f"Pollinations({label}): unexpected content-type {ct}")
+    return {
+        "provider": provider,
+        "model": model,
+        "bytes": r.content,
+        "content_type": ct,
+    }
+
+
+def _pollinations_with_free_fallback(
+    prompt: str,
+    seed: int | None,
+    cfg: dict,
+    *,
+    provider_id: str,
+    label: str,
+    start_authed: bool,
+) -> dict[str, Any]:
+    """Prefer 0-pollen unauthenticated flux; authed sk_ spends pollen unless balance is 0."""
+    token = cfg.get("pollinations_token")
+    image_format = cfg.get("pollinations_format")
+
+    if start_authed:
+        if not token:
+            raise RuntimeError(f"Pollinations({label}): missing API key (skipped)")
+        r = _pollinations_get(
+            prompt, seed, model=POLLINATIONS_IMAGE_MODEL, token=token,
+            image_format=image_format,
+        )
+        if r.ok:
+            return _parse_pollinations_response(
+                r, provider=provider_id, model=POLLINATIONS_IMAGE_MODEL, label=label,
+            )
+        if r.status_code != 402:
+            raise RuntimeError(f"Pollinations({label}): HTTP {r.status_code} {r.text[:200]}")
+        log.info(
+            "Pollinations(%s): zero pollen on %s — using free %s (no auth)",
+            label, POLLINATIONS_IMAGE_MODEL, POLLINATIONS_FREE_MODEL,
+        )
+
+    r = _pollinations_get(
+        prompt, seed, model=POLLINATIONS_FREE_MODEL, token=None,
+        image_format=image_format,
+    )
+    if r.ok:
+        return _parse_pollinations_response(
+            r,
+            provider=provider_id,
+            model=f"{POLLINATIONS_FREE_MODEL}-free",
+            label=label,
+        )
+
+    # Some endpoints reject no-auth (401); retry authed path if we have a key.
+    if r.status_code == 401 and token and not start_authed:
+        return _pollinations_with_free_fallback(
+            prompt, seed, cfg,
+            provider_id=provider_id,
+            label=label,
+            start_authed=True,
+        )
+
+    return _parse_pollinations_response(
+        r,
+        provider=provider_id,
+        model=f"{POLLINATIONS_FREE_MODEL}-free",
+        label=label,
+    )
+
+
+def _try_pollinations_seed(prompt: str, seed: int | None, cfg: dict) -> dict[str, Any]:
+    return _pollinations_with_free_fallback(
+        prompt, seed, cfg,
+        provider_id="pollinations-seed",
+        label="Seed",
+        start_authed=True,
+    )
+
+
+def _try_pollinations_anon(prompt: str, seed: int | None, cfg: dict) -> dict[str, Any]:
+    return _pollinations_with_free_fallback(
+        prompt, seed, cfg,
+        provider_id="pollinations-anon",
+        label="Anon",
+        start_authed=False,
+    )
 
 
 def _try_cloudflare(prompt: str, seed: int | None, cfg: dict) -> dict[str, Any]:
@@ -162,57 +331,18 @@ def _try_cloudflare(prompt: str, seed: int | None, cfg: dict) -> dict[str, Any]:
     }
 
 
-def _try_pollinations_seed(prompt: str, seed: int | None, cfg: dict) -> dict[str, Any]:
-    token = cfg.get("pollinations_token")
-    if not token:
-        raise RuntimeError("Pollinations(Seed): missing token (skipped)")
-    url = (
-        f"https://gen.pollinations.ai/image/{requests.utils.quote(prompt)}"
-        f"?model=flux&token={requests.utils.quote(token)}"
-    )
-    if isinstance(seed, int):
-        url += f"&seed={seed}"
-    r = requests.get(url, timeout=PER_PROVIDER_TIMEOUT_SEC)
-    if not r.ok:
-        raise RuntimeError(f"Pollinations(Seed): HTTP {r.status_code} {r.text[:200]}")
-    ct = r.headers.get("content-type", "image/jpeg")
-    if not ct.startswith("image/"):
-        raise RuntimeError(f"Pollinations(Seed): unexpected content-type {ct}")
-    return {
-        "provider": "pollinations-seed",
-        "model": "flux",
-        "bytes": r.content,
-        "content_type": ct,
-    }
-
-
-def _try_pollinations_anon(prompt: str, seed: int | None, _cfg: dict) -> dict[str, Any]:
-    url = f"https://gen.pollinations.ai/image/{requests.utils.quote(prompt)}?model=flux"
-    if isinstance(seed, int):
-        url += f"&seed={seed}"
-    r = requests.get(url, timeout=PER_PROVIDER_TIMEOUT_SEC)
-    if not r.ok:
-        raise RuntimeError(f"Pollinations(Anon): HTTP {r.status_code} {r.text[:200]}")
-    ct = r.headers.get("content-type", "image/jpeg")
-    if not ct.startswith("image/"):
-        raise RuntimeError(f"Pollinations(Anon): unexpected content-type {ct}")
-    return {
-        "provider": "pollinations-anon",
-        "model": "flux",
-        "bytes": r.content,
-        "content_type": ct,
-    }
-
-
 def _try_huggingface(prompt: str, seed: int | None, cfg: dict) -> dict[str, Any]:
     token = cfg.get("hf_token")
     if not token:
         raise RuntimeError("HuggingFace: missing token (skipped)")
-    model = "black-forest-labs/FLUX.1-dev"
+    model = HF_IMAGE_MODEL
     url = f"https://router.huggingface.co/hf-inference/models/{model}"
-    payload: dict[str, Any] = {"inputs": prompt}
+    payload: dict[str, Any] = {
+        "inputs": prompt,
+        "parameters": {"num_inference_steps": 4},
+    }
     if isinstance(seed, int):
-        payload["parameters"] = {"seed": seed}
+        payload["parameters"]["seed"] = seed
     r = requests.post(
         url,
         headers={
@@ -230,7 +360,7 @@ def _try_huggingface(prompt: str, seed: int | None, cfg: dict) -> dict[str, Any]
         raise RuntimeError(f"HuggingFace: unexpected content-type {ct}")
     return {
         "provider": "huggingface",
-        "model": "FLUX.1-dev",
+        "model": model,
         "bytes": r.content,
         "content_type": ct,
     }
@@ -245,6 +375,36 @@ _PROVIDER_FUNCS = {
 _PROVIDER_IDS = set(_PROVIDER_FUNCS)
 
 
+def _maybe_purge_sprite_background(result: dict[str, Any]) -> dict[str, Any]:
+    """Post-process character sprites: edge-detected backdrop → alpha PNG."""
+    from .white_key import maybe_purge_sprite_background
+
+    tol = int(os.environ.get("SPRITE_BG_PURGE_TOLERANCE", "22"))
+    soft = int(os.environ.get("SPRITE_BG_PURGE_SOFTNESS", "12"))
+    min_dom = float(os.environ.get("SPRITE_BG_PURGE_MIN_EDGE_DOMINANCE", "0.35"))
+    try:
+        purged = maybe_purge_sprite_background(
+            result["bytes"],
+            result.get("content_type"),
+            tolerance=tol,
+            softness=soft,
+            min_edge_dominance=min_dom,
+        )
+        if purged is None:
+            return result
+        png_bytes, meta = purged
+        return {
+            **result,
+            "bytes": png_bytes,
+            "content_type": "image/png",
+            "background_purged": True,
+            "background_purge": meta,
+        }
+    except Exception as e:
+        log.warning("background purge failed (%s); keeping original bytes", e)
+        return result
+
+
 def freemium_image_gen(
     description: str,
     *,
@@ -252,20 +412,31 @@ def freemium_image_gen(
     style: str = "neutral",
     seed: int | None = None,
     prefer_provider: str | None = None,
+    sprite_background: str | None = None,
 ) -> dict[str, Any]:
     """Try free providers in subject-appropriate order; return first success."""
     if not (description or "").strip():
         raise ValueError("freemium_image_gen: description must be non-empty")
     subj = normalize_subject(subject_type)
     style_key = normalize_style(style)
-    prompt = compose_prompt(description, subject_type=subj, style=style_key)
+    prompt = compose_prompt(
+        description,
+        subject_type=subj,
+        style=style_key,
+        sprite_background=sprite_background,
+    )
     chain = build_chain(subj, prefer_provider)
     cfg = _cfg()
+    if subj == "character" and not (sprite_background and sprite_background.strip()):
+        cfg = {**cfg, "pollinations_format": "png"}
+    want_bg_purge = subj == "character" and not (sprite_background and sprite_background.strip())
     failures: list[Exception] = []
     for pid in chain:
         fn = _PROVIDER_FUNCS[pid]
         try:
             result = fn(prompt, seed, cfg)
+            if want_bg_purge:
+                result = _maybe_purge_sprite_background(result)
             log.info(
                 "freemium image via %s (%s) subject=%s style=%s seed=%s",
                 result["provider"], result["model"], subj, style_key, seed,

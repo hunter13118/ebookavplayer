@@ -77,8 +77,9 @@ const SUBJECT_FRAMING = {
   character: {
     pre: 'Full-body character sprite, single character, centered composition, ' +
          'clean readable silhouette, front-facing or 3/4 view,',
-    post: 'isolated on a plain flat background, even lighting, no scenery, ' +
-          'consistent line weight, game-asset ready.',
+    postTransparent: 'character cutout on a fully transparent background (alpha channel), ' +
+                     'no backdrop, no floor shadow, no scenery, even lighting, ' +
+                     'consistent line weight, visual novel sprite overlay ready.',
   },
   background: {
     pre: 'Wide establishing background scene, environment art, no characters, ' +
@@ -127,20 +128,31 @@ function normalizeSubject(subjectType) {
  * @param {object} opts
  * @param {string} opts.subjectType 'character' | 'background'
  * @param {string} opts.style       style selector (loose string ok)
+ * @param {string} [opts.spriteBackground]
+ *        Optional backdrop for the sprite (e.g. "plain white"). Omit for transparent cutout.
  * @returns {string}
  */
-function composePrompt(description, { subjectType, style } = {}) {
+function composePrompt(description, { subjectType, style, spriteBackground } = {}) {
   const subjKey = normalizeSubject(subjectType);
   const styleKey = normalizeStyle(style);
   const framing = SUBJECT_FRAMING[subjKey];
   const styleDesc = STYLE_TEMPLATES[styleKey];
+  const desc = description.trim().replace(/\s+/g, ' ');
 
-  // Order: framing intro -> the actual extracted description -> framing outro
-  //        -> style descriptor. Trailing style anchors the overall look.
+  let post;
+  if (subjKey === 'character') {
+    post = spriteBackground?.trim()
+      ? `isolated on ${spriteBackground.trim()}, even lighting, no scenery, ` +
+        'consistent line weight, game-asset ready.'
+      : framing.postTransparent;
+  } else {
+    post = framing.post;
+  }
+
   return [
     framing.pre,
-    description.trim().replace(/\s+/g, ' '),
-    framing.post,
+    desc,
+    post,
     `Art style: ${styleDesc}.`,
   ].join(' ');
 }
@@ -149,7 +161,7 @@ function composePrompt(description, { subjectType, style } = {}) {
 // Each provider is an async fn that either returns a result object or throws.
 // Throwing is the signal to fall through to the next provider.
 
-async function tryCloudflare(prompt, seed) {
+async function tryCloudflare(prompt, seed, _ctx = {}) {
   const { cloudflareAccountId: acct, cloudflareToken: token } = CONFIG;
   if (!acct || !token) throw new Error('Cloudflare: missing account id or token (skipped)');
 
@@ -183,60 +195,95 @@ async function tryCloudflare(prompt, seed) {
   return { provider: 'cloudflare', model: 'flux-1-schnell', bytes, contentType: 'image/jpeg' };
 }
 
-async function tryPollinationsSeed(prompt, seed) {
-  const { pollinationsToken: token } = CONFIG;
-  if (!token) throw new Error('Pollinations(Seed): missing token (skipped)');
+const POLLINATIONS_IMAGE_MODEL = process.env.POLLINATIONS_IMAGE_MODEL || 'flux';
+// Unauthenticated flux is Pollinations' 0-pollen tier (rate-limited). Authed sk_ spends pollen.
+const POLLINATIONS_FREE_MODEL = process.env.POLLINATIONS_FREE_MODEL || 'flux';
 
-  // The image endpoint takes the prompt in the path; token authenticates the
-  // request to your Seed tier (faster rate limit than anonymous).
+function pollinationsUrl(prompt, seed, model, imageFormat) {
   let url =
     `https://gen.pollinations.ai/image/${encodeURIComponent(prompt)}` +
-    `?model=flux&token=${encodeURIComponent(token)}`;
+    `?model=${encodeURIComponent(model)}`;
   if (Number.isInteger(seed)) url += `&seed=${seed}`;
+  if (imageFormat) url += `&format=${encodeURIComponent(imageFormat)}`;
+  return url;
+}
 
-  const res = await fetchWithTimeout(url, { method: 'GET' });
+async function pollinationsGet(prompt, seed, { model, token, imageFormat }) {
+  const headers = token ? { Authorization: `Bearer ${token}` } : {};
+  return fetchWithTimeout(pollinationsUrl(prompt, seed, model, imageFormat), {
+    method: 'GET',
+    headers,
+  });
+}
+
+async function parsePollinationsResponse(res, { provider, model, label }) {
   if (!res.ok) {
     const detail = await res.text().catch(() => '');
-    throw new Error(`Pollinations(Seed): HTTP ${res.status} ${detail.slice(0, 200)}`);
+    throw new Error(`Pollinations(${label}): HTTP ${res.status} ${detail.slice(0, 200)}`);
   }
   const contentType = res.headers.get('content-type') || 'image/jpeg';
   if (!contentType.startsWith('image/')) {
-    throw new Error(`Pollinations(Seed): unexpected content-type ${contentType}`);
+    throw new Error(`Pollinations(${label}): unexpected content-type ${contentType}`);
   }
   const bytes = await responseToBytes(res);
-  return { provider: 'pollinations-seed', model: 'flux', bytes, contentType };
+  return { provider, model, bytes, contentType };
 }
 
-async function tryPollinationsAnon(prompt, seed) {
-  // No key. Same endpoint, no token. Rate-limited (~1 req / 15s) and may
-  // include a watermark, but it's a genuine zero-config fallback.
-  let url = `https://gen.pollinations.ai/image/${encodeURIComponent(prompt)}?model=flux`;
-  if (Number.isInteger(seed)) url += `&seed=${seed}`;
+async function tryPollinationsSeed(prompt, seed, ctx = {}) {
+  const { pollinationsToken: token } = CONFIG;
+  const imageFormat = ctx.pollinationsFormat ?? null;
+  if (!token) throw new Error('Pollinations(Seed): missing API key (skipped)');
 
-  const res = await fetchWithTimeout(url, { method: 'GET' });
-  if (!res.ok) {
-    const detail = await res.text().catch(() => '');
-    throw new Error(`Pollinations(Anon): HTTP ${res.status} ${detail.slice(0, 200)}`);
+  let res = await pollinationsGet(prompt, seed, {
+    model: POLLINATIONS_IMAGE_MODEL,
+    token,
+    imageFormat,
+  });
+  if (res.status === 402) {
+    res = await pollinationsGet(prompt, seed, {
+      model: POLLINATIONS_FREE_MODEL,
+      token: null,
+      imageFormat,
+    });
+    return parsePollinationsResponse(res, {
+      provider: 'pollinations-seed',
+      model: `${POLLINATIONS_FREE_MODEL}-free`,
+      label: 'Seed',
+    });
   }
-  const contentType = res.headers.get('content-type') || 'image/jpeg';
-  if (!contentType.startsWith('image/')) {
-    throw new Error(`Pollinations(Anon): unexpected content-type ${contentType}`);
-  }
-  const bytes = await responseToBytes(res);
-  return { provider: 'pollinations-anon', model: 'flux', bytes, contentType };
+  return parsePollinationsResponse(res, {
+    provider: 'pollinations-seed',
+    model: POLLINATIONS_IMAGE_MODEL,
+    label: 'Seed',
+  });
 }
 
-async function tryHuggingFace(prompt, seed) {
+async function tryPollinationsAnon(prompt, seed, ctx = {}) {
+  const imageFormat = ctx.pollinationsFormat ?? null;
+  const res = await pollinationsGet(prompt, seed, {
+    model: POLLINATIONS_FREE_MODEL,
+    token: null,
+    imageFormat,
+  });
+  return parsePollinationsResponse(res, {
+    provider: 'pollinations-anon',
+    model: `${POLLINATIONS_FREE_MODEL}-free`,
+    label: 'Anon',
+  });
+}
+
+async function tryHuggingFace(prompt, seed, _ctx = {}) {
   const { hfToken: token } = CONFIG;
   if (!token) throw new Error('HuggingFace: missing token (skipped)');
 
-  // Routed through HF Inference Providers. The model's text-to-image route
-  // returns the raw image bytes directly.
-  const model = 'black-forest-labs/FLUX.1-dev';
+  const model = process.env.HF_IMAGE_MODEL || 'black-forest-labs/FLUX.1-schnell';
   const url = `https://router.huggingface.co/hf-inference/models/${model}`;
 
-  const payload = { inputs: prompt };
-  if (Number.isInteger(seed)) payload.parameters = { seed };
+  const payload = {
+    inputs: prompt,
+    parameters: { num_inference_steps: 4 },
+  };
+  if (Number.isInteger(seed)) payload.parameters.seed = seed;
 
   const res = await fetchWithTimeout(url, {
     method: 'POST',
@@ -258,7 +305,7 @@ async function tryHuggingFace(prompt, seed) {
     throw new Error(`HuggingFace: unexpected content-type ${contentType}`);
   }
   const bytes = await responseToBytes(res);
-  return { provider: 'huggingface', model: 'FLUX.1-dev', bytes, contentType };
+  return { provider: 'huggingface', model, bytes, contentType };
 }
 
 // Provider registry keyed by id, so a character can re-pin to whoever first
@@ -273,20 +320,17 @@ const PROVIDERS = {
 // Per-subject fallback orderings.
 //
 // Characters: consistency matters most, and the watermark is worst on a sprite
-// you'll composite, so anonymous Pollinations sits LAST.
-//
-// Backgrounds: one-and-done, consistency irrelevant, so the fast free anon
-// route floats above HF's tiny monthly quota.
+// Anon (0-pollen flux) before seed (authed, spends pollen when balance > 0).
 const CHARACTER_CHAIN = [
   'cloudflare',
+  'pollinations-anon',
   'pollinations-seed',
   'huggingface',
-  'pollinations-anon',
 ];
 const BACKGROUND_CHAIN = [
   'cloudflare',
-  'pollinations-seed',
   'pollinations-anon',
+  'pollinations-seed',
   'huggingface',
 ];
 
@@ -344,15 +388,22 @@ async function freemiumImageGen(description, options = {}) {
   const subjectType = normalizeSubject(options.subjectType);
   const style = normalizeStyle(options.style);
   const seed = Number.isInteger(options.seed) ? options.seed : null;
-  const prompt = composePrompt(description, { subjectType, style });
+  const spriteBackground = options.spriteBackground;
+  const prompt = composePrompt(description, { subjectType, style, spriteBackground });
 
   const chain = buildChain(subjectType, options.preferProvider);
+  const providerCtx = {
+    pollinationsFormat:
+      subjectType === 'character' && !(spriteBackground && String(spriteBackground).trim())
+        ? 'png'
+        : null,
+  };
 
   const failures = [];
   for (const id of chain) {
     const provider = PROVIDERS[id];
     try {
-      const result = await provider(prompt, seed);
+      const result = await provider(prompt, seed, providerCtx);
       console.info(
         `[freemiumImageGen] served by ${result.provider} (${result.model}) ` +
         `| subject=${subjectType} style=${style} seed=${seed ?? 'random'}` +
