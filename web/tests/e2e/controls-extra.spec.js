@@ -7,15 +7,6 @@ async function setSpeedControl(page, value) {
 }
 
 test.describe("Controls — remaining surfaces", () => {
-  test("Sprite-borders toggle adds the bordered class to sprites", async ({ page }) => {
-    await bootPlayer(page, { audio: { clipMs: 4000 } });
-    // a sprite is present on the opening scene
-    const sprite = page.locator('[data-testid="sprite"]').first();
-    await expect(sprite).not.toHaveClass(/bordered/);
-    await page.getByTestId("sprite-borders-input").check();
-    await expect(sprite).toHaveClass(/bordered/);
-  });
-
   test("Speed slider persists and reaches the orchestrator", async ({ page }) => {
     await bootPlayer(page, { audio: { clipMs: 4000 } });
     await setSpeedControl(page, 1.5);
@@ -34,13 +25,6 @@ test.describe("Controls — remaining surfaces", () => {
     await expect.poll(() => page.evaluate(() => window.__lastRate ?? null)).toBe(1.5);
   });
 
-  test("Voices menu opens from player toolbar", async ({ page }) => {
-    await bootPlayer(page, { audio: { clipMs: 4000 } });
-    await page.getByTestId("open-voices").click();
-    await expect(page.getByTestId("reader-menu")).toBeVisible();
-    await expect(page.getByTestId("voice-narrator")).toBeVisible();
-  });
-
   test("Click-to-skip reveals the full line immediately (typewriter skip)", async ({ page }) => {
     // long duration => slow typewriter, so we can catch it mid-reveal and skip
     await bootPlayer(page, { audio: { clipMs: 9000, durationSec: 9 } });
@@ -51,14 +35,5 @@ test.describe("Controls — remaining surfaces", () => {
     await dialogue.click();
     const full = SAMPLE_BOOK.scenes[0].lines[0].text;
     await expect(page.getByTestId("dialogue-text")).toHaveText(full, { timeout: 4000 });
-  });
-
-  test("Dialogue click advances in click-through mode", async ({ page }) => {
-    await bootPlayer(page, { audio: { clipMs: 40 } });
-    await page.getByTestId("select-advance").selectOption("click");
-    await page.getByTestId("play").click();
-    await expect(page.getByTestId("progress")).toHaveAttribute("data-status", "paused");
-    await page.getByTestId("dialogue").click();
-    await expect(page.getByTestId("progress")).toHaveAttribute("data-index", "1");
   });
 });

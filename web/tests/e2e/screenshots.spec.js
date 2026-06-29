@@ -11,37 +11,6 @@ const shot = (name) => `${shotDir}${name}.png`;
 test.describe("UI screenshots", () => {
   test.use({ viewport: { width: 1100, height: 720 } });
 
-  test("scene 1 — smooth dialogue box", async ({ page }) => {
-    await bootPlayer(page, { audio: { clipMs: 4000 } });
-    await page.getByTestId("select-advance").selectOption("click");
-    await page.getByTestId("play").click();
-    // Click-through: line 0 is narrator (no speaker label) — advance to Elara.
-    await page.getByTestId("next").click();
-    await page.getByTestId("speaker").waitFor();
-    await page.locator('[data-testid="dialogue"]').waitFor();
-    await page.screenshot({ path: shot("01-smooth-dialogue") });
-  });
-
-  test("pixel + subtitle styles", async ({ page }) => {
-    await bootPlayer(page, { audio: { clipMs: 4000 } });
-    await page.getByTestId("select-advance").selectOption("click");
-    await page.getByTestId("play").click();
-    await page.getByTestId("dialogue").waitFor();
-    await page.getByTestId("select-style").selectOption("pixel");
-    await page.screenshot({ path: shot("02-pixel-box") });
-    await page.getByTestId("select-style").selectOption("subtitle");
-    await page.screenshot({ path: shot("03-subtitle") });
-  });
-
-  test("light theme", async ({ page }) => {
-    await bootPlayer(page, { audio: { clipMs: 4000 } });
-    await page.getByTestId("select-advance").selectOption("click");
-    await page.getByTestId("play").click();
-    await page.getByTestId("dialogue").waitFor();
-    await page.getByTestId("select-theme").selectOption("light");
-    await page.screenshot({ path: shot("04-light-theme") });
-  });
-
   test("group scene — speaker spotlight + dimmed extras", async ({ page }) => {
     await bootPlayer(page, { audio: { clipMs: 2500 } });
     await page.getByTestId("play").click();

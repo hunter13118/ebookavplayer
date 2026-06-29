@@ -10,6 +10,7 @@ web/test-results/
 .cline-context/
 data/uploads/
 data/media/
+data/packs/
 data/books/*.analysis.json
 data/books/*.media.json
 data/books/*.progress.json

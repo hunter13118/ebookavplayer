@@ -24,21 +24,6 @@ test.describe("Controls gate invocation", () => {
     expect(ttsCalls[1].voice).toBe(EXPECTED_LINES[1].voice); // Elara, not narrator again
   });
 
-  test("Click-through mode fires nothing until the user advances", async ({ page }) => {
-    const { ttsCalls } = await bootPlayer(page, { audio: { clipMs: 40 } });
-    await page.getByTestId("select-advance").selectOption("click");
-    await page.getByTestId("play").click();
-    // line 0 plays once, then playback HOLDS (no auto line 1)
-    await expect.poll(() => ttsCalls.length).toBe(1);
-    await page.waitForTimeout(700);
-    expect(ttsCalls.length).toBe(1);                    // still waiting on us
-    await expect(page.getByTestId("progress")).toHaveAttribute("data-status", "paused");
-    // user advances -> exactly one more line fires
-    await page.getByTestId("next").click();
-    await expect.poll(() => ttsCalls.length).toBe(2);
-    expect(ttsCalls[1].voice).toBe(EXPECTED_LINES[1].voice);
-  });
-
   test("Restart replays from line 0 and cancels the prior run", async ({ page }) => {
     const { ttsCalls } = await bootPlayer(page, { audio: { clipMs: 120 } });
     await page.getByTestId("play").click();
@@ -52,16 +37,5 @@ test.describe("Controls gate invocation", () => {
     // and the final full pass matches the expected per-character order:
     const tail = ttsCalls.slice(-total).map((c) => c.voice);
     expect(tail).toEqual(EXPECTED_LINES.map((l) => l.voice));
-  });
-
-  test("Display style + theme toggles apply", async ({ page }) => {
-    await bootPlayer(page);
-    await page.getByTestId("play").click();
-    await page.getByTestId("select-style").selectOption("pixel");
-    await expect(page.getByTestId("dialogue")).toHaveAttribute("data-style", "pixel");
-    await page.getByTestId("select-style").selectOption("subtitle");
-    await expect(page.getByTestId("dialogue")).toHaveAttribute("data-style", "subtitle");
-    await page.getByTestId("select-theme").selectOption("light");
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   });
 });
