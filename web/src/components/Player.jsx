@@ -11,6 +11,7 @@ import CheckpointOverlay from "./CheckpointOverlay.jsx";
 import ProcessingBar from "./ProcessingBar.jsx";
 
 import PlayerMenu from "./PlayerMenu.jsx";
+import ReaderMenu from "./ReaderMenu.jsx";
 
 import ReplaceArtSheet from "./ReplaceArtSheet.jsx";
 
@@ -89,6 +90,7 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
   const [checkpoint, setCheckpoint] = useState(false);
 
   const [menuOpen, setMenuOpen] = useState(false);
+  const [readerMenuOpen, setReaderMenuOpen] = useState(false);
 
   const [replaceOpen, setReplaceOpen] = useState(false);
   const [platesOpen, setPlatesOpen] = useState(false);
@@ -892,7 +894,9 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
 
           <Controls prefs={prefs} setPrefs={setPrefs} status={st.status}
 
-            onPlay={play} onPause={pause} onNext={next} onRewind={rewind} />
+            onPlay={play} onPause={pause} onNext={next} onRewind={rewind}
+            onOpenMenu={() => setMenuOpen(true)} onOpenReaderMenu={() => setReaderMenuOpen(true)}
+            onOpenReplace={() => setReplaceOpen(true)} />
 
           </div>
 
@@ -926,7 +930,8 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
 
         disabled={imaging || imagingJob.active} />
 
-
+      <ReaderMenu book={bk} open={readerMenuOpen} onClose={() => setReaderMenuOpen(false)}
+        onSaved={(saved) => setBk((b) => ({ ...b, voice_overrides: saved }))} />
 
       <ReplaceArtSheet book={bk} open={replaceOpen} onClose={() => setReplaceOpen(false)}
 
