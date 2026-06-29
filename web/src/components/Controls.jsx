@@ -1,182 +1,114 @@
-import { useCallback, useEffect, useState } from "react";
-import { KEYS, setPref } from "../audio/voicePrefs.js";
-
-const MIN_SPEED = 0.5;
-const MAX_SPEED = 2;
-const STEP = 0.05;
-
-function clampSpeed(v) {
-  const n = parseFloat(v);
-  if (!Number.isFinite(n)) return 1;
-  return Math.min(MAX_SPEED, Math.max(MIN_SPEED, Math.round(n / STEP) * STEP));
-}
-
-function upd(setPrefs, key, prefKey, value) {
-  setPref(prefKey, value);
-  setPrefs((p) => ({ ...p, [key]: value }));
-}
-
-export default function Controls({
-  prefs, setPrefs, status, onPlay, onPause, onNext, onRewind,
-  onOpenMenu, onOpenReaderMenu, onOpenReplace,
-}) {
-  const [speedOpen, setSpeedOpen] = useState(false);
-  const rewindN = prefs.rewindSteps || 3;
-  const nextN = prefs.nextSteps || 1;
-  const playing = status === "playing";
-
-  const setSpeed = useCallback((value) => {
-    const next = clampSpeed(value);
-    setPref(KEYS.speed, next);
-    setPrefs((p) => ({ ...p, speed: next }));
-  }, [setPrefs]);
-
-  useEffect(() => {
-    if (!speedOpen) return undefined;
-    const close = () => setSpeedOpen(false);
-    document.addEventListener("click", close);
-    return () => document.removeEventListener("click", close);
-  }, [speedOpen]);
-
-  const speeds = [0.75, 1, 1.25, 1.5, 1.75, 2];
-
-  return (
-    <div className="vae-player-dock" data-testid="player-dock">
-      <div className="vae-dock-transport">
-        <button
-          type="button"
-          className="vae-dock-btn vae-dock-skip"
-          data-testid="rewind"
-          title={`Rewind ${rewindN} lines`}
-          onClick={() => onRewind?.(rewindN)}
-          aria-label={`Rewind ${rewindN} lines`}
-        >
-          <span className="vae-dock-icon" aria-hidden>↺</span>
-          {rewindN > 1 && <span className="vae-dock-skip-n">{rewindN}</span>}
-        </button>
-
-        {playing ? (
-          <button
-            type="button"
-            className="vae-dock-btn vae-dock-play"
-            data-testid="pause"
-            onClick={onPause}
-            aria-label="Pause"
-          >
-            <span className="vae-dock-icon vae-dock-icon-lg" aria-hidden>❚❚</span>
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="vae-dock-btn vae-dock-play"
-            data-testid="play"
-            onClick={onPlay}
-            aria-label="Play"
-          >
-            <span className="vae-dock-icon vae-dock-icon-lg" aria-hidden>▶</span>
-          </button>
-        )}
-
-        <button
-          type="button"
-          className="vae-dock-btn vae-dock-skip"
-          data-testid="next"
-          title={`Skip ${nextN} line(s)`}
-          onClick={() => onNext?.(nextN)}
-          aria-label={`Skip forward ${nextN} lines`}
-        >
-          <span className="vae-dock-icon" aria-hidden>↻</span>
-          {nextN > 1 && <span className="vae-dock-skip-n">{nextN}</span>}
-        </button>
-      </div>
-
-      <div className="vae-dock-settings">
-        <select data-testid="select-advance" value={prefs.autoAdvance ? "auto" : "click"}
-          onChange={(e) => upd(setPrefs, "autoAdvance", KEYS.autoAdvance, e.target.value === "auto")}>
-          <option value="auto">Auto</option>
-          <option value="click">Click-through</option>
-        </select>
-
-        <select data-testid="select-style" value={prefs.displayStyle}
-          onChange={(e) => upd(setPrefs, "displayStyle", KEYS.displayStyle, e.target.value)}>
-          <option value="smooth">Smooth</option>
-          <option value="pixel">Pixel</option>
-          <option value="subtitle">Subtitle</option>
-        </select>
-
-        <select data-testid="select-theme" value={prefs.theme}
-          onChange={(e) => upd(setPrefs, "theme", KEYS.theme, e.target.value)}>
-          <option value="dark">Dark</option>
-          <option value="light">Light</option>
-        </select>
-
-        <label style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-          <input type="checkbox" data-testid="sprite-borders-input" checked={prefs.spriteBorders}
-            onChange={(e) => upd(setPrefs, "spriteBorders", KEYS.spriteBorders, e.target.checked)} />
-          Borders
-        </label>
-      </div>
-
-      <div className="vae-dock-speed-wrap">
-        <button
-          type="button"
-          className="vae-dock-speed-pill"
-          data-testid="speed-pill"
-          onClick={(e) => { e.stopPropagation(); setSpeedOpen((o) => !o); }}
-        >
-          {prefs.speed.toFixed(2).replace(/\.?0+$/, "")}×
-        </button>
-        {speedOpen && (
-          <div className="vae-dock-speed-menu" data-testid="speed-menu" onClick={(e) => e.stopPropagation()}>
-            {speeds.map((s) => (
-              <button
-                key={s}
-                type="button"
-                className={Math.abs(prefs.speed - s) < 0.01 ? "active" : ""}
-                onClick={() => { setSpeed(s); setSpeedOpen(false); }}
-              >
-                {s}×
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div className="vae-dock-buttons">
-        {onOpenReaderMenu && (
-          <button
-            type="button"
-            className="vae-dock-btn"
-            data-testid="open-voices"
-            onClick={onOpenReaderMenu}
-            aria-label="Voices"
-          >
-            ♪
-          </button>
-        )}
-        {onOpenReplace && (
-          <button
-            type="button"
-            className="vae-dock-btn"
-            data-testid="open-replace"
-            onClick={onOpenReplace}
-            aria-label="Replace art"
-          >
-            🎨
-          </button>
-        )}
-        {onOpenMenu && (
-          <button
-            type="button"
-            className="vae-dock-btn"
-            data-testid="open-settings"
-            onClick={onOpenMenu}
-            aria-label="Settings"
-          >
-            ⚙
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
+import { useCallback, useEffect, useState } from "react";
+import { KEYS, setPref } from "../audio/voicePrefs.js";
+
+const MIN_SPEED = 0.5;
+const MAX_SPEED = 2;
+const STEP = 0.05;
+
+function clampSpeed(v) {
+  const n = parseFloat(v);
+  if (!Number.isFinite(n)) return 1;
+  return Math.min(MAX_SPEED, Math.max(MIN_SPEED, Math.round(n / STEP) * STEP));
+}
+
+/** Audible / Spotify–style playback dock. */
+export default function Controls({
+  prefs, setPrefs, status, onPlay, onPause, onNext, onRewind,
+}) {
+  const [speedOpen, setSpeedOpen] = useState(false);
+  const rewindN = prefs.rewindSteps || 3;
+  const nextN = prefs.nextSteps || 1;
+  const playing = status === "playing";
+
+  const setSpeed = useCallback((value) => {
+    const next = clampSpeed(value);
+    setPref(KEYS.speed, next);
+    setPrefs((p) => ({ ...p, speed: next }));
+  }, [setPrefs]);
+
+  useEffect(() => {
+    if (!speedOpen) return undefined;
+    const close = () => setSpeedOpen(false);
+    document.addEventListener("click", close);
+    return () => document.removeEventListener("click", close);
+  }, [speedOpen]);
+
+  const speeds = [0.75, 1, 1.25, 1.5, 1.75, 2];
+
+  return (
+    <div className="vae-player-dock" data-testid="player-dock">
+      <div className="vae-dock-transport">
+        <button
+          type="button"
+          className="vae-dock-btn vae-dock-skip"
+          data-testid="rewind"
+          title={`Rewind ${rewindN} lines`}
+          onClick={() => onRewind?.(rewindN)}
+          aria-label={`Rewind ${rewindN} lines`}
+        >
+          <span className="vae-dock-icon" aria-hidden>↺</span>
+          {rewindN > 1 && <span className="vae-dock-skip-n">{rewindN}</span>}
+        </button>
+
+        {playing ? (
+          <button
+            type="button"
+            className="vae-dock-btn vae-dock-play"
+            data-testid="pause"
+            onClick={onPause}
+            aria-label="Pause"
+          >
+            <span className="vae-dock-icon vae-dock-icon-lg" aria-hidden>❚❚</span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="vae-dock-btn vae-dock-play"
+            data-testid="play"
+            onClick={onPlay}
+            aria-label="Play"
+          >
+            <span className="vae-dock-icon vae-dock-icon-lg" aria-hidden>▶</span>
+          </button>
+        )}
+
+        <button
+          type="button"
+          className="vae-dock-btn vae-dock-skip"
+          data-testid="next"
+          title={`Skip ${nextN} line(s)`}
+          onClick={() => onNext?.(nextN)}
+          aria-label={`Skip forward ${nextN} lines`}
+        >
+          <span className="vae-dock-icon" aria-hidden>↻</span>
+          {nextN > 1 && <span className="vae-dock-skip-n">{nextN}</span>}
+        </button>
+      </div>
+
+      <div className="vae-dock-speed-wrap">
+        <button
+          type="button"
+          className="vae-dock-speed-pill"
+          data-testid="speed-pill"
+          onClick={(e) => { e.stopPropagation(); setSpeedOpen((o) => !o); }}
+        >
+          {prefs.speed.toFixed(2).replace(/\.?0+$/, "")}×
+        </button>
+        {speedOpen && (
+          <div className="vae-dock-speed-menu" data-testid="speed-menu" onClick={(e) => e.stopPropagation()}>
+            {speeds.map((s) => (
+              <button
+                key={s}
+                type="button"
+                className={Math.abs(prefs.speed - s) < 0.01 ? "active" : ""}
+                onClick={() => { setSpeed(s); setSpeedOpen(false); }}
+              >
+                {s}×
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
