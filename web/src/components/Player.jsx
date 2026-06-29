@@ -774,7 +774,7 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
 
         <div className="vae-toolbar-spacer" />
 
-        <button type="button" className="vae-toolbar-btn vae-menu-btn" data-testid="open-voices"
+        <button type="button" className="vae-toolbar-btn vae-menu-btn" data-testid="open-settings"
 
           onClick={() => setMenuOpen(true)} aria-label="Settings">
 
