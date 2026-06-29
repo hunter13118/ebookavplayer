@@ -1,9 +1,15 @@
 import { test, expect } from "@playwright/test";
 import { bootPlayer, SAMPLE_BOOK } from "./fixtures.js";
 
+async function openMenu(page) {
+  await page.getByTestId("open-settings").click();
+  await expect(page.getByTestId("reader-menu")).toBeVisible();
+}
+
 test.describe("Art style switcher", () => {
   test("shows style options with status badges", async ({ page }) => {
     await bootPlayer(page);
+    await openMenu(page);
     const sw = page.getByTestId("art-style-switcher");
     await expect(sw).toBeVisible();
     await expect(page.getByTestId("art-style-option")).toHaveCount(4);
@@ -29,6 +35,7 @@ test.describe("Art style switcher", () => {
         }),
       },
     });
+    await openMenu(page);
     await page.locator('[data-style="pixel"][data-status="filter"]').click();
     expect(view.patched).toMatchObject({ style: "pixel", mode: "filter" });
     await expect(page.getByTestId("stage")).toHaveAttribute("data-pixel-filter", "true");
@@ -41,6 +48,7 @@ test.describe("Art style switcher", () => {
       return route.fulfill({ json: { job_id: "style-job-1", style: "anime", status: "queued" } });
     });
     await bootPlayer(page);
+    await openMenu(page);
     await page.locator('[data-style="anime"][data-status="empty"]').click();
     await expect(page.getByTestId("style-generate-dialog")).toBeVisible();
     await page.getByTestId("style-generate-confirm").click();
