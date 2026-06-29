@@ -87,7 +87,8 @@ async function installRegenRoutes(page, { sseBody = regenSseBody() } = {}) {
 }
 
 async function startElaraRegen(page) {
-  await page.getByTestId("open-voices").click();
+  await page.getByTestId("open-settings").click();
+  await expect(page.getByTestId("reader-menu")).toBeVisible();
   await page.getByTestId("open-replace").click();
   await expect(page.getByTestId("replace-sheet")).toBeVisible();
   await page.getByTestId("replace-select-none").click();
