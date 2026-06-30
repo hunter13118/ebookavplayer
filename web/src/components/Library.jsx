@@ -143,11 +143,11 @@ export default function Library({
   );
 
   useEffect(() => {
-    if (offline || !backendConfigured() || !needsCatalogPoll) return undefined;
+    if (offline || !backendConfigured() || !needsCatalogPoll || jobWatchKey) return undefined;
     const id = setInterval(() => { refreshCatalog(); }, 2000);
     refreshCatalog();
     return () => clearInterval(id);
-  }, [offline, needsCatalogPoll]);
+  }, [offline, needsCatalogPoll, jobWatchKey]);
 
   useEffect(() => {
     if (folderScanRef.current) return undefined;
