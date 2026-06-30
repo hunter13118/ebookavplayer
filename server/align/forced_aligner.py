@@ -148,7 +148,16 @@ class AeneasAligner(_BinaryAligner):
 
     Drop-in point: pipe the .m4b + plaintext script (one fragment per line) through
     `python -m aeneas.tools.execute_task` and parse the JSON sync map back into
-    LineTimings. Raises if the binary/module is not installed on the host."""
+    LineTimings. Raises if the binary/module is not installed on the host.
+
+    Implementation note: don't buffer the whole audio file or the whole alignment
+    result in memory for a 10-hour book. Stream the audio into the subprocess's
+    stdin and parse its (newline-delimited JSON, if the chosen aligner supports it)
+    stdout line-by-line as results arrive — `asyncio.create_subprocess_exec(...,
+    stdin=PIPE, stdout=PIPE)` plus an async stdout-line reader, not `subprocess.run`.
+    A word-level alignment (timing per word, not per line) gives more accurate line
+    boundaries than a coarser per-fragment sync map — group word timings back up to
+    LineTimings by locating each line's first/last word."""
 
     name = "aeneas"
     binary = "python"  # invoked as `python -m aeneas.tools.execute_task`
@@ -170,7 +179,9 @@ class AeneasAligner(_BinaryAligner):
 
 class MmsAligner(_BinaryAligner):
     """Meta MMS forced aligner (torchaudio CTC alignment). Drop-in point: run the
-    CTC aligner over the decoded audio + per-line transcript. Raises if absent."""
+    CTC aligner over the decoded audio + per-line transcript. Raises if absent.
+    See AeneasAligner's docstring for the streaming-subprocess + word-level-token
+    implementation note; it applies here too."""
 
     name = "mms"
     binary = "mms-align"
