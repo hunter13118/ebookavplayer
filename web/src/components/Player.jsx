@@ -8,6 +8,8 @@ import Controls from "./Controls.jsx";
 
 import CheckpointOverlay from "./CheckpointOverlay.jsx";
 
+import TtsErrorModal from "./TtsErrorModal.jsx";
+
 import ProcessingBar from "./ProcessingBar.jsx";
 
 import PlayerMenu from "./PlayerMenu.jsx";
@@ -87,6 +89,8 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
   const [st, setSt] = useState({ status: "idle", index: 0, revealed: 0, speakerId: null });
 
   const [checkpoint, setCheckpoint] = useState(false);
+
+  const [ttsError, setTtsError] = useState(null);
 
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -325,6 +329,8 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
         lastSaved.current = total;
 
       },
+
+      onError: (info) => setTtsError(info),
 
     });
 
@@ -644,6 +650,16 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
     dismissFlash();
 
     orch.play(lines, 0);
+
+  };
+
+  const acknowledgeTtsError = () => {
+
+    setTtsError(null);
+
+    setPref(KEYS.autoAdvance, false);
+
+    setPrefs((p) => ({ ...p, autoAdvance: false }));
 
   };
 
@@ -972,6 +988,8 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
           showIllustration(it.url, { manual: true, lineIdx: it.lineIdx ?? st.index });
         }}
       />
+
+      <TtsErrorModal open={Boolean(ttsError)} onAcknowledge={acknowledgeTtsError} />
 
     </div>
 

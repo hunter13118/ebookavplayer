@@ -10,17 +10,19 @@ import { getActivePack, packSupportsOfflineAudio } from "../offline/packBridge.j
 import { estimateDurationSec, revealedCount, isCheckpoint, effectiveLineDuration } from "./timing.js";
 
 export class Orchestrator {
-  constructor({ onState, onCheckpoint, onEnd } = {}) {
+  constructor({ onState, onCheckpoint, onEnd, onError } = {}) {
     this.onState = onState || (() => {});
     this.onCheckpoint = onCheckpoint || (() => {});
     this.onEnd = onEnd || (() => {});
+    this.onError = onError || (() => {});
     this.lines = [];
     this.speed = 1;
     this.checkpointEvery = 0;
     this.autoAdvance = true;
     this.voiceOverrides = null;
-    this.status = "idle";          // idle | playing | paused | checkpoint | done
+    this.status = "idle";          // idle | playing | paused | checkpoint | done | error
     this.index = 0;
+    this.lastError = null;
     this._raf = null;
     this._lineStart = 0;
     this._lineDur = 0;
@@ -111,6 +113,7 @@ export class Orchestrator {
           this.pauseForCheckpoint();
         }
       },
+      onError: (info) => this._fail(info),
       onEnd: () => { if (this.status === "playing") this._finish(); },
     });
   }
@@ -123,6 +126,7 @@ export class Orchestrator {
     this._emit({ revealed: 0 });
     const line = this.lines[i];
     if (!line) { this._finish(); return; }
+    let failInfo = null;
     await speakLine(line, {
       rate: this.speed,
       voiceOverrides: this.voiceOverrides,
@@ -130,8 +134,10 @@ export class Orchestrator {
         if (unit.partIndex === 0) this._emit({ revealed: 0 });
         this._runTypewriterRange(line.text, unit.charStart, unit.charEnd, durSec);
       },
+      onError: (e) => { failInfo = { lineIndex: i, line, error: e }; },
       onEnd: () => {
         if (this.status !== "playing") return;
+        if (failInfo) { this._fail(failInfo); return; }
         this._emit({ revealed: line.text.length });
         if (isCheckpoint(i, this.checkpointEvery) && i < this.lines.length - 1) {
           this.pauseForCheckpoint();
@@ -217,5 +223,18 @@ export class Orchestrator {
     cancelAnimationFrame(this._raf);
     this._emit();
     this.onEnd();
+  }
+
+  /** A real TTS failure — halt in place (don't advance past the failing
+   *  line) and surface it. The caller (Player) decides what the user sees
+   *  and whether to switch to manual mode; we just stop and wait. */
+  _fail(info = {}) {
+    if (info.lineIndex != null) this.index = info.lineIndex;
+    this.status = "error";
+    this.lastError = info.error || null;
+    stopAllSpeech();
+    cancelAnimationFrame(this._raf);
+    this._emit();
+    this.onError({ ...info, index: this.index });
   }
 }

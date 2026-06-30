@@ -2,6 +2,15 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { buildTestPackZip, minimalBook, TIER_VISUAL, TIER_AUDIOBOOK } from "../../src/offline/testPackFixtures.js";
+import { KEYS } from "../../src/audio/voicePrefs.js";
+
+/** Map high-level pref overrides (e.g. { autoAdvance: false }) to raw localStorage entries. */
+function prefsToLocalStorageEntries(prefs) {
+  if (!prefs) return [];
+  return Object.entries(prefs)
+    .filter(([k]) => KEYS[k])
+    .map(([k, v]) => [KEYS[k], String(v)]);
+}
 
 export { buildTestPackZip, minimalBook, TIER_VISUAL, TIER_AUDIOBOOK };
 
@@ -30,14 +39,16 @@ export const PROCESSING_BOOK = {
   ...SAMPLE_BOOK, status: "ready", stage: "imaging", progress: 0.55, resume: null,
 };
 
-export async function installAudioStub(page, { clipMs = 40, durationSec = 0.4 } = {}) {
-  await page.addInitScript(async ({ clipMs, durationSec }) => {
+export async function installAudioStub(page, { clipMs = 40, durationSec = 0.4, prefs = null } = {}) {
+  const prefsEntries = prefsToLocalStorageEntries(prefs);
+  await page.addInitScript(async ({ clipMs, durationSec, prefsEntries }) => {
     try {
       window.localStorage.setItem("vae-e2e", "1");
       for (let i = window.localStorage.length - 1; i >= 0; i -= 1) {
         const k = window.localStorage.key(i);
         if (k?.startsWith("vae-dl-skip-")) window.localStorage.removeItem(k);
       }
+      for (const [k, v] of prefsEntries) window.localStorage.setItem(k, v);
     } catch {}
     await new Promise((resolve) => {
       const req = indexedDB.deleteDatabase("vae-offline");
@@ -65,7 +76,7 @@ export async function installAudioStub(page, { clipMs = 40, durationSec = 0.4 } 
     window.Audio = FakeAudio;
     if (!window.URL.createObjectURL) window.URL.createObjectURL = () => "blob:fake";
     if (!window.URL.revokeObjectURL) window.URL.revokeObjectURL = () => {};
-  }, { clipMs, durationSec });
+  }, { clipMs, durationSec, prefsEntries });
 }
 
 /**
@@ -73,7 +84,7 @@ export async function installAudioStub(page, { clipMs = 40, durationSec = 0.4 } 
  *   booksStatus: 'ok' | 'empty' | 'fail'
  *   catalog: override the catalog array (or a function() returning one — called each request)
  *   detail:  override the book-detail payload (or a function(callCount) => payload)
- *   ttsStatus: 200 | 204 | 4xx/5xx
+ *   ttsStatus: 200 | 204 | 4xx/5xx (or a function(body, callCount) => status)
  * Returns { ttsCalls, detailCalls } live counters.
  */
 export async function installBackendMocks(page, opts = {}) {
@@ -94,8 +105,9 @@ export async function installBackendMocks(page, opts = {}) {
     let body = {};
     try { body = route.request().postDataJSON(); } catch { /* ignore */ }
     ttsCalls.push(body);
-    if (ttsStatus === 204) return route.fulfill({ status: 204, body: "" });
-    if (ttsStatus >= 400) return route.fulfill({ status: ttsStatus, body: "err" });
+    const status = typeof ttsStatus === "function" ? ttsStatus(body, ttsCalls.length) : ttsStatus;
+    if (status === 204) return route.fulfill({ status: 204, body: "" });
+    if (status >= 400) return route.fulfill({ status, body: "err" });
     return route.fulfill({ status: 200, contentType: "audio/mpeg",
       body: Buffer.from([0xff, 0xfb, 0x90, 0x00, 0x00]) });
   });
@@ -205,7 +217,7 @@ export async function clearOfflinePacks(page) {
 
 /** Boot at the library, optionally open the first/chosen book into the player. */
 export async function bootPlayer(page, opts = {}) {
-  await installAudioStub(page, opts.audio);
+  await installAudioStub(page, { ...opts.audio, prefs: opts.prefs });
   const mocks = await installBackendMocks(page, opts.backend);
   await page.goto("/");
   if (opts.openBook !== false) {

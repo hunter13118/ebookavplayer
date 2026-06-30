@@ -12,6 +12,17 @@ let edgeAudio = null;
 let edgeObjectUrl = null;
 let seqToken = 0;
 
+/** A real TTS failure (non-2xx, non-204 response, or network error) — distinct
+ *  from intentional silence (empty line text / 204 "no audio"). Callers must
+ *  surface this to the user rather than simulating playback and advancing. */
+export class TtsError extends Error {
+  constructor(status, message) {
+    super(message || (status ? `TTS request failed: HTTP ${status}` : "TTS request failed"));
+    this.name = "TtsError";
+    this.status = status || 0;
+  }
+}
+
 function stopEdgeAudio() {
   if (edgeAudio) { edgeAudio.pause(); edgeAudio = null; }
   if (edgeObjectUrl) { URL.revokeObjectURL(edgeObjectUrl); edgeObjectUrl = null; }
@@ -32,31 +43,52 @@ function fetchTimeout(ms) {
   return ctrl.signal;
 }
 
+/** Fetch TTS audio for a line. Returns null for INTENTIONAL silence (empty
+ *  text, or the server's explicit 204 "no audio"). Throws TtsError for a real
+ *  failure (4xx/5xx response or network error) — callers must not treat that
+ *  the same as silence. */
 async function fetchTtsBlob(line, voiceOverrides) {
   const resolved = lineWithVoice(line, voiceOverrides);
   const text = (resolved.text || "").trim();
   if (!text) return null;
   const offline = await getOfflineAudioBlob(resolved);
   if (offline) return offline;
-  const res = await fetch(apiUrl("/tts"), {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      text,
-      voice: resolved.voice,
-      pitch: resolved.pitch || undefined,
-      rate: resolved.rate || undefined,
-      volume: resolved.volume || undefined,
-      character: line.character_id || undefined,
-      expression: line.expression || undefined,
-      environment: line.environment || undefined,
-      intensity: line.intensity != null ? line.intensity : undefined,
-    }),
-    signal: fetchTimeout(20000),
-  });
-  if (!res.ok || res.status === 204) return null;
+  let res;
+  try {
+    res = await fetch(apiUrl("/tts"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        text,
+        voice: resolved.voice,
+        pitch: resolved.pitch || undefined,
+        rate: resolved.rate || undefined,
+        volume: resolved.volume || undefined,
+        character: line.character_id || undefined,
+        expression: line.expression || undefined,
+        environment: line.environment || undefined,
+        intensity: line.intensity != null ? line.intensity : undefined,
+      }),
+      signal: fetchTimeout(20000),
+    });
+  } catch (e) {
+    throw new TtsError(0, e?.message);
+  }
+  if (res.status === 204) return null;
+  if (!res.ok) throw new TtsError(res.status);
   const blob = await res.blob();
   return blob?.size ? blob : null;
+}
+
+/** Always-resolving wrapper: never rejects, so it's safe to fire-and-await
+ *  later (prefetch pattern) without unhandled rejection risk. */
+async function fetchTtsBlobSafe(line, voiceOverrides) {
+  try {
+    const blob = await fetchTtsBlob(line, voiceOverrides);
+    return { blob, error: null };
+  } catch (error) {
+    return { blob: null, error };
+  }
 }
 
 async function playBlob(blob, rate, { onStart, onEnd }) {
@@ -79,13 +111,17 @@ async function playBlob(blob, rate, { onStart, onEnd }) {
   });
 }
 
-async function playPrepared(line, rate, { onStart, onEnd, voiceOverrides, preparedBlob } = {}) {
+/** `prepared` is an optional pre-resolved { blob, error } (prefetch pattern).
+ *  Real failures (TtsError) call onError and return false WITHOUT playing —
+ *  callers must not treat that as "line finished, advance to the next one". */
+async function playPrepared(line, rate, { onStart, onEnd, onError, voiceOverrides, prepared } = {}) {
   const text = (lineWithVoice(line, voiceOverrides).text || "").trim();
   if (!text) { onEnd?.(); return false; }
+  const { blob, error } = prepared || await fetchTtsBlobSafe(line, voiceOverrides);
+  if (error) { onError?.(error); onEnd?.(); return false; }
+  if (!blob) { onEnd?.(); return false; }
   try {
-    const blob = preparedBlob || await fetchTtsBlob(line, voiceOverrides);
-    if (!blob) { onEnd?.(); return false; }
-    return playBlob(blob, rate, { onStart, onEnd });
+    return await playBlob(blob, rate, { onStart, onEnd });
   } catch {
     stopEdgeAudio();
     onEnd?.();
@@ -93,8 +129,10 @@ async function playPrepared(line, rate, { onStart, onEnd, voiceOverrides, prepar
   }
 }
 
-/** Speak one line — sentence-chunked online; whole-line blob offline. */
-export async function speakLine(line, { rate, onStart, onEnd, voiceOverrides, onPartStart } = {}) {
+/** Speak one line — sentence-chunked online; whole-line blob offline.
+ *  `onError` fires (with a TtsError) when a real failure occurs; the caller
+ *  must not treat that as a normal end-of-line. */
+export async function speakLine(line, { rate, onStart, onEnd, onError, voiceOverrides, onPartStart } = {}) {
   stopEdgeSpeech();
   const myToken = seqToken;
   const lineRate = rate ?? 1;
@@ -103,6 +141,7 @@ export async function speakLine(line, { rate, onStart, onEnd, voiceOverrides, on
     return playPrepared(line, lineRate, {
       voiceOverrides,
       onStart: (dur) => onStart?.(dur),
+      onError,
       onEnd,
     });
   }
@@ -121,25 +160,27 @@ export async function speakLine(line, { rate, onStart, onEnd, voiceOverrides, on
         }, dur);
         onStart?.(dur);
       },
+      onError,
       onEnd,
     });
   }
 
-  let prefetch = fetchTtsBlob(unitToLine(units[0]), voiceOverrides);
+  let prefetch = fetchTtsBlobSafe(unitToLine(units[0]), voiceOverrides);
   for (let u = 0; u < units.length; u += 1) {
     if (seqToken !== myToken) return false;
     const unit = units[u];
-    const blobPromise = prefetch;
+    const preparedPromise = prefetch;
     prefetch = u + 1 < units.length
-      ? fetchTtsBlob(unitToLine(units[u + 1]), voiceOverrides)
+      ? fetchTtsBlobSafe(unitToLine(units[u + 1]), voiceOverrides)
       : null;
     // eslint-disable-next-line no-await-in-loop
-    const prepared = await blobPromise.catch(() => null);
+    const prepared = await preparedPromise;
     // eslint-disable-next-line no-await-in-loop
     const ok = await playPrepared(unitToLine(unit), lineRate, {
-      preparedBlob: prepared,
+      prepared,
       voiceOverrides,
       onStart: (dur) => onPartStart?.(unit, dur),
+      onError,
       onEnd: () => {},
     });
     if (!ok) {
@@ -154,9 +195,15 @@ export async function speakLine(line, { rate, onStart, onEnd, voiceOverrides, on
 /**
  * Sequential playback with sentence-sized TTS and prefetch of the next clip
  * while the current one plays. Line callbacks fire once per script line.
+ *
+ * A real TTS failure (TtsError) STOPS auto-advance at that line — it must
+ * never be treated like intentional silence (empty text / 204) and simulated
+ * through. `onError` fires once with { lineIndex, line, error } and the
+ * promise resolves without calling `onEnd` — the caller (orchestrator) owns
+ * deciding what happens next (surface to the user, switch to manual mode).
  */
 export async function speakLinesViaEdge(lines, {
-  rate, getRate, startIndex = 0, checkpointEvery = 0, onLine, onLinePart, onAdvance, onEnd, voiceOverrides,
+  rate, getRate, startIndex = 0, checkpointEvery = 0, onLine, onLinePart, onAdvance, onEnd, onError, voiceOverrides,
 } = {}) {
   const list = lines || [];
   if (!list.length) { onEnd?.(); return false; }
@@ -169,7 +216,7 @@ export async function speakLinesViaEdge(lines, {
 
   if (!units.length) { onEnd?.(); return false; }
 
-  let prefetch = fetchTtsBlob(
+  let prefetch = fetchTtsBlobSafe(
     units[0].offlineWhole ? units[0].line : unitToLine(units[0]),
     voiceOverrides,
   );
@@ -179,7 +226,7 @@ export async function speakLinesViaEdge(lines, {
     const unit = units[u];
     const lineRate = resolveRate();
     const speakLineObj = unit.offlineWhole ? unit.line : unitToLine(unit);
-    const blobPromise = prefetch;
+    const preparedPromise = prefetch;
     const next = units[u + 1];
     const isLineEnd = unit.partIndex === unit.partTotal - 1;
     // Don't prefetch the next line if the current line (about to finish) is a checkpoint.
@@ -187,33 +234,33 @@ export async function speakLinesViaEdge(lines, {
     const isCurrentLineCheckpoint = isLineEnd && isCheckpoint(unit.lineIndex, checkpointEvery);
     const shouldPrefetchNext = !next || !isCurrentLineCheckpoint;
     prefetch = shouldPrefetchNext && next
-      ? fetchTtsBlob(next.offlineWhole ? next.line : unitToLine(next), voiceOverrides)
+      ? fetchTtsBlobSafe(next.offlineWhole ? next.line : unitToLine(next), voiceOverrides)
       : null;
 
     // eslint-disable-next-line no-await-in-loop
-    const preparedBlob = await blobPromise.catch(() => null);
+    const prepared = await preparedPromise;
 
     const isLineStart = unit.partIndex === 0;
     const lineIdx = unit.lineIndex;
 
+    let lineError = null;
     // eslint-disable-next-line no-await-in-loop
-    const ok = await new Promise((resolve) => {
-      playPrepared(speakLineObj, lineRate, {
-        preparedBlob,
-        voiceOverrides,
-        onStart: (dur) => {
-          if (isLineStart) onLine?.(lineIdx, unit.line, dur);
-          onLinePart?.(lineIdx, unit.line, {
-            durSec: dur,
-            partIndex: unit.partIndex,
-            partTotal: unit.partTotal,
-            charStart: unit.charStart,
-            charEnd: unit.charEnd,
-            text: unit.text,
-          });
-        },
-        onEnd: () => resolve(true),
-      }).then((started) => { if (!started) resolve(false); });
+    const ok = await playPrepared(speakLineObj, lineRate, {
+      prepared,
+      voiceOverrides,
+      onStart: (dur) => {
+        if (isLineStart) onLine?.(lineIdx, unit.line, dur);
+        onLinePart?.(lineIdx, unit.line, {
+          durSec: dur,
+          partIndex: unit.partIndex,
+          partTotal: unit.partTotal,
+          charStart: unit.charStart,
+          charEnd: unit.charEnd,
+          text: unit.text,
+        });
+      },
+      onError: (e) => { lineError = e; },
+      onEnd: () => {},
     });
 
     if (seqToken !== myToken) return playedAny;
@@ -228,7 +275,14 @@ export async function speakLinesViaEdge(lines, {
           await sleep(lineGapMs(lineRate));
         }
       }
+    } else if (lineError) {
+      // Real failure — halt here. Do not advance past this line, do not call
+      // onEnd (that would read as "the book finished").
+      onError?.({ lineIndex: lineIdx, line: unit.line, error: lineError });
+      return playedAny;
     } else {
+      // Intentional silence (empty text / 204 / offline blob missing) — simulate
+      // the typewriter off an estimated duration and advance as before.
       const est = estimateDurationSec(unit.text, lineRate);
       if (isLineStart) onLine?.(lineIdx, unit.line, est);
       onLinePart?.(lineIdx, unit.line, {

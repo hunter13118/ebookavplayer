@@ -16,11 +16,22 @@ test.describe("Graceful degradation", () => {
     await expect(page.getByTestId("uploader")).toBeVisible();
   });
 
-  test("TTS errors don't hang playback — it still reaches the end", async ({ page }) => {
-    await bootPlayer(page, { backend: { ttsStatus: 502 }, audio: { clipMs: 40 } });
+  test("TTS errors halt playback instead of silently racing to the end", async ({ page }) => {
+    // A hard TTS outage (502) must NOT be treated as "no audio for this line" —
+    // it should stop auto-advance in place rather than simulate-and-skip through
+    // the whole book. See tts-failure.spec.js for the full error-recovery flow.
+    const { ttsCalls } = await bootPlayer(page, { backend: { ttsStatus: 502 }, audio: { clipMs: 40 } });
     await page.getByTestId("play").click();
-    await expect(page.getByTestId("progress")).toHaveAttribute(
-      "data-status", "done", { timeout: 20000 });
+    await expect(page.getByTestId("progress")).toHaveAttribute("data-status", "error", { timeout: 5000 });
+    await expect(page.getByTestId("progress")).toHaveAttribute("data-index", "0");
+    // Give it plenty of time beyond what the old (buggy) simulate-through-the-book
+    // behavior would have needed — it must still be stuck, not "done".
+    await page.waitForTimeout(3000);
+    await expect(page.getByTestId("progress")).toHaveAttribute("data-status", "error");
+    await expect(page.getByTestId("progress")).toHaveAttribute("data-index", "0");
+    // Prefetch-ahead-of-the-failing-line is fine, but it must not have iterated
+    // through every line in the book trying each one.
+    expect(ttsCalls.length).toBeLessThanOrEqual(2);
   });
 
   test("library lists the catalog's books", async ({ page }) => {
