@@ -352,9 +352,11 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
 
       voiceOverrides: bk.voice_overrides || null,
 
+      timingAlgorithm: prefs.timingAlgorithm,
+
     });
 
-  }, [prefs.speed, prefs.checkpointEvery, prefs.autoAdvance, bk.voice_overrides]);
+  }, [prefs.speed, prefs.checkpointEvery, prefs.autoAdvance, bk.voice_overrides, prefs.timingAlgorithm]);
 
 
 

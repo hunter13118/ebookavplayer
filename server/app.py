@@ -121,6 +121,12 @@ class PackQueueBuildRequest(BaseModel):
     force: bool = False
 
 
+class AlignAudioRequest(BaseModel):
+    m4b_path: str | None = None      # server-readable path to the .m4b (local host)
+    total_ms: int | None = None      # override duration when known by the caller
+    aligner: str | None = None       # 'stub' | 'aeneas' | 'mms' (else best available)
+
+
 class ActiveStyleRequest(BaseModel):
     style: str
     mode: str | None = None      # "filter" → instant pixel filter over source style
@@ -1089,6 +1095,30 @@ def create_app() -> FastAPI:
         if not pack:
             return {"book_id": book_id, "available": False, "line_count": 0}
         return {"book_id": book_id, "available": True, **pack.as_dict()}
+
+    @app.post("/books/{book_id}/audio/align")
+    def align_audio(book_id: str, req: AlignAudioRequest = AlignAudioRequest()):
+        """ALGORITHM 4: forced-align the .m4b to the script on this local host and
+        persist a per-line millisecond timeline the player consumes. Falls back to
+        the deterministic proportional stub when no aligner binary is installed."""
+        from .align import align_book
+
+        if not L._path(book_id, ".analysis.json").exists() and not L._path(book_id, ".json").exists():
+            raise HTTPException(404, "no such book")
+        try:
+            manifest = align_book(
+                book_id,
+                AUDIO_DIR,
+                L.load_playback,
+                total_ms=req.total_ms,
+                m4b_path=req.m4b_path,
+                prefer=req.aligner,
+            )
+        except FileNotFoundError as e:
+            raise HTTPException(404, str(e)) from e
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        return {"ok": True, **manifest}
 
     @app.post("/books/{book_id}/audio/import")
     async def import_external_audio(book_id: str, file: UploadFile = File(...)):

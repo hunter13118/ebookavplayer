@@ -1,4 +1,7 @@
 import { KEYS, setPref } from "../audio/voicePrefs.js";
+import { describeAlgorithms } from "../timing/registry.js";
+
+const TIMING_ALGORITHMS = describeAlgorithms();
 
 /** Shared display + playback preference blocks (library + player menus). */
 export function DisplaySettings({
@@ -27,6 +30,15 @@ export function DisplaySettings({
           onChange={(e) => upd("autoAdvance", KEYS.autoAdvance, e.target.value === "auto")}>
           <option value="auto">Auto</option>
           <option value="click">Click-through</option>
+        </select>
+      </label>
+      <label className="vae-sheet-field">
+        Audiobook sync
+        <select data-testid="select-timing-algorithm" value={prefs.timingAlgorithm}
+          onChange={(e) => upd("timingAlgorithm", KEYS.timingAlgorithm, e.target.value)}>
+          {TIMING_ALGORITHMS.map((a) => (
+            <option key={a.id} value={a.id} title={a.blurb}>{a.label}</option>
+          ))}
         </select>
       </label>
       <label className="vae-sheet-field">

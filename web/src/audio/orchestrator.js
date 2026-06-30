@@ -20,6 +20,7 @@ export class Orchestrator {
     this.checkpointEvery = 0;
     this.autoAdvance = true;
     this.voiceOverrides = null;
+    this.timingAlgorithm = "linear"; // selected audiobook→script sync strategy
     this.status = "idle";          // idle | playing | paused | checkpoint | done | error
     this.index = 0;
     this.lastError = null;
@@ -29,11 +30,15 @@ export class Orchestrator {
     this._token = 0;               // typewriter loop guard
   }
 
-  configure({ speed, checkpointEvery, autoAdvance, voiceOverrides }) {
+  configure({ speed, checkpointEvery, autoAdvance, voiceOverrides, timingAlgorithm }) {
     if (speed != null) { this.speed = speed; setEdgePlaybackRate(speed); }
     if (checkpointEvery != null) this.checkpointEvery = checkpointEvery;
     if (autoAdvance != null) this.autoAdvance = autoAdvance;
     if (voiceOverrides !== undefined) this.voiceOverrides = voiceOverrides;
+    // Selected audiobook→script timing strategy. Stored now; consumed by the
+    // playback-integration milestone (when a precomputed timeline overrides
+    // estimateDurationSec). Inert today, so playback behavior is unchanged.
+    if (timingAlgorithm != null) this.timingAlgorithm = timingAlgorithm;
   }
 
   _emit(extra = {}) {
