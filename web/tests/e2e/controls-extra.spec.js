@@ -17,10 +17,12 @@ test.describe("Controls — remaining surfaces", () => {
   });
 
   test("Speed persists across lines in auto-advance", async ({ page }) => {
-    await bootPlayer(page, { audio: { clipMs: 80, durationSec: 0.08 } });
+    await bootPlayer(page, { audio: { clipMs: 800, durationSec: 0.8 } });
     await setSpeedControl(page, 1.5);
     await page.getByTestId("play").click();
     await expect(page.getByTestId("progress")).toHaveAttribute("data-index", "0");
+    // Wait for line 0 to start playing before polling for line 1
+    await page.waitForTimeout(100);
     await expect.poll(() => page.getByTestId("progress").getAttribute("data-index")).toBe("1");
     await expect.poll(() => page.evaluate(() => window.__lastRate ?? null)).toBe(1.5);
   });
