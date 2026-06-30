@@ -16,3 +16,4 @@ data/books/*.media.json
 data/books/*.progress.json
 data/books/*.status.json
 out.mp3
+graphify-out/
