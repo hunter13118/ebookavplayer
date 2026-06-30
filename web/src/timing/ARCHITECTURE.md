@@ -112,18 +112,32 @@ web/src/timing/
   moovAtomScanner.js      — Algorithm 3 (scan + moovAtomTiming; byte-range walking)
   forcedAlignerClient.js  — Algorithm 4 client (calls local server, normalizes manifest)
   registry.js             — multi-choice dispatch (ALGORITHMS, computeTimeline)
+  fromContainer.js        — computeTimelineFromM4b: scan + resolve chapter durations + dispatch
   index.js                — public barrel
 server/align/
   forced_aligner.py       — Algorithm 4 backends (stub + Aeneas/MMS skeletons), align_book
   __init__.py
 server/app.py             — POST /books/{id}/audio/align (AlignAudioRequest)
+web/src/audio/
+  sharedAudioSource.js    — single <audio> element, plays a [startMs,endMs) segment per line
+web/src/offline/
+  m4bStore.js             — persists the attached .m4b Blob + filename (IndexedDB)
 ```
 
-## Open milestone (not in this slice): playback consumption
+## Playback consumption (landed)
 
-This slice produces timelines and wires the picker. Actually *playing against a single
-shared `.m4b`* (seeking `audio.currentTime` to each line's `startMs`, stopping at
-`endMs`, and deciding whether the whole `.m4b` is stored in IndexedDB or streamed via
-HTTP Range) is a distinct, larger milestone with a UX decision attached. The orchestrator
-hook is staged (`configure({ timingAlgorithm })` is stored but inert) so today's playback
-behavior is unchanged until that milestone lands.
+A user attaches one local `.m4b` via Settings → Audiobook sync ("Attach .m4b"). The
+file is stored in IndexedDB (`m4bStore.js`, reusing the offline-pack blob store) so it
+survives a reload, scanned once via `computeTimelineFromM4b`, and the resulting
+`lineTimings` is pushed into the orchestrator (`orch.setTimeline(...)`). From then on,
+`Orchestrator.play()` takes a fourth path — `_playSharedAudio` — that seeks a single
+shared `<audio>` element (`sharedAudioSource.js`) to each line's `[startMs, endMs)`
+window instead of synthesizing/fetching TTS for that book. The typewriter still drives
+off the real segment duration via the same `onStart(durSec)` clock contract every other
+playback mode uses, so it can't drift from the audio.
+
+The whole file is held as a single in-memory Blob (object URL), not streamed via HTTP
+Range — consistent with Algorithms 1–3 already operating on a local Blob/ArrayBuffer
+rather than a remote URL. `pause()`/`stop()`/`seek()` reach `stopSharedAudio()`, which
+explicitly settles any in-flight segment so the orchestrator's playback loop is never
+left awaiting a promise that would otherwise never resolve.
