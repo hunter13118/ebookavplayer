@@ -376,7 +376,11 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
 
   useEffect(() => () => orch.stop(), []);
 
-
+  useEffect(() => {
+    if (!processing || !backendConfigured()) return undefined;
+    const id = setInterval(() => refreshBook().catch(() => {}), 2000);
+    return () => clearInterval(id);
+  }, [processing]);
 
   async function refreshBook() {
 
