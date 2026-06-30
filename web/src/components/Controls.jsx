@@ -13,13 +13,14 @@ function clampSpeed(v) {
 
 /** Audible / Spotify–style playback dock. */
 export default function Controls({
-  prefs, setPrefs, status, onPlay, onPause, onNext, onRewind, onRestart,
+  prefs, setPrefs, status, index, lines, onPlay, onPause, onNext, onRewind, onRestart,
 }) {
   const [speedOpen, setSpeedOpen] = useState(false);
   const rewindN = prefs.rewindSteps || 3;
   const nextN = prefs.nextSteps || 1;
   const playing = status === "playing";
-  const finished = status === "done";
+  const atStart = index === 0;
+  const finished = status === "done" && !atStart; // restart only if finished and not at start
 
   const setSpeed = useCallback((value) => {
     const next = clampSpeed(value);
@@ -47,7 +48,7 @@ export default function Controls({
           onClick={() => onRewind?.(rewindN)}
           aria-label={`Rewind ${rewindN} lines`}
         >
-          <span className="vae-dock-icon" aria-hidden>↺</span>
+          <span className="vae-dock-icon" aria-hidden>⏮</span>
           {rewindN > 1 && <span className="vae-dock-skip-n">{rewindN}</span>}
         </button>
 

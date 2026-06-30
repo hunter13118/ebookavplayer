@@ -904,7 +904,7 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
 
 
 
-          <Controls prefs={prefs} setPrefs={setPrefs} status={st.status}
+          <Controls prefs={prefs} setPrefs={setPrefs} status={st.status} index={st.index} lines={lines}
 
             onPlay={play} onPause={pause} onNext={next} onRewind={rewind} onRestart={restart} />
 
