@@ -45,9 +45,9 @@ export default function Library({
     return (catalog || [])
       .filter((b) => {
         const jobId = b.active_job_id || b.job_id;
-        return jobId && b.status !== "ready" && b.status !== "error";
+        return jobId && b.status !== "ready" && b.status !== "error" && b.active_job_id;
       })
-      .map((b) => `${b.book_id}:${b.active_job_id || b.job_id}`)
+      .map((b) => `${b.book_id}:${b.active_job_id}`)
       .sort()
       .join("|");
   }, [catalog]);
