@@ -6,7 +6,7 @@ import ArtStyleSwitcher from "./ArtStyleSwitcher.jsx";
 
 import VoiceField from "./VoiceField.jsx";
 
-import { DisplaySettings, PlaybackSettings } from "./AppSettingsSections.jsx";
+import { DisplaySettings, PlaybackSettings, AudiobookSyncSettings } from "./AppSettingsSections.jsx";
 
 import {
 
@@ -29,6 +29,8 @@ export default function PlayerMenu({
   onRegenStarted, onRegenFailed,
 
   onToggleFullscreen, onSaved, onOpenPipeline, disabled,
+
+  m4bStatus, onAttachM4b, onRemoveM4b,
 
 }) {
 
@@ -297,6 +299,12 @@ export default function PlayerMenu({
 
 
         <PlaybackSettings prefs={prefs} setPrefs={setPrefs} />
+
+
+
+        <AudiobookSyncSettings prefs={prefs} setPrefs={setPrefs}
+
+          m4bStatus={m4bStatus} onAttachM4b={onAttachM4b} onRemoveM4b={onRemoveM4b} />
 
 
 

@@ -54,6 +54,12 @@ import {
 
 } from "../chapterNav.js";
 
+import { buildSlidesByChapter, computeTimelineFromM4b } from "../timing/index.js";
+
+import { storeM4b, loadM4b, loadM4bName, removeM4b } from "../offline/m4bStore.js";
+
+import { loadSharedAudio, unloadSharedAudio } from "../audio/sharedAudioSource.js";
+
 
 
 function flatten(book) {
@@ -91,6 +97,8 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
   const [checkpoint, setCheckpoint] = useState(false);
 
   const [ttsError, setTtsError] = useState(null);
+
+  const [m4bStatus, setM4bStatus] = useState({ attached: false, busy: false, fileName: null, error: null });
 
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -357,6 +365,116 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
     });
 
   }, [prefs.speed, prefs.checkpointEvery, prefs.autoAdvance, bk.voice_overrides, prefs.timingAlgorithm]);
+
+
+
+  const applyM4bTimeline = useCallback(async (blob, fileName) => {
+
+    const slidesByChapter = buildSlidesByChapter(bk);
+
+    const result = await computeTimelineFromM4b({
+
+      blob, slidesByChapter, algorithmId: prefs.timingAlgorithm,
+
+    });
+
+    loadSharedAudio(blob);
+
+    orch.setTimeline(result.lineTimings);
+
+    setM4bStatus({ attached: true, busy: false, fileName: fileName || null, error: null });
+
+  }, [bk, prefs.timingAlgorithm, orch]);
+
+
+
+  const handleAttachM4b = useCallback(async (file) => {
+
+    setM4bStatus((s) => ({ ...s, busy: true, error: null }));
+
+    try {
+
+      await storeM4b(bk.book_id, file, file.name);
+
+      await applyM4bTimeline(file, file.name);
+
+    } catch (e) {
+
+      setM4bStatus((s) => ({ ...s, busy: false, error: e?.message || "Failed to attach audiobook" }));
+
+      throw e;
+
+    }
+
+  }, [bk.book_id, applyM4bTimeline]);
+
+
+
+  const handleRemoveM4b = useCallback(async () => {
+
+    setM4bStatus((s) => ({ ...s, busy: true }));
+
+    try {
+
+      await removeM4b(bk.book_id);
+
+    } finally {
+
+      orch.setTimeline(null);
+
+      unloadSharedAudio();
+
+      setM4bStatus({ attached: false, busy: false, fileName: null, error: null });
+
+    }
+
+  }, [bk.book_id, orch]);
+
+
+
+  // Auto-reload a previously attached .m4b for this book so it survives a
+
+  // page reload without re-prompting for the file. Falls back silently (TTS
+
+  // playback) when none was ever attached, or it fails to load/scan.
+
+  useEffect(() => {
+
+    let cancelled = false;
+
+    orch.setTimeline(null);
+
+    unloadSharedAudio();
+
+    setM4bStatus({ attached: false, busy: false, fileName: null, error: null });
+
+    (async () => {
+
+      try {
+
+        const blob = await loadM4b(bk.book_id);
+
+        if (!blob || cancelled) return;
+
+        const fileName = await loadM4bName(bk.book_id);
+
+        if (cancelled) return;
+
+        await applyM4bTimeline(blob, fileName);
+
+      } catch {
+
+        // No persisted .m4b for this book, or it failed to load/scan.
+
+      }
+
+    })();
+
+    return () => { cancelled = true; };
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+
+  }, [bk.book_id]);
 
 
 
@@ -955,6 +1073,8 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
         onToggleFullscreen={toggleFullscreen}
 
         onSaved={(saved) => setBk((b) => ({ ...b, voice_overrides: saved }))}
+
+        m4bStatus={m4bStatus} onAttachM4b={handleAttachM4b} onRemoveM4b={handleRemoveM4b}
 
         disabled={imaging || imagingJob.active} />
 

@@ -136,6 +136,15 @@ export async function getBlob(packId, path) {
   return storedToBlob(stored);
 }
 
+export async function deleteBlob(packId, path) {
+  const { stores, t } = await tx([BLOBS], "readwrite");
+  await reqToPromise(stores[BLOBS].delete(blobKey(packId, path)));
+  return new Promise((resolve, reject) => {
+    t.oncomplete = () => resolve();
+    t.onerror = () => reject(t.error);
+  });
+}
+
 export async function deletePack(packId) {
   const pack = await getInstalledPack(packId);
   if (!pack) return false;

@@ -18,3 +18,7 @@ export {
 export {
   ALGORITHMS, DEFAULT_ALGORITHM, getAlgorithm, describeAlgorithms, isKnownAlgorithm, computeTimeline,
 } from "./registry.js";
+
+export {
+  computeTimelineFromM4b, resolveChapterDurationsFromContainer,
+} from "./fromContainer.js";

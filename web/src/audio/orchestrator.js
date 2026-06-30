@@ -5,6 +5,7 @@
 import {
   speakLine, speakLinesViaEdge, stopAllSpeech, setEdgePlaybackRate,
 } from "./playSpeech.js";
+import { isSharedAudioLoaded, playSharedSegment, stopSharedAudio } from "./sharedAudioSource.js";
 import { backendConfigured } from "../api.js";
 import { getActivePack, packSupportsOfflineAudio } from "../offline/packBridge.js";
 import { estimateDurationSec, revealedCount, isCheckpoint, effectiveLineDuration } from "./timing.js";
@@ -21,6 +22,7 @@ export class Orchestrator {
     this.autoAdvance = true;
     this.voiceOverrides = null;
     this.timingAlgorithm = "linear"; // selected audiobook→script sync strategy
+    this.lineTimings = null;       // { [lineIndex]: {startMs,endMs,durationMs} } — set via setTimeline()
     this.status = "idle";          // idle | playing | paused | checkpoint | done | error
     this.index = 0;
     this.lastError = null;
@@ -39,6 +41,16 @@ export class Orchestrator {
     // playback-integration milestone (when a precomputed timeline overrides
     // estimateDurationSec). Inert today, so playback behavior is unchanged.
     if (timingAlgorithm != null) this.timingAlgorithm = timingAlgorithm;
+  }
+
+  /**
+   * Inject a precomputed timeline (TimingResult.lineTimings) from the timing
+   * engine. When set AND a shared .m4b is loaded (sharedAudioSource), play()
+   * plays real segments of that file instead of synthesizing/fetching TTS.
+   * Pass null to fall back to the existing TTS/silent playback paths.
+   */
+  setTimeline(lineTimings) {
+    this.lineTimings = lineTimings || null;
   }
 
   _emit(extra = {}) {
@@ -84,6 +96,11 @@ export class Orchestrator {
     this.index = startIndex;
     this.status = "playing";
     this._emit({ revealed: 0 });
+
+    if (this.lineTimings && isSharedAudioLoaded()) {
+      await this._playSharedAudio(startIndex);
+      return;
+    }
 
     const pack = await getActivePack();
     const canSpeak = backendConfigured() || packSupportsOfflineAudio(pack);
@@ -177,9 +194,53 @@ export class Orchestrator {
     this._finish();
   }
 
+  // Shared audiobook: play real [startMs,endMs) segments out of the single
+  // attached .m4b (sharedAudioSource) instead of synthesizing/fetching TTS,
+  // using the timeline injected via setTimeline(). Loop structure mirrors
+  // _playSilent (handles both auto-advance and click-through in one pass)
+  // since both are just "what happens after one line's audio finishes".
+  async _playSharedAudio(startIndex) {
+    for (let i = startIndex; i < this.lines.length; i += 1) {
+      if (this.status !== "playing") return;
+      this.index = i;
+      const line = this.lines[i];
+      this._emit({ revealed: 0 });
+      const timing = this.lineTimings[i];
+      let failInfo = null;
+      if (timing) {
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((resolve) => {
+          playSharedSegment(timing.startMs, timing.endMs, this.speed, {
+            onStart: (durSec) => this._runTypewriter(line.text, durSec),
+            onError: (e) => { failInfo = { lineIndex: i, line, error: e }; },
+            onEnd: () => resolve(),
+          });
+        });
+      } else {
+        // Defensive: a line outside the precomputed timeline (book/lines
+        // changed since it was computed) — degrade to a silent estimate for
+        // just this one line instead of failing the whole playback.
+        const dur = estimateDurationSec(line.text, this.speed);
+        this._runTypewriter(line.text, dur);
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((r) => setTimeout(r, (dur + 0.04) * 1000));
+      }
+      if (this.status !== "playing") return;
+      if (failInfo) { this._fail(failInfo); return; }
+      this._emit({ revealed: line.text.length });
+      if (isCheckpoint(i, this.checkpointEvery) && i < this.lines.length - 1) {
+        this.pauseForCheckpoint();
+        return;
+      }
+      if (!this.autoAdvance) { this.status = "paused"; this._emit(); return; }
+    }
+    this._finish();
+  }
+
   pauseForCheckpoint() {
     this.status = "checkpoint";
     stopAllSpeech();
+    stopSharedAudio();
     cancelAnimationFrame(this._raf);
     this._emit();
     this.onCheckpoint(this.index);
@@ -195,6 +256,7 @@ export class Orchestrator {
   seek(index) {
     const i = Math.max(0, Math.min(index, this.lines.length - 1));
     stopAllSpeech();
+    stopSharedAudio();
     cancelAnimationFrame(this._raf);
     this.index = i;
     this.status = "paused";
@@ -220,8 +282,12 @@ export class Orchestrator {
   }
 
   resume() { if (this.status !== "playing") this.play(this.lines, this.index); }
-  pause() { this.status = "paused"; stopAllSpeech(); cancelAnimationFrame(this._raf); this._emit(); }
-  stop() { this.status = "idle"; stopAllSpeech(); cancelAnimationFrame(this._raf); this._token++; }
+  pause() {
+    this.status = "paused"; stopAllSpeech(); stopSharedAudio(); cancelAnimationFrame(this._raf); this._emit();
+  }
+  stop() {
+    this.status = "idle"; stopAllSpeech(); stopSharedAudio(); cancelAnimationFrame(this._raf); this._token++;
+  }
 
   _finish() {
     this.status = "done";
@@ -238,6 +304,7 @@ export class Orchestrator {
     this.status = "error";
     this.lastError = info.error || null;
     stopAllSpeech();
+    stopSharedAudio();
     cancelAnimationFrame(this._raf);
     this._emit();
     this.onError({ ...info, index: this.index });

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { KEYS, setPref } from "../audio/voicePrefs.js";
 import { describeAlgorithms } from "../timing/registry.js";
 
@@ -30,15 +31,6 @@ export function DisplaySettings({
           onChange={(e) => upd("autoAdvance", KEYS.autoAdvance, e.target.value === "auto")}>
           <option value="auto">Auto</option>
           <option value="click">Click-through</option>
-        </select>
-      </label>
-      <label className="vae-sheet-field">
-        Audiobook sync
-        <select data-testid="select-timing-algorithm" value={prefs.timingAlgorithm}
-          onChange={(e) => upd("timingAlgorithm", KEYS.timingAlgorithm, e.target.value)}>
-          {TIMING_ALGORITHMS.map((a) => (
-            <option key={a.id} value={a.id} title={a.blurb}>{a.label}</option>
-          ))}
         </select>
       </label>
       <label className="vae-sheet-field">
@@ -90,6 +82,75 @@ export function PlaybackSettings({ prefs, setPrefs }) {
           value={prefs.nextSteps}
           onChange={(e) => upd("nextSteps", KEYS.nextSteps, parseInt(e.target.value, 10) || 1)} />
       </label>
+    </section>
+  );
+}
+
+/**
+ * Audiobook→script sync: pick a timing strategy and (optionally) attach a
+ * local .m4b so playback plays real segments of it instead of TTS. `onAttach`
+ * does the heavy lifting (store the blob, scan it, compute the timeline, push
+ * it into the orchestrator) and is awaited here only to drive busy/error UI.
+ */
+export function AudiobookSyncSettings({
+  prefs, setPrefs, m4bStatus, onAttachM4b, onRemoveM4b,
+}) {
+  const [localBusy, setLocalBusy] = useState(false);
+  const [localErr, setLocalErr] = useState("");
+
+  function upd(key, prefKey, value) {
+    setPref(prefKey, value);
+    setPrefs((p) => ({ ...p, [key]: value }));
+  }
+
+  async function handleFile(ev) {
+    const file = ev.target.files?.[0];
+    ev.target.value = "";
+    if (!file || !onAttachM4b) return;
+    setLocalBusy(true);
+    setLocalErr("");
+    try {
+      await onAttachM4b(file);
+    } catch (e) {
+      setLocalErr(e?.message || "Failed to attach audiobook");
+    } finally {
+      setLocalBusy(false);
+    }
+  }
+
+  const busy = localBusy || Boolean(m4bStatus?.busy);
+  const errMsg = localErr || m4bStatus?.error;
+
+  return (
+    <section className="vae-menu-section">
+      <h3>Audiobook sync</h3>
+      <label className="vae-sheet-field">
+        Sync strategy
+        <select data-testid="select-timing-algorithm" value={prefs.timingAlgorithm}
+          onChange={(e) => upd("timingAlgorithm", KEYS.timingAlgorithm, e.target.value)}>
+          {TIMING_ALGORITHMS.map((a) => (
+            <option key={a.id} value={a.id} title={a.blurb}>{a.label}</option>
+          ))}
+        </select>
+      </label>
+      {m4bStatus?.attached ? (
+        <div className="vae-sheet-field">
+          <span data-testid="m4b-attached-label">
+            Attached: {m4bStatus.fileName || "audiobook.m4b"}
+          </span>
+          <button type="button" className="vae-menu-link" data-testid="m4b-remove"
+            onClick={onRemoveM4b} disabled={busy}>
+            Remove
+          </button>
+        </div>
+      ) : (
+        <label className="vae-btn vae-btn-file">
+          {busy ? "Syncing…" : "Attach .m4b"}
+          <input type="file" accept=".m4b,audio/mp4,audio/x-m4a" hidden
+            data-testid="m4b-attach" onChange={handleFile} disabled={busy} />
+        </label>
+      )}
+      {errMsg && <div className="vae-note" data-testid="m4b-error">{errMsg}</div>}
     </section>
   );
 }
