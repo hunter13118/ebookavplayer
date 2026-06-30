@@ -127,6 +127,9 @@ export async function installBackendMocks(page, opts = {}) {
         return route.fulfill({ json: { job_id: "e2e-pack-job", status: "cancelled" } });
       }
       if (method === "POST") {
+        if (packStatus >= 400) {
+          return route.fulfill({ status: packStatus, json: { error: "pack build failed" } });
+        }
         return route.fulfill({
           json: { job_id: "e2e-pack-job", status: "building", progress: 0, book_id: bookId },
         });
@@ -145,7 +148,7 @@ export async function installBackendMocks(page, opts = {}) {
       }
       if (url.includes("/pack/build/e2e-pack-job")) {
         if (packStatus >= 400) {
-          return route.fulfill({ json: { job_id: "e2e-pack-job", status: "error", error: "pack failed" } });
+          return route.fulfill({ status: packStatus, json: { job_id: "e2e-pack-job", status: "error", error: "pack failed" } });
         }
         return route.fulfill({
           json: { job_id: "e2e-pack-job", status: "done", progress: 1, ready: true },
