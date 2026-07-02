@@ -520,14 +520,14 @@ async function tryHuggingface(prompt, seed, cfg, fetchFn = fetch) {
   throw new Error(failures[0] || "huggingface: request failed");
 }
 
-async function tryLocalSd(prompt, env) {
+async function tryLocalSd(prompt, env, fetchFn = fetch) {
   const base = String(env.LOCAL_IMAGE_URL || "").trim().replace(/\/$/, "");
   if (!base) throw new Error("local_sd: LOCAL_IMAGE_URL not set");
   const res = await fetchTimeout(`${base}/generate`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ prompt: String(prompt).slice(0, 1800) }),
-  }, 120_000);
+  }, 120_000, fetchFn);
   if (!res.ok) throw new Error(`local_sd: HTTP ${res.status}`);
   const ct = res.headers.get("content-type") || "image/png";
   return {
@@ -790,7 +790,7 @@ export async function generateImage(prompt, {
       if (!stageAvailable(env, "local_sd")) continue;
       try {
         onAttempt?.("local_sd");
-        const result = await tryLocalSd(prompt, env);
+        const result = await tryLocalSd(prompt, env, env.__fetch || fetch);
         return postProcess(result, subjectType, env);
       } catch (e) {
         failures.push(`local_sd: ${String(e.message || e).slice(0, 100)}`);
