@@ -17,12 +17,4 @@ test.describe("UI screenshots", () => {
     await page.getByTestId("speaker").filter({ hasText: "Pip" }).waitFor({ timeout: 15000 });
     await page.screenshot({ path: shot("05-group-spotlight") });
   });
-
-  test("checkpoint overlay", async ({ page }) => {
-    await page.addInitScript(() => localStorage.setItem("vae-checkpoint-every", "2"));
-    await bootPlayer(page, { audio: { clipMs: 60 } });
-    await page.getByTestId("play").click();
-    await page.getByTestId("checkpoint").waitFor({ timeout: 10000 });
-    await page.screenshot({ path: shot("06-checkpoint") });
-  });
 });

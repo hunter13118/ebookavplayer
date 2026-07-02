@@ -8,22 +8,20 @@ import {
 import { isSharedAudioLoaded, playSharedSegment, stopSharedAudio } from "./sharedAudioSource.js";
 import { backendConfigured } from "../api.js";
 import { getActivePack, packSupportsOfflineAudio } from "../offline/packBridge.js";
-import { estimateDurationSec, revealedCount, isCheckpoint, effectiveLineDuration } from "./timing.js";
+import { estimateDurationSec, revealedCount, effectiveLineDuration } from "./timing.js";
 
 export class Orchestrator {
-  constructor({ onState, onCheckpoint, onEnd, onError } = {}) {
+  constructor({ onState, onEnd, onError } = {}) {
     this.onState = onState || (() => {});
-    this.onCheckpoint = onCheckpoint || (() => {});
     this.onEnd = onEnd || (() => {});
     this.onError = onError || (() => {});
     this.lines = [];
     this.speed = 1;
-    this.checkpointEvery = 0;
     this.autoAdvance = true;
     this.voiceOverrides = null;
     this.timingAlgorithm = "linear"; // selected audiobook→script sync strategy
     this.lineTimings = null;       // { [lineIndex]: {startMs,endMs,durationMs} } — set via setTimeline()
-    this.status = "idle";          // idle | playing | paused | checkpoint | done | error
+    this.status = "idle";          // idle | playing | paused | done | error
     this.index = 0;
     this.lastError = null;
     this._raf = null;
@@ -32,9 +30,8 @@ export class Orchestrator {
     this._token = 0;               // typewriter loop guard
   }
 
-  configure({ speed, checkpointEvery, autoAdvance, voiceOverrides, timingAlgorithm }) {
+  configure({ speed, autoAdvance, voiceOverrides, timingAlgorithm }) {
     if (speed != null) { this.speed = speed; setEdgePlaybackRate(speed); }
-    if (checkpointEvery != null) this.checkpointEvery = checkpointEvery;
     if (autoAdvance != null) this.autoAdvance = autoAdvance;
     if (voiceOverrides !== undefined) this.voiceOverrides = voiceOverrides;
     // Selected audiobook→script timing strategy. Stored now; consumed by the
@@ -117,7 +114,6 @@ export class Orchestrator {
     await speakLinesViaEdge(this.lines, {
       getRate: () => this.speed,
       startIndex,
-      checkpointEvery: this.checkpointEvery,
       voiceOverrides: this.voiceOverrides,
       onLine: (i, line) => {
         this.index = i;
@@ -131,9 +127,6 @@ export class Orchestrator {
       },
       onAdvance: (i) => {
         this._emit({ revealed: this.lines[i].text.length });
-        if (isCheckpoint(i, this.checkpointEvery) && i < this.lines.length - 1) {
-          this.pauseForCheckpoint();
-        }
       },
       onError: (info) => this._fail(info),
       onEnd: () => { if (this.status === "playing") this._finish(); },
@@ -161,9 +154,7 @@ export class Orchestrator {
         if (this.status !== "playing") return;
         if (failInfo) { this._fail(failInfo); return; }
         this._emit({ revealed: line.text.length });
-        if (isCheckpoint(i, this.checkpointEvery) && i < this.lines.length - 1) {
-          this.pauseForCheckpoint();
-        } else if (i >= this.lines.length - 1) {
+        if (i >= this.lines.length - 1) {
           this._finish();
         } else {
           this.status = "paused";       // hold until next()/click
@@ -185,10 +176,6 @@ export class Orchestrator {
       await new Promise((r) => setTimeout(r, (dur + 0.04) * 1000));
       if (this.status !== "playing") return;
       this._emit({ revealed: line.text.length });
-      if (isCheckpoint(i, this.checkpointEvery) && i < this.lines.length - 1) {
-        this.pauseForCheckpoint();
-        return;
-      }
       if (!this.autoAdvance) { this.status = "paused"; this._emit(); return; }
     }
     this._finish();
@@ -228,22 +215,9 @@ export class Orchestrator {
       if (this.status !== "playing") return;
       if (failInfo) { this._fail(failInfo); return; }
       this._emit({ revealed: line.text.length });
-      if (isCheckpoint(i, this.checkpointEvery) && i < this.lines.length - 1) {
-        this.pauseForCheckpoint();
-        return;
-      }
       if (!this.autoAdvance) { this.status = "paused"; this._emit(); return; }
     }
     this._finish();
-  }
-
-  pauseForCheckpoint() {
-    this.status = "checkpoint";
-    stopAllSpeech();
-    stopSharedAudio();
-    cancelAnimationFrame(this._raf);
-    this._emit();
-    this.onCheckpoint(this.index);
   }
 
   /** Reveal the rest of the current line immediately (skip typewriter). */

@@ -8,7 +8,7 @@ export const KEYS = {
   artStyle: "vae-art-style",           // semi-real | pixel
   theme: "vae-theme",                  // light | dark
   spriteBorders: "vae-sprite-borders",
-  checkpointEvery: "vae-checkpoint-every",
+  sleepTimerMinutes: "vae-sleep-timer-minutes",
   rewindSteps: "vae-rewind-steps",
   nextSteps: "vae-next-steps",
   timingAlgorithm: "vae-timing-algorithm",   // audiobook→script sync strategy
@@ -33,7 +33,8 @@ export function getPrefs() {
     artStyle: g(KEYS.artStyle, "anime"),
     theme: g(KEYS.theme, "dark"),
     spriteBorders: g(KEYS.spriteBorders, "false") === "true",
-    checkpointEvery: parseInt(g(KEYS.checkpointEvery, "40"), 10) || 0,
+    // 0 = off. Pauses playback automatically after this many real-time minutes.
+    sleepTimerMinutes: parseInt(g(KEYS.sleepTimerMinutes, "0"), 10) || 0,
     rewindSteps: parseInt(g(KEYS.rewindSteps, "3"), 10) || 3,
     nextSteps: parseInt(g(KEYS.nextSteps, "1"), 10) || 1,
     timingAlgorithm: g(KEYS.timingAlgorithm, "linear"),

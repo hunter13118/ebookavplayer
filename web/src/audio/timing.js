@@ -30,10 +30,16 @@ export function lineGapMs(speed = 1) {
   return Math.max(8, Math.round(40 / (speed || 1)));
 }
 
-/** Should a checkpoint fire after finishing line `idx`? (catch sleepers) */
-export function isCheckpoint(idx, every) {
-  if (!every || every <= 0) return false;
-  return (idx + 1) % every === 0;
+/**
+ * Real-time sleep timer countdown — pauses playback after `minutes` of wall
+ * clock time regardless of how much has been read/listened to. Returns null
+ * when the timer is off (falsy minutes) or hasn't been started (no
+ * startedAt), otherwise the remaining ms, clamped to >= 0.
+ */
+export function sleepTimerRemainingMs(startedAt, minutes, now) {
+  if (!minutes || minutes <= 0 || !startedAt) return null;
+  const totalMs = minutes * 60_000;
+  return Math.max(0, totalMs - (now - startedAt));
 }
 
 /** Stable horizontal slot (%) for character index in a scene of `total` sprites. */

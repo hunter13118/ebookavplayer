@@ -52,7 +52,7 @@ export default defineConfig(({ command }) => {
 
     server: {
       host: true,
-      port: 5173,
+      port: process.env.PORT ? Number(process.env.PORT) : 5173,
       proxy: {
         "/projects/ebookavplayer/api": { target: "http://127.0.0.1:8600", timeout: 0 },
         "/books": { target: "http://127.0.0.1:8600", timeout: 0 },

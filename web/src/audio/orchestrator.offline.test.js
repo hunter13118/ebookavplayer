@@ -31,7 +31,7 @@ describe("Orchestrator offline audiobook pack", () => {
     orch.onEnd = () => { ended = true; };
     await orch.play(lines, 0);
     await new Promise((r) => setTimeout(r, 100));
-    expect(["playing", "done", "paused", "checkpoint"]).toContain(orch.status);
+    expect(["playing", "done", "paused"]).toContain(orch.status);
     orch.stop();
   });
 });

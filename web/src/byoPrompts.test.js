@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  artStyleKey,
   buildByoPrompt,
   buildByoPromptJson,
   buildByoPromptPack,
@@ -105,5 +106,25 @@ describe("byoPrompts", () => {
       + "full scene fills the frame, layered foreground/midground/background, "
       + "usable as a game backdrop layer. Art style: anime cel-shaded, bold outlines, vibrant colors.",
     );
+  });
+
+  it("artStyleKey exact-matches known aliases and buckets anything else as custom", () => {
+    expect(artStyleKey("semi-real")).toBe("realistic");
+    expect(artStyleKey("cartoon")).toBe("comic");
+    expect(artStyleKey("pixel-art")).toBe("pixel");
+    // Loose substring matching used to wrongly bucket "unrealistic" as realistic.
+    expect(artStyleKey("unrealistic sketch")).toBe("custom");
+    expect(artStyleKey("watercolor storybook illustration")).toBe("custom");
+  });
+
+  it("composeImagePrompt uses custom style text verbatim instead of discarding it", () => {
+    const p = composeImagePrompt("test scene", { subjectType: "background", style: "watercolor storybook illustration" });
+    expect(p).toContain("Art style: watercolor storybook illustration.");
+    expect(p).not.toContain("clean digital illustration");
+  });
+
+  it("buildByoPrompt respects a styleOverride even when the book has a different stored style", () => {
+    const md = buildByoPrompt(fixtureBook, cover, { styleOverride: "pixel" });
+    expect(md).toContain("pixel art, 16-bit RPG sprite");
   });
 });

@@ -6,8 +6,6 @@ import DialogueBox from "./DialogueBox.jsx";
 
 import Controls from "./Controls.jsx";
 
-import CheckpointOverlay from "./CheckpointOverlay.jsx";
-
 import TtsErrorModal from "./TtsErrorModal.jsx";
 
 import ProcessingBar from "./ProcessingBar.jsx";
@@ -29,6 +27,8 @@ import { useCompareModal } from "../hooks/compareModalContext.jsx";
 import { useRegenFeedback } from "../hooks/useRegenFeedback.js";
 
 import { Orchestrator } from "../audio/orchestrator.js";
+
+import { sleepTimerRemainingMs } from "../audio/timing.js";
 
 import { fetchBook, backendConfigured, generateMomentIllustration, unlockImaging } from "../api.js";
 import { useJobEvents, activeJobIdForBook } from "../hooks/useJobEvents.js";
@@ -94,7 +94,11 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
 
   const [st, setSt] = useState({ status: "idle", index: 0, revealed: 0, speakerId: null });
 
-  const [checkpoint, setCheckpoint] = useState(false);
+  // Sleep timer — pauses playback after real-time minutes elapse, replacing
+  // the old line-count-based "are you still listening?" checkpoint. Starts
+  // (or restarts) whenever playback begins with a non-zero timer selected.
+  const [sleepTimerStartedAt, setSleepTimerStartedAt] = useState(null);
+  const [sleepTimerRemaining, setSleepTimerRemaining] = useState(null);
 
   const [ttsError, setTtsError] = useState(null);
 
@@ -320,8 +324,6 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
 
       },
 
-      onCheckpoint: () => setCheckpoint(true),
-
       onEnd: () => {
 
         const total = linesRef.current.length;
@@ -354,8 +356,6 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
 
       speed: prefs.speed,
 
-      checkpointEvery: prefs.checkpointEvery,
-
       autoAdvance: prefs.autoAdvance,
 
       voiceOverrides: bk.voice_overrides || null,
@@ -364,9 +364,25 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
 
     });
 
-  }, [prefs.speed, prefs.checkpointEvery, prefs.autoAdvance, bk.voice_overrides, prefs.timingAlgorithm]);
+  }, [prefs.speed, prefs.autoAdvance, bk.voice_overrides, prefs.timingAlgorithm]);
 
-
+  useEffect(() => {
+    if (!sleepTimerStartedAt || !prefs.sleepTimerMinutes) {
+      setSleepTimerRemaining(null);
+      return undefined;
+    }
+    const tick = () => {
+      const remaining = sleepTimerRemainingMs(sleepTimerStartedAt, prefs.sleepTimerMinutes, Date.now());
+      setSleepTimerRemaining(remaining);
+      if (remaining === 0) {
+        orch.pause();
+        setSleepTimerStartedAt(null);
+      }
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [sleepTimerStartedAt, prefs.sleepTimerMinutes, orch]);
 
   const applyM4bTimeline = useCallback(async (blob, fileName) => {
 
@@ -747,15 +763,21 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
 
 
 
-  const play = () => { setCheckpoint(false); orch.play(lines, st.index); };
+  const play = () => {
+    if (prefs.sleepTimerMinutes > 0 && !sleepTimerStartedAt) setSleepTimerStartedAt(Date.now());
+    orch.play(lines, st.index);
+  };
 
   const pause = () => orch.pause();
 
-  const next = (steps = prefs.nextSteps || 1) => { setCheckpoint(false); orch.next(steps); };
+  const cancelSleepTimer = () => {
+    setSleepTimerStartedAt(null);
+    setSleepTimerRemaining(null);
+  };
+
+  const next = (steps = prefs.nextSteps || 1) => orch.next(steps);
 
   const rewind = (steps = prefs.rewindSteps || 3) => {
-
-    setCheckpoint(false);
 
     dismissFlash();
 
@@ -764,8 +786,6 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
   };
 
   const restart = () => {
-
-    setCheckpoint(false);
 
     dismissFlash();
 
@@ -784,8 +804,6 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
   };
 
   const seekTo = (index, { preserveFlash = false } = {}) => {
-
-    setCheckpoint(false);
 
     if (!preserveFlash) dismissFlash();
 
@@ -818,10 +836,6 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
     else if (!prefs.autoAdvance) next(1);
 
   };
-
-  const continueCheckpoint = () => { setCheckpoint(false); orch.play(lines, st.index + 1); };
-
-
 
   function toggleFullscreen() {
 
@@ -996,8 +1010,6 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
 
               style={prefs.displayStyle} onAdvance={advanceClick} />
 
-            {checkpoint && <CheckpointOverlay onContinue={continueCheckpoint} />}
-
           </Stage>
 
 
@@ -1039,6 +1051,13 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
           </div>
 
 
+
+          {sleepTimerRemaining != null && (
+            <button type="button" className="vae-sleep-timer-badge" data-testid="sleep-timer-badge"
+              onClick={cancelSleepTimer} title="Tap to cancel sleep timer">
+              💤 {formatClock(Math.round(sleepTimerRemaining / 1000))}
+            </button>
+          )}
 
           <Controls prefs={prefs} setPrefs={setPrefs} status={st.status} index={st.index} lines={lines}
 

@@ -29,7 +29,7 @@ export default function Stage({
   ].filter(Boolean).join(" ");
 
   function handleStageClick(e) {
-    if (e.target.closest(".vae-dialogue, .vae-subtitle, .vae-checkpoint")) return;
+    if (e.target.closest(".vae-dialogue, .vae-subtitle")) return;
     if (flashActive && illustrationFlash) {
       onDismissFlash?.();
     }

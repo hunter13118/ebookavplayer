@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { slotXForIndex, stageLayout } from "./timing.js";
+import { slotXForIndex, stageLayout, sleepTimerRemainingMs } from "./timing.js";
 
 describe("slotXForIndex", () => {
   it("uses preset positions for 1–3 sprites", () => {
@@ -43,5 +43,28 @@ describe("stageLayout", () => {
   it("does not dim anyone in a 1:1 scene", () => {
     const pair = stageLayout(present.slice(0, 2), "a", 2);
     expect(pair.some((p) => p.dim)).toBe(false);
+  });
+});
+
+describe("sleepTimerRemainingMs", () => {
+  it("is null when the timer is off (0/falsy minutes)", () => {
+    expect(sleepTimerRemainingMs(1000, 0, 2000)).toBeNull();
+    expect(sleepTimerRemainingMs(1000, null, 2000)).toBeNull();
+  });
+
+  it("is null when the timer hasn't been started", () => {
+    expect(sleepTimerRemainingMs(null, 5, 2000)).toBeNull();
+  });
+
+  it("returns the full duration right when started", () => {
+    expect(sleepTimerRemainingMs(1000, 1, 1000)).toBe(60_000);
+  });
+
+  it("counts down as time elapses", () => {
+    expect(sleepTimerRemainingMs(1000, 1, 1000 + 30_000)).toBe(30_000);
+  });
+
+  it("clamps at 0 once elapsed (never negative)", () => {
+    expect(sleepTimerRemainingMs(1000, 1, 1000 + 90_000)).toBe(0);
   });
 });

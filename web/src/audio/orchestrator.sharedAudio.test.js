@@ -45,7 +45,7 @@ describe("Orchestrator shared-audio (.m4b) playback", () => {
     // elsewhere (orchestrator.offline.test.js); here we just confirm it
     // doesn't hang waiting on shared-audio internals it was never given.
     await orch.play([LINES[0]], 0);
-    await waitForStatus(orch, (s) => ["playing", "done", "paused", "checkpoint"].includes(s));
+    await waitForStatus(orch, (s) => ["playing", "done", "paused"].includes(s));
     orch.stop();
   });
 
@@ -122,7 +122,7 @@ describe("Orchestrator shared-audio (.m4b) playback", () => {
     orch.setTimeline(null);
     expect(orch.lineTimings).toBeNull();
     await orch.play([LINES[0]], 0);
-    await waitForStatus(orch, (s) => ["playing", "done", "paused", "checkpoint"].includes(s));
+    await waitForStatus(orch, (s) => ["playing", "done", "paused"].includes(s));
     orch.stop();
   });
 

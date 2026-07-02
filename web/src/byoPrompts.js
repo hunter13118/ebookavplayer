@@ -46,22 +46,36 @@ const OUTPUT_SPECS = {
   inserts: "PNG, portrait ~768×1024 (full-screen story moment)",
 };
 
+// Exact-match aliases only — mirrors worker/_shared/freemium-image.js. Loose
+// substring matching used to wrongly bucket anything containing "real" (even
+// "unrealistic") into the "realistic" template and silently discarded custom
+// style text a user typed into the art-style picker.
+const STYLE_ALIASES = {
+  realistic: "realistic",
+  real: "realistic",
+  "semi-real": "realistic",
+  "semi-realistic": "realistic",
+  anime: "anime",
+  pixel: "pixel",
+  "pixel-art": "pixel",
+  cartoon: "comic",
+  comic: "comic",
+  neutral: "neutral",
+};
+
 export function artStyleKey(artStyle) {
-  const s = (artStyle || "").toLowerCase();
-  if (s.includes("real") || s === "semi-real") return "realistic";
-  if (s.includes("anime")) return "anime";
-  if (s.includes("pixel")) return "pixel";
-  if (s.includes("cartoon") || s.includes("comic")) return "comic";
-  return "neutral";
+  const s = (artStyle || "").toLowerCase().trim();
+  return STYLE_ALIASES[s] || "custom";
 }
 
 export function composeImagePrompt(description, { subjectType = "character", style = "neutral" } = {}) {
   const subj = subjectType === "background" ? "background" : "character";
   const framing = SUBJECT_FRAMING[subj];
-  const styleDesc = STYLE_TEMPLATES[style] || STYLE_TEMPLATES.neutral;
+  const key = artStyleKey(style);
+  const styleDesc = key === "custom" ? String(style || "").trim() : (STYLE_TEMPLATES[key] || STYLE_TEMPLATES.neutral);
   const desc = String(description || "").trim().replace(/\s+/g, " ");
   const post = subj === "character" ? framing.postTransparent : framing.post;
-  return `${framing.pre} ${desc} ${post} Art style: ${styleDesc}.`;
+  return `${framing.pre} ${desc} ${post} Art style: ${styleDesc || STYLE_TEMPLATES.neutral}.`;
 }
 
 function lineExpression(line) {
@@ -217,13 +231,13 @@ function outputSpecForKind(kind) {
   return OUTPUT_SPECS[kind] || "PNG";
 }
 
-/** Single art slot → markdown prompt block. */
+/** Single art slot → markdown prompt block. `opts.styleOverride` (from the
+ * art-style picker) takes precedence over the book's stored style. */
 export function buildByoPrompt(book, item, opts = {}) {
-  const style = resolveReplaceArtStyle(book);
-  const styleKey = artStyleKey(style);
+  const style = opts.styleOverride || resolveReplaceArtStyle(book);
   const subjectType = subjectTypeForItem(item);
   const description = rawDescription(book, item);
-  const masterPrompt = composeImagePrompt(description, { subjectType, style: styleKey });
+  const masterPrompt = composeImagePrompt(description, { subjectType, style });
   const refs = collectReferenceUrls(book, item, opts);
   const title = book?.title || book?.book_id || "Book";
 
@@ -253,9 +267,10 @@ export function buildByoPromptPack(book, items, opts = {}) {
   return items.map((item) => buildByoPrompt(book, item, opts)).join("\n\n---\n\n");
 }
 
-/** JSON array for power users / automation. */
+/** JSON array for power users / automation. `opts.styleOverride` (from the
+ * art-style picker) takes precedence over the book's stored style. */
 export function buildByoPromptJson(book, items, opts = {}) {
-  const style = resolveReplaceArtStyle(book);
+  const style = opts.styleOverride || resolveReplaceArtStyle(book);
   const styleKey = artStyleKey(style);
   return items.map((item) => {
     const subjectType = subjectTypeForItem(item);
@@ -269,7 +284,7 @@ export function buildByoPromptJson(book, items, opts = {}) {
       styleKey,
       subjectType,
       description,
-      masterPrompt: composeImagePrompt(description, { subjectType, style: styleKey }),
+      masterPrompt: composeImagePrompt(description, { subjectType, style }),
       outputSpecs: outputSpecForKind(item.kind),
       suggestedFilename: suggestedArtFilename(item),
       referenceUrls: collectReferenceUrls(book, item, opts),

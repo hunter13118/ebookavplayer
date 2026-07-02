@@ -9,9 +9,22 @@ export function CompareModalProvider({ bookId, book, children }) {
   const compare = useCompareQueue(bookId, book);
   const onResolvedRef = useRef(() => {});
 
+  // Always-visible signal even when the compare modal itself isn't currently
+  // showing (e.g. between popups, or after the user resolves an item while
+  // later ones are still generating) — otherwise the user has no way to
+  // tell whether art generation is still succeeding in the background.
+  const showProgress = compare.comparePending && !compare.compareOpen
+    && (compare.resolvedCount > 0 || compare.queueRemaining > 0);
+
   return (
     <CompareModalContext.Provider value={{ ...compare, onResolvedRef }}>
       {children}
+      {showProgress && (
+        <div className="vae-note vae-note-float vae-compare-progress" data-testid="compare-progress">
+          Art review: {compare.resolvedCount} resolved
+          {compare.queueRemaining > 0 ? ` · ${compare.queueRemaining} more coming` : " · waiting on more…"}
+        </div>
+      )}
       <ArtCompareSheet
         book={book}
         comparison={compare.activeCompare}

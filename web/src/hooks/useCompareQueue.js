@@ -6,6 +6,20 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { subscribeJobEvents, jobEventToStatus } from "../api.js";
 
+/**
+ * The local wait-queue being empty does NOT mean the job is done — a fast
+ * item (e.g. the cover) can resolve before a slower one (e.g. a character)
+ * has even finished generating. Only tear down the session (unsubscribe
+ * from SSE, forget the job id) once the backend has actually reported the
+ * job done/errored — otherwise later results for the same still-running job
+ * arrive after the session is forgotten and get silently dropped.
+ */
+export function isJobStillRunning(streamJobId, lastStatus) {
+  return streamJobId != null
+    && lastStatus?.status !== "done"
+    && lastStatus?.status !== "error";
+}
+
 
 
 function labelFor(book, kind, key) {
@@ -153,6 +167,11 @@ export function useCompareQueue(bookId, book) {
   const [streamJobId, setStreamJobId] = useState(boot.streamJobId);
 
   const [awaitingUserChoice, setAwaitingUserChoice] = useState(boot.awaitingUserChoice);
+
+  // How many items have been resolved (Keep previous/new) so far this
+  // session — surfaced alongside queueRemaining so the user has a persistent
+  // "N resolved, M pending" signal even between compare-modal popups.
+  const [resolvedCount, setResolvedCount] = useState(0);
 
 
 
@@ -328,6 +347,8 @@ export function useCompareQueue(bookId, book) {
 
     setQueueRemaining(0);
 
+    setResolvedCount(0);
+
     lockedRef.current = null;
 
     setLockedCompare(null);
@@ -351,6 +372,8 @@ export function useCompareQueue(bookId, book) {
   /** Called only after Keep previous / Keep new succeeds. */
 
   const completeCompareChoice = useCallback(() => {
+
+    setResolvedCount((n) => n + 1);
 
     if (waitQueueRef.current.length > 0) {
 
@@ -376,6 +399,22 @@ export function useCompareQueue(bookId, book) {
 
     setQueueRemaining(0);
 
+    if (isJobStillRunning(streamJobId, lastStatusRef.current)) {
+
+      setAwaitingUserChoice(false);
+
+      writeCompareSession(bookId, {
+        jobId: sessionJobRef.current,
+        lockedCompare: null,
+        waitQueue: [],
+        seen: [...seenRef.current],
+        awaitingUserChoice: false,
+      });
+
+      return false;
+
+    }
+
     setAwaitingUserChoice(false);
 
     sessionJobRef.current = null;
@@ -390,7 +429,7 @@ export function useCompareQueue(bookId, book) {
 
     return false;
 
-  }, [bookId]);
+  }, [bookId, streamJobId]);
 
 
 
@@ -531,6 +570,8 @@ export function useCompareQueue(bookId, book) {
     activeCompare: lockedCompare,
 
     queueRemaining,
+
+    resolvedCount,
 
     comparePending,
 
