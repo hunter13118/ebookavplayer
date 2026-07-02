@@ -1,6 +1,6 @@
 /** Minimal BookAnalysis → playback JSON for the React client. */
 
-import { assignVoices, narratorVoice, poolForGender } from "./voice-assign.js";
+import { assignVoices, assignVoicesIncremental, narratorVoice, poolForGender } from "./voice-assign.js";
 import { expandAnalysisLineText } from "./line-chunk.js";
 
 function gradientToken(seed) {
@@ -145,6 +145,141 @@ export function compilePlayback(analysis, {
     out.inserts = { ...media.inserts };
   }
   return out;
+}
+
+/**
+ * Compile just one chapter's scenes into playback lines, continuing from a
+ * running lineIdx and voice-assignment state instead of processing the whole
+ * book roster at once. Voices are assigned incrementally (assignVoicesIncremental)
+ * so a character's voice never changes once set — see voice-assign.js for the
+ * accepted trade-off (no longer globally importance-sorted across the book).
+ *
+ * `knownCharacters` is the accumulated characters map (id -> playback char
+ * info) from all prior chapters, needed to correctly resolve speaker_name /
+ * sprite / importance for a character who was introduced earlier and is just
+ * speaking again in this chapter.
+ */
+export function compileChapterPlayback(chapterAnalysis, {
+  art_style = "semi-real",
+  narrator_gender = "male",
+  voiceState,
+  knownCharacters = {},
+  startingLineIdx = 0,
+} = {}) {
+  const nvoice = narratorVoice(narrator_gender);
+  const priorAssignments = voiceState?.assignments || {};
+  const { usedCounts, assignments } = assignVoicesIncremental(chapterAnalysis.characters || [], voiceState);
+
+  // Collision-avoid only the voices newly assigned this chapter.
+  for (const c of chapterAnalysis.characters || []) {
+    if (!c.id || priorAssignments[c.id]) continue;
+    const va = assignments[c.id];
+    if (va && va.voice === nvoice) {
+      const pool = poolForGender(c.gender);
+      va.voice = pool.find((v) => v !== nvoice) || pool[1] || va.voice;
+    }
+  }
+
+  const newCharactersOut = {};
+  for (const c of chapterAnalysis.characters || []) {
+    if (!c.id || priorAssignments[c.id]) continue;
+    const va = assignments[c.id] || { voice: nvoice, pitch: "+0Hz", rate: "+0%" };
+    newCharactersOut[c.id] = {
+      name: c.name || slugToName(c.id),
+      importance: c.importance || "secondary",
+      gender: c.gender || "unknown",
+      sprite: `sprite:${gradientToken(c.id)}`,
+      // Chapter this character was first introduced in (matches scene.chapter
+      // numbering) — lets the art-gen picker group characters by chapter the
+      // same way it already groups backgrounds (artMediaItems.js).
+      chapter: chapterAnalysis.chapterIndex ?? 0,
+      voice: va.voice,
+      pitch: va.pitch || "+0Hz",
+      rate: va.rate || "+0%",
+      description: c.description || "",
+    };
+  }
+
+  const charInfo = {
+    ...knownCharacters,
+    ...newCharactersOut,
+    narrator: {
+      name: "Narrator",
+      importance: "primary",
+      gender: narrator_gender,
+      sprite: "sprite:narrator",
+      voice: nvoice,
+      pitch: "+0Hz",
+      rate: "+0%",
+      description: "",
+    },
+  };
+
+  let lineIdx = startingLineIdx;
+  const scenes = (chapterAnalysis.scenes || []).map((scene, si) => {
+    const bg = `gradient:${(si * 37) % 360},${(si * 37 + 40) % 360}`;
+    const lines = [];
+    for (const line of scene.lines || []) {
+      const cid = line.character_id || "narrator";
+      const info = charInfo[cid] || charInfo.narrator;
+      const kind = line.kind || (cid === "narrator" ? "narration" : "dialogue");
+      const parts = expandAnalysisLineText(line.text);
+      for (const text of parts) {
+        const idx = lineIdx++;
+        const lineOut = {
+          idx,
+          text,
+          character_id: cid,
+          speaker_name: info.name,
+          kind,
+          voice: info.voice,
+          pitch: info.pitch || "+0Hz",
+          rate: info.rate || "+0%",
+          expression: line.expression || "normal",
+          environment: line.environment || "indoor",
+          intensity: line.intensity ?? 0.5,
+        };
+        applyInsertFields(lineOut, line, idx, null);
+        lines.push(lineOut);
+      }
+    }
+
+    const present = (scene.present_character_ids || []).map((id) => {
+      const info = charInfo[id] || { name: slugToName(id), sprite: `sprite:${gradientToken(id)}` };
+      return {
+        character_id: id,
+        name: info.name,
+        sprite: info.sprite || `sprite:${gradientToken(id)}`,
+        importance: info.importance,
+      };
+    });
+
+    // Unlike the legacy whole-book compilePlayback (where scene ids only ever
+    // need to be unique across one single-pass extraction), this compiles ONE
+    // CHAPTER at a time from an independently-extracted chunk — the model has
+    // no visibility into other chapters' scene ids, and the schema hint's
+    // example ("scene-0001") means it reliably reproduces the same ids for
+    // every chapter, model-supplied or fallback alike. Always qualify with the
+    // chapter number so ids stay globally unique across the whole book.
+    const chapterTag = chapterAnalysis.chapterIndex ?? "x";
+    const rawSceneId = scene.id || `scene-${String(si + 1).padStart(4, "0")}`;
+    return {
+      id: `ch${chapterTag}-${rawSceneId}`,
+      chapter: scene.chapter ?? chapterAnalysis.chapterIndex ?? 1,
+      title: scene.title || scene.location || `Scene ${si + 1}`,
+      location: scene.location || "",
+      background: bg,
+      present,
+      lines,
+    };
+  });
+
+  return {
+    scenes,
+    newCharactersOut,
+    nextLineIdx: lineIdx,
+    updatedVoiceState: { usedCounts, assignments },
+  };
 }
 
 /** Re-compile voices/names while keeping generated /media/ art from stored playback. */

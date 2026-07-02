@@ -66,6 +66,7 @@ export function createIngestProgress({ wantArt = true } = {}) {
       const step = meta.step || null;
       const stepIndex = meta.stepIndex ?? null;
       const stepTotal = meta.stepTotal ?? null;
+      const workers = meta.workers || null;
 
       return {
         progress,
@@ -77,6 +78,7 @@ export function createIngestProgress({ wantArt = true } = {}) {
         step,
         step_index: stepIndex,
         step_total: stepTotal,
+        workers,
         progress_meta: {
           phase,
           phase_label: phaseLabel,
@@ -84,6 +86,7 @@ export function createIngestProgress({ wantArt = true } = {}) {
           step_index: stepIndex,
           step_total: stepTotal,
           sub: meta.sub || null,
+          workers,
         },
       };
     },

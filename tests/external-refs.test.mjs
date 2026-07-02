@@ -29,7 +29,16 @@ assert.deepEqual(
 );
 
 assert.equal(normalizeIllustrationMode("direct-use", "anime", 3), "direct-use");
-assert.equal(normalizeIllustrationMode("auto", "anime", 3), "moment");
+// "moment" is a manual, opt-in, per-scene feature (POST /books/:id/moments/generate) —
+// never applied automatically. "direct-use" is the only mode that automatically
+// surfaces extracted EPUB plates as cover/character/background art, so when real
+// plates exist, that should be the default regardless of art style.
+assert.equal(normalizeIllustrationMode("auto", "anime", 3), "direct-use");
+assert.equal(normalizeIllustrationMode("auto", "semi-real", 3), "direct-use");
+// No real plates extracted — nothing to show, falls back to reference (server-side i2i hint only).
+assert.equal(normalizeIllustrationMode("auto", "anime", 0), "reference");
+// Explicit opt-in still wins over the size-based default.
+assert.equal(normalizeIllustrationMode("moment", "anime", 3), "moment");
 
 const analysis = {
   characters: [{ id: "mei", illustration_ref: 0 }],

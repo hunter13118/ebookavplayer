@@ -82,11 +82,11 @@ function resolveFromOpf(opfPath, href) {
 }
 
 function titleFromHtml(raw, fallback) {
-  const titleTag = raw.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-  if (titleTag) {
-    const t = stripHtml(titleTag[1]).trim();
-    if (t) return t.slice(0, 120);
-  }
+  // Heading tags and chapter-class elements are far more reliable per-chapter
+  // signals than <title> — many EPUB generators set <title> to the BOOK name
+  // identically on every spine file, which would otherwise make every
+  // chapter's "title" the book title. Only fall back to <title> if the page
+  // has no heading at all.
   for (const level of [1, 2, 3]) {
     const h = raw.match(new RegExp(`<h${level}[^>]*>([\\s\\S]*?)<\\/h${level}>`, "i"));
     if (h) {
@@ -97,6 +97,11 @@ function titleFromHtml(raw, fallback) {
   const chapterClass = raw.match(/<[^>]+class=["'][^"']*chapter[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/i);
   if (chapterClass) {
     const t = stripHtml(chapterClass[1]).trim();
+    if (t) return t.slice(0, 120);
+  }
+  const titleTag = raw.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  if (titleTag) {
+    const t = stripHtml(titleTag[1]).trim();
     if (t) return t.slice(0, 120);
   }
   return fallback;
@@ -293,6 +298,58 @@ export function extractEpubText(bytes, { maxChars } = {}) {
     chars: body.length,
     opf_path: opfPath,
   };
+}
+
+/**
+ * Split each chapter into one or more chunks, but never mix text from two
+ * different chapters into the same chunk — every chunk carries its source
+ * chapter's index so extraction can be checkpointed per chapter. Operates on
+ * the structured `chapters` array from extractEpubText (not the flattened
+ * body_text string), so chapter identity is known up front rather than
+ * reconstructed after the fact.
+ */
+export function chunkChaptersStrict(chapters, maxChars) {
+  const out = [];
+  (chapters || []).forEach((chapter, chapterPos) => {
+    const text = (chapter.text || "").trim();
+    if (!text) return;
+    const header = `## Chapter ${chapter.index}: ${chapter.title}\n`;
+    const budget = Math.max(1, maxChars - header.length);
+
+    const pieces = [];
+    if (text.length <= budget) {
+      pieces.push(text);
+    } else {
+      const sentRe = /[^.!?]+[.!?]+(?:\s|$)|[^.!?]+$/g;
+      let current = "";
+      for (const sent of text.match(sentRe) || [text]) {
+        if ((current + sent).length <= budget) {
+          current += sent;
+        } else {
+          if (current.trim()) pieces.push(current.trim());
+          if (sent.length > budget) {
+            for (let i = 0; i < sent.length; i += budget) pieces.push(sent.slice(i, i + budget).trim());
+            current = "";
+          } else {
+            current = sent;
+          }
+        }
+      }
+      if (current.trim()) pieces.push(current.trim());
+    }
+
+    pieces.forEach((piece, subIndex) => {
+      out.push({
+        chapterPos,
+        chapterIndex: chapter.index,
+        chapterTitle: chapter.title,
+        subIndex,
+        subTotal: pieces.length,
+        text: `${header}${piece}`,
+      });
+    });
+  });
+  return out;
 }
 
 /** Split extract chunks on ## Chapter markers when present. */

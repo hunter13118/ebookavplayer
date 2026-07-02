@@ -41,6 +41,22 @@ export async function listBookIds(env) {
   return raw ? JSON.parse(raw) : [];
 }
 
+/** Remove a book from the catalog + its KV sidecars (progress, voices). */
+export async function deleteBookIndex(env, bookId) {
+  if (!env.VAE_JOBS) return;
+  await Promise.all([
+    env.VAE_JOBS.delete(`book:${bookId}`),
+    env.VAE_JOBS.delete(`progress:${bookId}`),
+    env.VAE_JOBS.delete(`voices:${bookId}`),
+  ]);
+  const raw = await env.VAE_JOBS.get("catalog:ids");
+  const ids = raw ? JSON.parse(raw) : [];
+  const next = ids.filter((id) => id !== bookId);
+  if (next.length !== ids.length) {
+    await env.VAE_JOBS.put("catalog:ids", JSON.stringify(next));
+  }
+}
+
 export function json(data, status = 200) {
   return Response.json(data, { status });
 }

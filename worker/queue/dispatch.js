@@ -36,7 +36,7 @@ export async function onQueueBatch(batch, env) {
 
     try {
 
-      if (kind === "ingest") {
+      if (kind === "ingest" || kind === "continue-extract") {
 
         await emitStarted(env, message);
 

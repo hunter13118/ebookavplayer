@@ -6,7 +6,6 @@ import {
   generateImage,
   mediaUrl,
   r2MediaKey,
-  artStyleKey,
 } from "../_shared/freemium-image.js";
 import {
   backupMediaAsset,
@@ -79,10 +78,9 @@ export async function handleMomentGenerateMessage(message, env) {
     const bookMetaRaw = await env.VAE_JOBS?.get(`book:${book_id}`);
     const bookMeta = bookMetaRaw ? JSON.parse(bookMetaRaw) : {};
     const art_style = bookMeta.art_style || playback?.active_style || playback?.art_style || "semi-real";
-    const styleKey = artStyleKey(art_style);
 
     const desc = momentDescription(analysis, scene, tweaked, { lineIdx });
-    const prompt = composeImagePrompt(desc, { subjectType: "character", style: styleKey });
+    const prompt = composeImagePrompt(desc, { subjectType: "character", style: art_style });
     const seed = diversify
       ? Math.floor(Math.random() * 2147483646) + 1
       : stableInsertSeed(key);

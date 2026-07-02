@@ -2,7 +2,7 @@
 
 const EVENT_FIELDS = [
   "status", "stage", "progress", "detail", "step_index", "step_total",
-  "comparisons", "phase", "phase_label", "step", "progress_meta",
+  "comparisons", "phase", "phase_label", "step", "progress_meta", "workers",
   "book_id", "kind", "error", "provider", "id", "debug_log", "log", "job_id",
 ];
 

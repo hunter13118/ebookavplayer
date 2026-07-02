@@ -25,7 +25,10 @@ export function listArtMediaItems(book) {
         label: c.name || id,
         preview: c.sprite || null,
         importance: c.importance || "secondary",
-        chapter: 0,
+        // Chapter the character was first introduced in (stamped by
+        // compileChapterPlayback). Legacy books compiled before that existed
+        // won't have this — they all fall back to chapter 0, grouped together.
+        chapter: c.chapter ?? 0,
       });
     });
 
@@ -70,7 +73,19 @@ export function listArtMediaItems(book) {
   return items;
 }
 
-/** Group art items for long books: cover, characters, then backgrounds/inserts by chapter. */
+const IMPORTANCE_RANK = { primary: 0, secondary: 1, background: 2 };
+
+function sortByImportanceThenLabel(a, b) {
+  return (IMPORTANCE_RANK[a.importance] ?? 9) - (IMPORTANCE_RANK[b.importance] ?? 9)
+    || a.label.localeCompare(b.label);
+}
+
+/**
+ * Group art items for long books: cover, then characters/backgrounds/inserts
+ * together by the chapter they belong to — characters are grouped by the
+ * chapter they were first introduced in, same treatment backgrounds already
+ * got, instead of one flat "Characters" list spanning the whole book.
+ */
 export function listArtMediaGroups(book) {
   const items = listArtMediaItems(book);
   const chapters = buildChapterIndex(book?.scenes);
@@ -80,21 +95,26 @@ export function listArtMediaGroups(book) {
   const cover = items.filter((it) => it.kind === "cover");
   if (cover.length) groups.push({ id: "cover", label: "Cover", items: cover });
 
-  const chars = items
-    .filter((it) => it.kind === "characters")
-    .sort((a, b) => {
-      const rank = { primary: 0, secondary: 1, background: 2 };
-      return (rank[a.importance] ?? 9) - (rank[b.importance] ?? 9)
-        || a.label.localeCompare(b.label);
-    });
-  if (chars.length) groups.push({ id: "characters", label: "Characters", items: chars });
+  // Characters may reference a chapter (0-based position) that has no scene
+  // of its own in buildChapterIndex — union both sources of chapter numbers
+  // so nobody silently drops into "Other" just because their chapter has
+  // zero backgrounds.
+  const chapterNums = new Set(chapters.map((ch) => ch.chapter));
+  for (const it of items) {
+    if (it.kind === "characters") chapterNums.add(it.chapter ?? 0);
+  }
 
-  for (const ch of chapters) {
-    const chItems = items.filter((it) =>
-      (it.kind === "backgrounds" || it.kind === "inserts") && it.chapter === ch.chapter);
+  for (const chapterNum of [...chapterNums].sort((a, b) => a - b)) {
+    const ch = chapters.find((c) => c.chapter === chapterNum) || { chapter: chapterNum };
+    const chChars = items
+      .filter((it) => it.kind === "characters" && it.chapter === chapterNum)
+      .sort(sortByImportanceThenLabel);
+    const chOther = items.filter((it) =>
+      (it.kind === "backgrounds" || it.kind === "inserts") && it.chapter === chapterNum);
+    const chItems = [...chChars, ...chOther];
     if (!chItems.length) continue;
     groups.push({
-      id: `chapter-${ch.chapter}`,
+      id: `chapter-${chapterNum}`,
       label: chapterLabel(ch, chapterMeta),
       items: chItems,
     });
@@ -119,13 +139,14 @@ export function resolveReplaceArtStyle(book) {
   return active;
 }
 
-/** Map UI selection keys → generate-media request body. */
-export function selectionToGenerateBody(selectedKeys, items, book) {
+/** Map UI selection keys → generate-media request body. `styleOverride` (from
+ * the art-style picker) takes precedence over the book's stored style. */
+export function selectionToGenerateBody(selectedKeys, items, book, { styleOverride } = {}) {
   const keys = new Set(selectedKeys);
   const picked = items.filter((it) => keys.has(it.key));
   if (!picked.length) throw new Error("Select at least one image to replace.");
 
-  const artStyle = book ? resolveReplaceArtStyle(book) : undefined;
+  const artStyle = styleOverride || (book ? resolveReplaceArtStyle(book) : undefined);
   const base = artStyle ? { art_style: artStyle } : {};
 
   const all = picked.length === items.length;

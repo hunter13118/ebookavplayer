@@ -94,6 +94,18 @@ function buildSpineHtml(files, opfPath, opf, manifest) {
   return paths;
 }
 
+function stripTagsSimple(html) {
+  return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+/** ~text before/after the tag's position in the raw HTML, tags stripped. */
+function textNear(raw, tagStart, tagEnd, radius = 400) {
+  const before = raw.slice(Math.max(0, tagStart - radius), tagStart);
+  const after = raw.slice(tagEnd, tagEnd + radius);
+  return `${stripTagsSimple(before)} ${stripTagsSimple(after)}`.trim().slice(0, 240);
+}
+
+/** Returns [{ path, sourcePath, textContext }] — sourcePath is the spine file the image was found in. */
 function imagesInHtml(files, htmlPath, opfPath) {
   const key = pickPath(files, htmlPath);
   if (!key || !files[key]) return [];
@@ -103,7 +115,10 @@ function imagesInHtml(files, htmlPath, opfPath) {
     const src = (tag.match(IMG_SRC) || [])[1];
     if (!src) continue;
     const resolved = pickPath(files, resolveFromOpf(opfPath, src));
-    if (resolved && IMAGE_EXT.test(resolved)) out.push(resolved);
+    if (!resolved || !IMAGE_EXT.test(resolved)) continue;
+    const tagStart = raw.indexOf(tag);
+    const textContext = tagStart >= 0 ? textNear(raw, tagStart, tagStart + tag.length) : "";
+    out.push({ path: resolved, sourcePath: key, textContext });
   }
   return out;
 }
@@ -111,7 +126,7 @@ function imagesInHtml(files, htmlPath, opfPath) {
 /**
  * @param {ArrayBuffer | Uint8Array} bytes
  * @param {{ maxImages?: number | null }} opts — omit or null = no cap
- * @returns {{ images: ArrayBuffer[], cover_index: number|null, opening_count: number }}
+ * @returns {{ images: ArrayBuffer[], cover_index: number|null, opening_count: number, imageMeta: Array<{index:number, sourcePath:string|null, textContext:string}> }}
  */
 export function extractEpubImages(bytes, { maxImages = null } = {}) {
   const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
@@ -127,11 +142,13 @@ export function extractEpubImages(bytes, { maxImages = null } = {}) {
 
   const ordered = [];
   const seen = new Set();
-  const push = (p) => {
+  const metaByKey = new Map();
+  const push = (p, meta) => {
     const key = pickPath(normalized, p);
     if (!key || seen.has(key) || !normalized[key]?.length) return;
     seen.add(key);
     ordered.push(key);
+    if (meta) metaByKey.set(key, meta);
   };
 
   if (coverHref) push(coverHref);
@@ -142,12 +159,16 @@ export function extractEpubImages(bytes, { maxImages = null } = {}) {
   const openingLimit = Math.min(3, spineHtml.length);
   for (let i = 0; i < openingLimit; i += 1) {
     if (!opfPath) break;
-    for (const img of imagesInHtml(normalized, spineHtml[i], opfPath)) push(img);
+    for (const img of imagesInHtml(normalized, spineHtml[i], opfPath)) {
+      push(img.path, { sourcePath: img.sourcePath, textContext: img.textContext });
+    }
   }
 
   for (const htmlPath of spineHtml) {
     if (!opfPath) break;
-    for (const img of imagesInHtml(normalized, htmlPath, opfPath)) push(img);
+    for (const img of imagesInHtml(normalized, htmlPath, opfPath)) {
+      push(img.path, { sourcePath: img.sourcePath, textContext: img.textContext });
+    }
   }
 
   for (const p of allImagePaths) push(p);
@@ -162,6 +183,11 @@ export function extractEpubImages(bytes, { maxImages = null } = {}) {
     return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
   });
 
+  const imageMeta = paths.map((p, index) => {
+    const m = metaByKey.get(p);
+    return { index, sourcePath: m?.sourcePath || null, textContext: m?.textContext || "" };
+  });
+
   const coverIndex = coverHref && paths.includes(pickPath(normalized, coverHref))
     ? paths.indexOf(pickPath(normalized, coverHref))
     : (paths.find((p) => COVER_PATH.test(p)) != null
@@ -172,5 +198,6 @@ export function extractEpubImages(bytes, { maxImages = null } = {}) {
     images,
     cover_index: coverIndex != null && coverIndex >= 0 ? coverIndex : null,
     opening_count: openingLimit,
+    imageMeta,
   };
 }

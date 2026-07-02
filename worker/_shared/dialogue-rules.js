@@ -88,6 +88,22 @@ Additional rules:
 - importance: 'primary' = recurring/named POV or major; 'secondary' = named but
   minor; 'background' = unnamed/crowd. Be conservative with 'primary'.
 - Segment scenes on location change, time skip, or POV shift.
+- NARRATOR/POV IDENTITY: the narrating voice is not always the same character.
+  If the text is first-person ("I", "my") and the "I" is a named character
+  established elsewhere (in this chunk or in KNOWN CHARACTERS below), attribute
+  narration lines to that character's id, not the generic "narrator" — unless
+  the book's style is consistently third-person/omniscient, in which case use
+  "narrator" throughout. Re-evaluate at every POV/section shift; do not assume
+  the same narrating identity carries across a scene break without re-checking
+  the text's own pronouns and cues.
+- KNOWN CHARACTERS CONTINUITY: if a "KNOWN CHARACTERS" list is provided below,
+  it lists characters already identified elsewhere in this book. Before
+  inventing a new id for someone in this chunk (e.g. "unnamed-male-protagonist",
+  "the blacksmith", "he"), check whether they match a known character by name,
+  alias, role, or description — if so, reuse that character's EXISTING id
+  exactly. Only create a new id for a genuinely new character. Do not merge two
+  distinct known characters into one, and do not invent a new alias-style id
+  for someone who is clearly the protagonist or another already-known name.
 - CHAPTER BOUNDARIES: Source text uses "## Chapter N: Title" section headers from the
   EPUB spine. Every scene MUST set chapter=N matching the section it was extracted from.
   Start a new scene at each chapter boundary unless the entire chapter is one continuous

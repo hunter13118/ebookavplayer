@@ -1,9 +1,12 @@
 /** EPUB illustration modes — edge port of server/playback/illustrations.py */
 
 export function defaultIllustrationMode(artStyle, imageCount) {
-  if (imageCount <= 0) return "reference";
-  const s = String(artStyle || "").toLowerCase();
-  if (s.includes("anime") || s.includes("cartoon")) return "moment";
+  // "moment" is a manual, opt-in, per-scene feature — never applied
+  // automatically. "direct-use" is the only mode that automatically surfaces
+  // extracted EPUB plates as cover/character/background art, so when real
+  // plates exist, use them rather than silently discarding them into
+  // "reference" (server-side i2i hint only, never shown to the user).
+  if (imageCount > 0) return "direct-use";
   return "reference";
 }
 

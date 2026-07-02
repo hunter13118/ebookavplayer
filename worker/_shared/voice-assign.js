@@ -95,6 +95,41 @@ export function assignVoices(characters = []) {
   return assignments;
 }
 
+/**
+ * Assign voices to characters not already in voiceState.assignments,
+ * appending to the running per-bucket counters instead of re-sorting the
+ * whole roster by importance. Used for per-chapter incremental compilation
+ * so a character's voice never changes once assigned, at the cost of no
+ * longer guaranteeing "primary" characters get first pick of the voice pool
+ * across the whole book — only within the chapter they're first seen in.
+ */
+export function assignVoicesIncremental(newCharacters = [], voiceState) {
+  const usedCounts = { ...(voiceState?.usedCounts || { male: 0, female: 0, neutral: 0 }) };
+  const assignments = { ...(voiceState?.assignments || {}) };
+  const order = [...newCharacters].sort((a, b) => {
+    const rank = { primary: 0, secondary: 1, background: 2 };
+    return (rank[a.importance] ?? 1) - (rank[b.importance] ?? 1);
+  });
+
+  for (const c of order) {
+    const cid = c.id || c.name;
+    if (!cid || cid === "narrator" || assignments[cid]) continue;
+    const bkt = bucket(c.gender, c.age);
+    const pool = poolForGender(c.gender);
+    const idx = usedCounts[bkt];
+    usedCounts[bkt] += 1;
+    const voice = pool[idx % pool.length];
+    const pitchHz = pitchOffset(bkt, idx, c.age);
+    assignments[cid] = {
+      character_id: cid,
+      voice,
+      pitch: pitchHz ? `${pitchHz > 0 ? "+" : ""}${pitchHz}Hz` : "+0Hz",
+      rate: "+0%",
+    };
+  }
+  return { usedCounts, assignments };
+}
+
 export function edgeVoiceCatalog(locale) {
   const rows = [];
   for (const id of [...NATURAL_MALE, ...NATURAL_FEMALE]) {

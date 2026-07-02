@@ -17,3 +17,8 @@ data/books/*.progress.json
 data/books/*.status.json
 out.mp3
 graphify-out/
+.DS_Store
+.claude/
+worker/.dev.vars
+worker/.wrangler/
+test_assets/m4b-sync-drop/
