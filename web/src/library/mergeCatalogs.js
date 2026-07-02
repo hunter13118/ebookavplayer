@@ -2,19 +2,28 @@
  * pending jobs) and across multiple backend connections (offline/server/remote sections). */
 
 /**
- * Overlay a pending (locally known, in-flight) list onto a server-fetched list, keyed by
- * book_id. Used within a single connection's list so a just-started upload/regen shows up
- * immediately, before the server confirms it on the next poll.
+ * Overlay a pending (locally known, in-flight) list onto a server-fetched list. Used within
+ * a single connection's list so a just-started upload/regen shows up immediately, before the
+ * server confirms it on the next poll.
+ *
+ * Keyed by book_id + connection_id (not book_id alone): once entries can carry a
+ * connection_id (mergeCatalogsBySource tags every entry with one), the same book_id
+ * legitimately exists once per backend it's on — keying by book_id alone would collapse
+ * those into a single row, silently dropping every connection's card but the last one
+ * merged in. Entries with no connection_id (the common single-backend case) all share the
+ * same key suffix, so behavior there is unchanged.
  */
 export function mergeCatalogEntries(serverList, pending = []) {
-  const byId = new Map((serverList || []).map((b) => [b.book_id, { ...b }]));
+  const key = (b) => `${b.book_id}::${b.connection_id || ""}`;
+  const byId = new Map((serverList || []).map((b) => [key(b), { ...b }]));
   for (const p of pending) {
-    const prev = byId.get(p.book_id);
+    const k = key(p);
+    const prev = byId.get(k);
     if (!prev) {
-      byId.set(p.book_id, { ...p });
+      byId.set(k, { ...p });
       continue;
     }
-    byId.set(p.book_id, {
+    byId.set(k, {
       ...p,
       ...prev,
       title: prev.title || p.title,
