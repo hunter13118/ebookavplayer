@@ -1,8 +1,9 @@
-/** Where a library entry can be played from — cloud, browser cache, or linked folder file. */
+/** Where a library entry can be played from — cloud, browser cache, linked folder file, or a remote tunneled backend. */
 
 export const SOURCE_CLOUD = "cloud";
 export const SOURCE_BROWSER = "browser";
 export const SOURCE_FOLDER = "folder";
+export const SOURCE_REMOTE = "remote";
 
 const SOURCE_META = {
   [SOURCE_CLOUD]: {
@@ -19,10 +20,25 @@ const SOURCE_META = {
   },
 };
 
-/** @returns {{ id: string, label: string, title: string }[]} */
-export function catalogSources(entry) {
+/**
+ * @param {object} entry
+ * @param {{id: string, kind: string, label: string}[]} [connections] resolves entry.connection_id
+ * @returns {{ id: string, label: string, title: string }[]}
+ */
+export function catalogSources(entry, connections) {
   const out = [];
   if (!entry) return out;
+  if (entry.connection_id) {
+    const conn = (connections || []).find((c) => c.id === entry.connection_id);
+    if (conn && conn.kind === "remote") {
+      out.push({
+        id: SOURCE_REMOTE,
+        label: conn.label,
+        title: `Streaming from ${conn.label} (tunneled local server)`,
+      });
+      return out;
+    }
+  }
   if (entry.server_available !== false) {
     out.push({ id: SOURCE_CLOUD, ...SOURCE_META[SOURCE_CLOUD] });
   }

@@ -197,31 +197,37 @@ export default function EpubPlatesSheet({ book, open, onClose, onSaved }) {
               <h3>EPUB plate mapping</h3>
               <label className="vae-sheet-field">
                 Cover reference plate
-                <select
-                  data-testid="epub-cover-ref"
-                  value={coverRef}
-                  onChange={(e) => setCoverRef(e.target.value)}
-                >
-                  <option value="">None</option>
-                  {plates.map((p) => (
-                    <option key={p.index} value={String(p.index)}>{p.label}</option>
-                  ))}
-                </select>
-              </label>
-
-              {characters.map((c) => (
-                <label key={c.id} className="vae-sheet-field">
-                  {c.name}
+                <span className="vae-select-wrap">
                   <select
-                    data-testid={`epub-char-ref-${c.id}`}
-                    value={charRefs[c.id] != null ? String(charRefs[c.id]) : ""}
-                    onChange={(e) => setCharRef(c.id, e.target.value)}
+                    className="vae-select"
+                    data-testid="epub-cover-ref"
+                    value={coverRef}
+                    onChange={(e) => setCoverRef(e.target.value)}
                   >
                     <option value="">None</option>
                     {plates.map((p) => (
                       <option key={p.index} value={String(p.index)}>{p.label}</option>
                     ))}
                   </select>
+                </span>
+              </label>
+
+              {characters.map((c) => (
+                <label key={c.id} className="vae-sheet-field">
+                  {c.name}
+                  <span className="vae-select-wrap">
+                    <select
+                      className="vae-select"
+                      data-testid={`epub-char-ref-${c.id}`}
+                      value={charRefs[c.id] != null ? String(charRefs[c.id]) : ""}
+                      onChange={(e) => setCharRef(c.id, e.target.value)}
+                    >
+                      <option value="">None</option>
+                      {plates.map((p) => (
+                        <option key={p.index} value={String(p.index)}>{p.label}</option>
+                      ))}
+                    </select>
+                  </span>
                 </label>
               ))}
 
@@ -249,12 +255,13 @@ export default function EpubPlatesSheet({ book, open, onClose, onSaved }) {
             <div className="vae-ext-ref-add">
               <input
                 type="url"
+                className="vae-input"
                 placeholder="https://…"
                 value={bookDraftUrl}
                 data-testid="external-ref-book-input"
                 onChange={(e) => setBookDraftUrl(e.target.value)}
               />
-              <button type="button" onClick={addBookExternalUrl}>Add</button>
+              <button type="button" className="vae-btn vae-btn-sm" onClick={addBookExternalUrl}>Add</button>
             </div>
           </label>
           <ExternalUrlList
@@ -271,12 +278,13 @@ export default function EpubPlatesSheet({ book, open, onClose, onSaved }) {
               <div className="vae-ext-ref-add">
                 <input
                   type="url"
+                  className="vae-input"
                   placeholder="https://…"
                   value={draftUrls[c.id] || ""}
                   data-testid={`external-ref-input-${c.id}`}
                   onChange={(e) => setDraftUrls((prev) => ({ ...prev, [c.id]: e.target.value }))}
                 />
-                <button type="button" onClick={() => addExternalUrl(c.id, draftUrls[c.id])}>Add</button>
+                <button type="button" className="vae-btn vae-btn-sm" onClick={() => addExternalUrl(c.id, draftUrls[c.id])}>Add</button>
               </div>
               <ExternalUrlList
                 urls={extRefs.characters?.[c.id]}

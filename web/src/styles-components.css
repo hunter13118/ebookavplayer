@@ -1,0 +1,114 @@
+/* Modern, mobile-centric styling for common form controls — pure CSS, no
+ * new dependency. Uses the existing --bg/--panel/--text/--muted/--accent/
+ * --box/--box-border/--danger variables so both themes stay in sync. */
+
+/* ---------- Text inputs ---------- */
+.vae-input {
+  width: 100%; background: var(--panel); color: var(--text);
+  border: 1px solid var(--box-border); border-radius: 10px;
+  padding: 9px 12px; font-size: .85rem; transition: border-color .15s ease;
+}
+.vae-input::placeholder { color: var(--muted); }
+.vae-input:hover { border-color: var(--accent); }
+.vae-input:focus-visible, .vae-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.vae-input:disabled { opacity: .5; cursor: not-allowed; }
+
+/* ---------- Buttons ---------- */
+.vae-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 10px 16px; border-radius: 10px; border: 1px solid var(--box-border);
+  background: var(--panel); color: var(--text); font-size: .88rem; font-weight: 600;
+  cursor: pointer; text-decoration: none; line-height: 1.2;
+  transition: filter .15s ease, border-color .15s ease, background-color .15s ease;
+}
+.vae-btn:hover:not(:disabled) { filter: brightness(1.1); border-color: var(--accent); }
+.vae-btn:active:not(:disabled) { filter: brightness(.95); }
+.vae-btn:disabled { opacity: .5; cursor: not-allowed; }
+.vae-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.vae-btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+.vae-btn-secondary { background: var(--panel); border-color: var(--box-border); color: var(--text); }
+
+.vae-btn-text {
+  background: transparent; border-color: transparent; color: var(--accent);
+  padding: 6px 8px; font-weight: 500;
+}
+.vae-btn-text:hover:not(:disabled) { filter: none; text-decoration: underline; border-color: transparent; }
+
+.vae-btn-danger { background: transparent; border-color: var(--danger); color: var(--danger); }
+.vae-btn-danger:hover:not(:disabled) { background: var(--danger); color: #fff; filter: none; }
+
+.vae-btn-sm { font-size: .78rem; padding: 6px 10px; border-radius: 8px; }
+.vae-btn-muted { opacity: .85; }
+
+/* ---------- Selects ---------- */
+.vae-select-wrap { position: relative; display: inline-flex; }
+.vae-select {
+  appearance: none; -webkit-appearance: none; width: 100%;
+  background: var(--panel); color: var(--text);
+  border: 1px solid var(--box-border); border-radius: 10px;
+  padding: 9px 30px 9px 12px; font-size: .85rem; cursor: pointer;
+  transition: border-color .15s ease;
+}
+.vae-select:hover { border-color: var(--accent); }
+.vae-select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.vae-select:disabled { opacity: .5; cursor: not-allowed; }
+.vae-select-wrap::after {
+  content: ""; position: absolute; right: 11px; top: 50%; width: 10px; height: 6px;
+  transform: translateY(-50%); background: var(--muted); pointer-events: none;
+  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' stroke='black' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>") no-repeat center / contain;
+  mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' stroke='black' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>") no-repeat center / contain;
+}
+
+/* ---------- Checkboxes / Toggles ---------- */
+.vae-checkbox { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; position: relative; }
+.vae-checkbox input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.vae-checkbox-box {
+  width: 20px; height: 20px; flex: none; border-radius: 6px;
+  border: 1.5px solid var(--box-border); background: var(--panel);
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: background-color .15s ease, border-color .15s ease;
+}
+.vae-checkbox input:checked + .vae-checkbox-box { background: var(--accent); border-color: var(--accent); }
+.vae-checkbox-box::after {
+  content: ""; width: 5px; height: 9px; border: solid #fff; border-width: 0 2px 2px 0;
+  transform: rotate(45deg) scale(0); transition: transform .12s ease;
+}
+.vae-checkbox input:checked + .vae-checkbox-box::after { transform: rotate(45deg) scale(1); }
+.vae-checkbox input:disabled + .vae-checkbox-box { opacity: .5; }
+.vae-checkbox input:focus-visible + .vae-checkbox-box { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.vae-toggle { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; position: relative; }
+.vae-toggle input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.vae-toggle-track {
+  width: 38px; height: 22px; border-radius: 999px; flex: none;
+  background: var(--box-border); position: relative; transition: background-color .15s ease;
+}
+.vae-toggle-track::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px;
+  border-radius: 50%; background: #fff; transition: transform .15s ease;
+  box-shadow: 0 1px 3px rgba(0,0,0,.3);
+}
+.vae-toggle input:checked + .vae-toggle-track { background: var(--accent); }
+.vae-toggle input:checked + .vae-toggle-track::after { transform: translateX(16px); }
+.vae-toggle input:disabled + .vae-toggle-track { opacity: .5; }
+.vae-toggle input:focus-visible + .vae-toggle-track { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------- Radios ---------- */
+.vae-radio { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; position: relative; }
+.vae-radio input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.vae-radio-dot {
+  width: 20px; height: 20px; flex: none; border-radius: 50%;
+  border: 1.5px solid var(--box-border); background: var(--panel);
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: border-color .15s ease;
+}
+.vae-radio-dot::after {
+  content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--accent);
+  transform: scale(0); transition: transform .12s ease;
+}
+.vae-radio input:checked + .vae-radio-dot { border-color: var(--accent); }
+.vae-radio input:checked + .vae-radio-dot::after { transform: scale(1); }
+.vae-radio input:disabled + .vae-radio-dot { opacity: .5; }
+.vae-radio input:focus-visible + .vae-radio-dot { outline: 2px solid var(--accent); outline-offset: 2px; }

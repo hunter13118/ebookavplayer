@@ -1,6 +1,7 @@
 // API root — Settings override, build env, or same-origin when co-hosted.
 // Copied pattern from the parallel-reader (api.js).
 import { getLocalApiBridge } from "./localApiBridge.js";
+import { getActiveConnection } from "./backends/connections.js";
 
 function coHostedApiBase() {
   if (typeof window === "undefined") return "";
@@ -11,7 +12,12 @@ function coHostedApiBase() {
   return "";
 }
 
-export function apiBase() {
+export function apiBase(connection) {
+  const conn = connection || getActiveConnection();
+  if (conn) {
+    if (conn.kind === "offline") return "";
+    return String(conn.baseUrl || "").replace(/\/$/, "");
+  }
   const stored =
     getLocalApiBridge() ||
     (import.meta && import.meta.env && import.meta.env.VITE_API_BASE) ||
@@ -29,9 +35,9 @@ export function backendConfigured() {
   return true;
 }
 
-export function apiUrl(path) {
+export function apiUrl(path, connection) {
   const p = path.startsWith("/") ? path : `/${path}`;
-  const base = apiBase();
+  const base = apiBase(connection);
   return base ? `${base}${p}` : p;
 }
 
@@ -49,8 +55,8 @@ export async function fetchBooks() {
   return res.json();
 }
 
-export async function fetchBook(id, { timeoutMs } = {}) {
-  const res = await fetch(apiUrl(`/books/${encodeURIComponent(id)}`), {
+export async function fetchBook(id, { timeoutMs, connection } = {}) {
+  const res = await fetch(apiUrl(`/books/${encodeURIComponent(id)}`, connection), {
     signal: fetchSignal(timeoutMs),
   });
   if (!res.ok) throw new Error(`book ${id}: HTTP ${res.status}`);
@@ -68,6 +74,7 @@ export async function fetchEdgeVoices(locale) {
 
 export async function ingestBook(file, {
   artStyle = "anime", narratorGender = "male", dryRun = false, generateArt = true, byoMode = false,
+  preferProvider = "auto", connection,
 } = {}) {
   const fd = new FormData();
   fd.append("file", file);
@@ -76,15 +83,40 @@ export async function ingestBook(file, {
   fd.append("dry_run", dryRun ? "true" : "false");
   fd.append("generate_art", generateArt ? "true" : "false");
   fd.append("byo_mode", byoMode ? "true" : "false");
-  const res = await fetch(apiUrl("/ingest"), { method: "POST", body: fd });
+  fd.append("prefer_provider", preferProvider || "auto");
+  const res = await fetch(apiUrl("/ingest", connection), { method: "POST", body: fd });
   if (!res.ok) throw new Error(`ingest: HTTP ${res.status}`);
   return res.json();
 }
 
+// Resume a stalled/partial book (e.g. free-tier quota exhausted mid-book)
+// from its last checkpointed chapter, optionally pinning/swapping the
+// extraction provider for the rest of the book.
+export async function continueExtraction(bookId, { preferProvider = "auto", connection } = {}) {
+  const res = await fetch(apiUrl(`/books/${encodeURIComponent(bookId)}/continue-extract`, connection), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ prefer_provider: preferProvider || "auto" }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `continue-extract: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
 // Catalog doubles as the per-book processing status feed (status/progress/cover).
-export async function fetchCatalog() {
-  const res = await fetch(apiUrl("/books"), { signal: AbortSignal.timeout(15000) });
+export async function fetchCatalog(connection) {
+  const res = await fetch(apiUrl("/books", connection), { signal: AbortSignal.timeout(15000) });
   if (!res.ok) throw new Error(`catalog: HTTP ${res.status}`);
+  return res.json();
+}
+
+/** Cheap liveness probe — already-existing GET /health, used to decide whether
+ *  a connection's section should render in the Library at all. */
+export async function fetchHealth(connection) {
+  const res = await fetch(apiUrl("/health", connection), { signal: AbortSignal.timeout(4000) });
+  if (!res.ok) throw new Error(`health: HTTP ${res.status}`);
   return res.json();
 }
 
@@ -200,13 +232,14 @@ export function jobEventToStatus(ev) {
     phase_label: ev.phase_label,
     step: ev.step,
     progress_meta: ev.progress_meta,
+    workers: ev.workers,
     debug_log: ev.debug_log,
     error: ev.error,
   };
 }
 
-export async function fetchPipeline() {
-  const res = await fetch(apiUrl("/pipeline"), { signal: AbortSignal.timeout(8000) });
+export async function fetchPipeline(connection) {
+  const res = await fetch(apiUrl("/pipeline", connection), { signal: AbortSignal.timeout(8000) });
   if (!res.ok) throw new Error(`pipeline: HTTP ${res.status}`);
   return res.json();
 }
@@ -288,9 +321,12 @@ export async function previewEdgeVoice(
   }
 }
 
-export async function reExtractBook(bookId, { force = false } = {}) {
-  const q = force ? "?force=true" : "";
-  const res = await fetch(apiUrl(`/books/${encodeURIComponent(bookId)}/re-extract${q}`), {
+export async function reExtractBook(bookId, { force = false, preferProvider, connection } = {}) {
+  const params = new URLSearchParams();
+  if (force) params.set("force", "true");
+  if (preferProvider && preferProvider !== "auto") params.set("prefer_provider", preferProvider);
+  const q = params.toString() ? `?${params.toString()}` : "";
+  const res = await fetch(apiUrl(`/books/${encodeURIComponent(bookId)}/re-extract${q}`, connection), {
     method: "POST",
     signal: AbortSignal.timeout(8000),
   });
@@ -299,18 +335,19 @@ export async function reExtractBook(bookId, { force = false } = {}) {
 }
 
 export async function replaceMedia(bookId, opts = {}) {
+  const { connection, ...body } = opts;
   async function post() {
-    return fetch(apiUrl(`/books/${encodeURIComponent(bookId)}/generate-media`), {
+    return fetch(apiUrl(`/books/${encodeURIComponent(bookId)}/generate-media`, connection), {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(opts),
+      body: JSON.stringify(body),
       signal: fetchSignal(8000),
     });
   }
 
   let res = await post();
   if (res.status === 409) {
-    await unlockImaging(bookId, { force: true }).catch(() => {});
+    await unlockImaging(bookId, { force: true, connection }).catch(() => {});
     res = await post();
   }
   if (!res.ok) {
@@ -347,9 +384,9 @@ export async function pollIngestJob(jobId) {
   throw new Error("pollIngestJob removed — use subscribeJobEvents");
 }
 
-export async function unlockImaging(bookId, { force = false } = {}) {
+export async function unlockImaging(bookId, { force = false, connection } = {}) {
   const q = force ? "?force=true" : "";
-  const res = await fetch(apiUrl(`/books/${encodeURIComponent(bookId)}/imaging/unlock${q}`), {
+  const res = await fetch(apiUrl(`/books/${encodeURIComponent(bookId)}/imaging/unlock${q}`, connection), {
     method: "POST",
     signal: fetchSignal(8000),
   });

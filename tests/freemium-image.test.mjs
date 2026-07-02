@@ -27,6 +27,39 @@ import { computeImagingProgress, waitingOnProvider } from "../worker/_shared/ima
   assert.doesNotMatch(p, /transparent background/i);
 }
 
+// artStyleKey — exact-match alias table (not loose substring matching)
+{
+  assert.equal(artStyleKey("anime"), "anime");
+  assert.equal(artStyleKey("semi-real"), "realistic");
+  assert.equal(artStyleKey("semi-realistic"), "realistic");
+  assert.equal(artStyleKey("realistic"), "realistic");
+  assert.equal(artStyleKey("real"), "realistic");
+  assert.equal(artStyleKey("pixel"), "pixel");
+  assert.equal(artStyleKey("pixel-art"), "pixel");
+  assert.equal(artStyleKey("cartoon"), "comic");
+  assert.equal(artStyleKey("comic"), "comic");
+  assert.equal(artStyleKey("neutral"), "neutral");
+  assert.equal(artStyleKey("ANIME"), "anime", "case-insensitive");
+  assert.equal(artStyleKey("watercolor storybook illustration"), "custom");
+  // Loose substring matching used to wrongly bucket "unrealistic" into "realistic" —
+  // exact match must not do that.
+  assert.equal(artStyleKey("unrealistic sketch"), "custom");
+}
+
+// composeImagePrompt — a custom (non-bucket) style string is used verbatim,
+// not silently discarded into the generic "neutral" template.
+{
+  const p = composeImagePrompt("a lighthouse", { subjectType: "background", style: "watercolor storybook illustration" });
+  assert.match(p, /Art style: watercolor storybook illustration\.$/);
+  assert.doesNotMatch(p, /clean digital illustration/);
+}
+
+// composeImagePrompt — no style option at all still falls back to the neutral template.
+{
+  const p = composeImagePrompt("a lighthouse", { subjectType: "background" });
+  assert.match(p, /clean digital illustration/);
+}
+
 // filterImageProviderChain — anon then seed when token is set; seed skipped without token
 {
   const chain = ["pollinations-anon", "pollinations-seed", "huggingface", "cloudflare"];
@@ -180,6 +213,73 @@ import { computeImagingProgress, waitingOnProvider } from "../worker/_shared/ima
   assert.equal(result.provider, "pollinations-anon");
   assert.deepEqual(attempts, ["pollinations-anon"], "anon runs before seed in chain");
   assert.ok(fetchCalls >= 1);
+}
+
+// generateImage — an explicit preferProvider for a *top-level* tier (local_sd,
+// not a freemium_image sub-chain member) jumps that tier to the front, even
+// though the default tier order puts it last (gemini_image → freemium_image →
+// local_sd). Regression guard for the gap where preferProvider only reordered
+// within runFreemiumChain and silently had no effect on gemini_image/local_sd.
+{
+  const attempts = [];
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 0, 0, 0, 0]);
+  const env = {
+    EXTRACT_SKIP_GEMINI: "true",
+    LOCAL_IMAGE_URL: "http://127.0.0.1:7860",
+    __fetch: async (url) => {
+      if (String(url).includes("7860")) {
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: (h) => (h === "content-type" ? "image/png" : null) },
+          arrayBuffer: async () => png.buffer.slice(png.byteOffset, png.byteOffset + png.byteLength),
+        };
+      }
+      throw new Error(`unexpected fetch ${url} — local_sd should have been tried first`);
+    },
+  };
+  const result = await generateImage("portrait test", {
+    env,
+    subjectType: "background",
+    preferProvider: "local_sd",
+    onAttempt: (p) => attempts.push(p),
+  });
+  assert.equal(result.provider, "local_sd");
+  assert.deepEqual(attempts, ["local_sd"], "preferProvider jumps local_sd ahead of gemini_image/freemium_image");
+}
+
+// generateImage — preferring a freemium_image sub-chain member (e.g. huggingface)
+// still reorders *within* that tier as before (no regression from the new
+// top-level reordering).
+{
+  const attempts = [];
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 0, 0, 0, 0]);
+  const env = {
+    EXTRACT_SKIP_GEMINI: "true",
+    HF_TOKEN: "hf_test",
+    __fetch: async (url) => {
+      if (String(url).includes("huggingface") || String(url).includes("hf.space")) {
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: (h) => (h === "content-type" ? "image/png" : null) },
+          arrayBuffer: async () => png.buffer.slice(png.byteOffset, png.byteOffset + png.byteLength),
+        };
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    },
+  };
+  const result = await generateImage("portrait test", {
+    env,
+    subjectType: "background",
+    preferProvider: "huggingface",
+    onAttempt: (p) => attempts.push(p),
+  }).catch((e) => ({ error: e }));
+  // Either it succeeds via huggingface, or fails for an unrelated reason (network
+  // shape mismatch) — what we're actually asserting is that huggingface was the
+  // *first* attempt, i.e. freemium_image was correctly jumped to the front.
+  assert.equal(attempts[0], "huggingface", "preferring a freemium member still tries it first");
+  void result;
 }
 
 console.log("freemium-image.test.mjs — all passed");

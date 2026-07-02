@@ -15,8 +15,11 @@ import { formatRegenRequestError } from "../clientBanners.js";
 import { summarizeArtSelection } from "../regenSummary.js";
 
 import { backgroundStyle, spriteVisual, gradientFromSeed } from "../media.js";
+import { getActiveConnection } from "../backends/connections.js";
 
 import BannerStack from "./BannerStack.jsx";
+import ArtStylePicker from "./ArtStylePicker.jsx";
+import ProviderSelect from "./ProviderSelect.jsx";
 
 
 
@@ -93,6 +96,9 @@ export default function ReplaceArtSheet({ book, open, onClose, onStarted, onFail
   const [copied, setCopied] = useState("");
   const [packPlan, setPackPlan] = useState(null);
   const [packBusy, setPackBusy] = useState(false);
+  const [styleOverride, setStyleOverride] = useState(() => resolveReplaceArtStyle(book));
+  const [imageProvider, setImageProvider] = useState("auto");
+  const activeConnection = getActiveConnection();
 
 
 
@@ -100,7 +106,7 @@ export default function ReplaceArtSheet({ book, open, onClose, onStarted, onFail
 
   const groups = useMemo(() => listArtMediaGroups(book), [book]);
 
-  const byoOpts = useMemo(() => ({ apiBase: apiBase() }), [open]);
+  const byoOpts = useMemo(() => ({ apiBase: apiBase(), styleOverride }), [open, styleOverride]);
 
   const checklist = useMemo(() => summarizeArtChecklist(items), [items]);
   const filledByKey = useMemo(() => artChecklistByKey(checklist), [checklist]);
@@ -154,6 +160,8 @@ export default function ReplaceArtSheet({ book, open, onClose, onStarted, onFail
     setCopied("");
 
     setPackPlan(null);
+
+    setStyleOverride(resolveReplaceArtStyle(book));
 
     setMode(book?.byo_mode ? "prompts" : "generate");
 
@@ -283,7 +291,9 @@ export default function ReplaceArtSheet({ book, open, onClose, onStarted, onFail
 
   async function runGenerate() {
 
-    const body = selectionToGenerateBody([...selected], items, book);
+    const body = selectionToGenerateBody([...selected], items, book, { styleOverride });
+
+    if (imageProvider !== "auto") body.prefer_provider = imageProvider;
 
     const partial = body.scope !== "all";
 
@@ -443,11 +453,16 @@ export default function ReplaceArtSheet({ book, open, onClose, onStarted, onFail
 
         <p className="vae-sheet-hint" data-testid="replace-style-hint">
 
-          Target style: <strong>{resolveReplaceArtStyle(book)}</strong>
+          Target style: <ArtStylePicker value={styleOverride} onChange={setStyleOverride} testIdPrefix="replace-art-style" />
 
-          {book?.art_filter === "pixel" && book?.active_style === "pixel"
+          {book?.art_filter === "pixel" && book?.active_style === "pixel" && styleOverride === resolveReplaceArtStyle(book)
 
             ? " (pixel filter uses this source art)" : ""}
+
+          {" · "}
+
+          Provider: <ProviderSelect lane="image" connection={activeConnection} value={imageProvider}
+            onChange={setImageProvider} testId="replace-art-provider" />
 
           {" · "}
 
@@ -481,31 +496,37 @@ export default function ReplaceArtSheet({ book, open, onClose, onStarted, onFail
 
           <legend>How</legend>
 
-          <label>
+          <label className="vae-radio">
 
             <input type="radio" name="replace-mode" checked={mode === "generate"}
 
               onChange={() => setMode("generate")} data-testid="replace-mode-generate" />
 
+            <span className="vae-radio-dot" aria-hidden />
+
             Generate new (Gemini → free APIs → local SD)
 
           </label>
 
-          <label>
+          <label className="vae-radio">
 
             <input type="radio" name="replace-mode" checked={mode === "prompts"}
 
               onChange={() => setMode("prompts")} data-testid="replace-mode-prompts" />
 
+            <span className="vae-radio-dot" aria-hidden />
+
             Copy prompts (use your own ChatGPT / Gemini)
 
           </label>
 
-          <label>
+          <label className="vae-radio">
 
             <input type="radio" name="replace-mode" checked={mode === "upload"}
 
               onChange={() => setMode("upload")} data-testid="replace-mode-upload" />
+
+            <span className="vae-radio-dot" aria-hidden />
 
             Upload replacement image
 
@@ -541,7 +562,7 @@ export default function ReplaceArtSheet({ book, open, onClose, onStarted, onFail
 
           <div className="vae-art-picker-actions">
 
-            <button type="button" data-testid="replace-select-all"
+            <button type="button" className="vae-btn vae-btn-sm" data-testid="replace-select-all"
 
               onClick={() => setSelected(new Set(items.map((it) => it.key)))}>
 
@@ -549,7 +570,7 @@ export default function ReplaceArtSheet({ book, open, onClose, onStarted, onFail
 
             </button>
 
-            <button type="button" data-testid="replace-select-none"
+            <button type="button" className="vae-btn vae-btn-sm vae-btn-muted" data-testid="replace-select-none"
 
               onClick={() => setSelected(new Set())}>
 
@@ -646,7 +667,7 @@ export default function ReplaceArtSheet({ book, open, onClose, onStarted, onFail
 
               <div className="vae-art-picker-actions">
 
-                <button type="button" data-testid="byo-download-manifest"
+                <button type="button" className="vae-btn vae-btn-sm" data-testid="byo-download-manifest"
 
                   onClick={() => downloadArtPackManifest(book)}>
 
@@ -782,25 +803,25 @@ export default function ReplaceArtSheet({ book, open, onClose, onStarted, onFail
 
             <div className="vae-art-picker-actions" style={{ marginTop: 8 }}>
 
-              <button type="button" data-testid="byo-copy-one" onClick={copyOnePrompt}>
+              <button type="button" className="vae-btn vae-btn-sm" data-testid="byo-copy-one" onClick={copyOnePrompt}>
 
                 {copied === "one" ? "Copied!" : "Copy this prompt"}
 
               </button>
 
-              <button type="button" data-testid="byo-copy-all" onClick={copyAllPrompts}>
+              <button type="button" className="vae-btn vae-btn-sm" data-testid="byo-copy-all" onClick={copyAllPrompts}>
 
                 {copied === "all" ? "Copied!" : "Copy all prompts"}
 
               </button>
 
-              <button type="button" data-testid="byo-download-json" onClick={downloadJson}>
+              <button type="button" className="vae-btn vae-btn-sm" data-testid="byo-download-json" onClick={downloadJson}>
 
                 Download JSON
 
               </button>
 
-              <button type="button" data-testid="byo-download-manifest"
+              <button type="button" className="vae-btn vae-btn-sm" data-testid="byo-download-manifest"
 
                 onClick={() => downloadArtPackManifest(book)}>
 
@@ -822,11 +843,11 @@ export default function ReplaceArtSheet({ book, open, onClose, onStarted, onFail
 
         <footer className="vae-sheet-foot">
 
-          <button type="button" onClick={onClose}>Cancel</button>
+          <button type="button" className="vae-btn vae-btn-secondary" onClick={onClose}>Cancel</button>
 
           {mode !== "prompts" && (
 
-            <button type="button" data-testid="replace-submit" disabled={busy} onClick={submit}>
+            <button type="button" className="vae-btn vae-btn-primary" data-testid="replace-submit" disabled={busy} onClick={submit}>
 
               {busy ? "Starting…" : "Replace"}
 

@@ -1,6 +1,16 @@
 import { useRef, useState } from "react";
 import { ingestBook } from "../api.js";
 import { getPrefs, setPref, KEYS } from "../audio/voicePrefs.js";
+import ArtStylePicker from "./ArtStylePicker.jsx";
+import ProviderSelect from "./ProviderSelect.jsx";
+import { SERVER_ID, getConnection, listConnections } from "../backends/connections.js";
+import { getHealthSnapshot } from "../backends/health.js";
+
+/** Backends an upload can be sent to — server always offered, remotes only once reachable. */
+function uploadTargets() {
+  return listConnections().filter((c) => c.kind === "server"
+    || (c.kind === "remote" && getHealthSnapshot(c.id).status === "online"));
+}
 
 // Upload tray (below the library). Picking/dropping an EPUB POSTs /ingest,
 // which kicks off the Gemini pipeline. Two upfront choices:
@@ -16,7 +26,12 @@ export default function Uploader({ onStarted, compact = false }) {
   const [useGenAi, setUseGenAi] = useState(true);
   const [byoMode, setByoMode] = useState(false);
   const [artStyle, setArtStyle] = useState(getPrefs().artStyle || "anime");
+  const [preferProvider, setPreferProvider] = useState("auto");
+  const [connectionId, setConnectionId] = useState(SERVER_ID);
   const [err, setErr] = useState("");
+
+  const targets = uploadTargets();
+  const connection = getConnection(connectionId) || targets[0];
 
   function chooseStyle(v) { setArtStyle(v); setPref(KEYS.artStyle, v); }
 
@@ -30,8 +45,10 @@ export default function Uploader({ onStarted, compact = false }) {
         dryRun,
         generateArt: useGenAi && !dryRun && !byoMode,
         byoMode: byoMode && !dryRun,
+        preferProvider,
+        connection,
       });
-      onStarted?.(res, file);
+      onStarted?.(res, file, connection?.id);
     } catch (e) {
       setErr(e.message || "Upload failed — is the backend running?");
     } finally {
@@ -53,24 +70,33 @@ export default function Uploader({ onStarted, compact = false }) {
           {busy ? "Uploading…" : "＋ Add a book (EPUB)"}
         </button>
         <label className="vae-upload-style">Art style
-          <select data-testid="upload-art-style" value={artStyle}
-            onChange={(e) => chooseStyle(e.target.value)}>
-            <option value="anime">Anime (light novels)</option>
-            <option value="semi-real">Semi-realistic</option>
-            <option value="cartoon">Cartoon / comic</option>
-            <option value="pixel">Pixel-art</option>
-          </select>
+          <ArtStylePicker value={artStyle} onChange={chooseStyle} testIdPrefix="upload-art-style" />
+        </label>
+        {targets.length > 1 && (
+          <label className="vae-upload-style">Backend
+            <span className="vae-select-wrap">
+              <select className="vae-select" data-testid="upload-connection" value={connection?.id || ""}
+                onChange={(e) => setConnectionId(e.target.value)}>
+                {targets.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+              </select>
+            </span>
+          </label>
+        )}
+        <label className="vae-upload-style">Extraction
+          <ProviderSelect lane="extract" connection={connection} value={preferProvider}
+            onChange={setPreferProvider} testId="upload-provider" />
         </label>
       </div>
 
-      <label className="vae-upload-dry" data-testid="gen-ai-toggle">
+      <label className="vae-upload-dry vae-checkbox" data-testid="gen-ai-toggle">
         <input type="checkbox" checked={useGenAi && !dryRun && !byoMode} disabled={dryRun || byoMode}
           data-testid="gen-ai-input"
           onChange={(e) => setUseGenAi(e.target.checked)} />
+        <span className="vae-checkbox-box" aria-hidden />
         Generate art with AI (Gemini, then local SD when on your network)
       </label>
 
-      <label className="vae-upload-dry" data-testid="byo-mode-toggle">
+      <label className="vae-upload-dry vae-checkbox" data-testid="byo-mode-toggle">
         <input type="checkbox" checked={byoMode} disabled={dryRun}
           data-testid="byo-mode-input"
           onChange={(e) => {
@@ -78,16 +104,18 @@ export default function Uploader({ onStarted, compact = false }) {
             setByoMode(on);
             if (on) setUseGenAi(false);
           }} />
+        <span className="vae-checkbox-box" aria-hidden />
         BYO art — extract script, copy prompts, upload your own images
       </label>
 
-      <label className="vae-upload-dry" data-testid="dry-run-toggle">
+      <label className="vae-upload-dry vae-checkbox" data-testid="dry-run-toggle">
         <input type="checkbox" checked={dryRun}
           data-testid="dry-run-input"
           onChange={(e) => {
             setDryRun(e.target.checked);
             if (e.target.checked) setByoMode(false);
           }} />
+        <span className="vae-checkbox-box" aria-hidden />
         Extract only (skip art — preview the script first)
       </label>
       <div className="vae-upload-hint">

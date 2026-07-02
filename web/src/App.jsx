@@ -14,7 +14,9 @@ import { CompareModalProvider } from "./hooks/compareModalContext.jsx";
 
 import { getPrefs } from "./audio/voicePrefs.js";
 
-import { backendConfigured, fetchCatalog } from "./api.js";
+import { backendConfigured, fetchCatalog, continueExtraction } from "./api.js";
+import { setActiveConnectionId } from "./backends/connections.js";
+import { startHealthPolling } from "./backends/health.js";
 
 import {
   fetchBook, fetchCatalogMerged, fetchLocalCatalog, mergeCatalog, ensureBookCached, exportBookPackFile,
@@ -48,6 +50,8 @@ export default function App() {
   const [downloadBusy, setDownloadBusy] = useState(false);
 
   useEffect(() => { document.documentElement.dataset.theme = prefs.theme; }, [prefs.theme]);
+
+  useEffect(() => startHealthPolling(), []);
 
   useEffect(() => {
     const m = window.location.hash.match(/^#\/book\/([^/?]+)/);
@@ -99,8 +103,14 @@ export default function App() {
   }, []);
 
   async function enterPlayer(entry) {
+    // Point every subsequent single-book API call (voices, media, pipeline…)
+    // at the backend this entry actually came from, before fetching it.
+    setActiveConnectionId(entry.connection_id || null);
     const full = await fetchBook(entry.book_id);
-    setBook(full);
+    // The compiled playback doesn't carry extract_provider/connection_id —
+    // only the catalog entry does — so carry them forward for pin-mismatch
+    // checks and source-chip display inside the player.
+    setBook({ ...full, extract_provider: entry.extract_provider, connection_id: entry.connection_id });
     setView("player");
     window.location.hash = `#/book/${entry.book_id}`;
   }
@@ -130,9 +140,10 @@ export default function App() {
           setCatalog(list);
         } catch (e) {
           setNote(`Couldn't cache "${entry.title}": ${e.message || "unknown error"}`);
-        } finally {
           setCacheBusy(null);
+          return;
         }
+        setCacheBusy(null);
       }
 
       if (fromCloud && cached && shouldRecommendDownload(entry.book_id)) {
@@ -188,6 +199,16 @@ export default function App() {
     await enterPlayer(entry);
   }
 
+  async function handleContinueExtraction(entry) {
+    try {
+      await continueExtraction(entry.book_id, { preferProvider: "auto" });
+      setNote(`Resuming "${entry.title || entry.book_id}" — extraction will continue in the background.`);
+      setCatalog(await fetchCatalogMerged());
+    } catch (e) {
+      setNote(`Couldn't resume "${entry.title || entry.book_id}": ${e.message || "unknown error"}`);
+    }
+  }
+
   async function backToLibrary() {
     setView("library");
     window.location.hash = "#/";
@@ -230,6 +251,7 @@ export default function App() {
               onCatalog={setCatalog}
               onOpenSettings={() => setSettingsOpen(true)}
               cacheBusy={cacheBusy}
+              onContinueExtraction={handleContinueExtraction}
             />
           )
           : (

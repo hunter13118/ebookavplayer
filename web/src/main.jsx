@@ -2,6 +2,7 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App.jsx";
 import "./styles.css";
+import "./styles-components.css";
 import { ErrorBoundary } from "./lib/ErrorBoundary.jsx";
 import { PortfolioClerkProvider } from "./lib/portfolioClerk.jsx";
 import { initLocalApiBridgeFromUrl } from "./localApiBridge.js";

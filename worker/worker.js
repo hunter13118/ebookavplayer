@@ -10,6 +10,7 @@ import {
 import { onIngestPost } from "./api/v1/ingest.js";
 import {
   onReExtractPost,
+  onContinueExtractPost,
   onGenerateMediaPost,
   onGenerateMomentPost,
   onImagingUnlockPost,
@@ -22,7 +23,7 @@ import {
   onExternalRefsGet,
   onExternalRefsPatch,
 } from "./api/v1/book-actions.js";
-import { onBooksGet, onBookGet } from "./api/v1/books.js";
+import { onBooksGet, onBookGet, onBookDelete } from "./api/v1/books.js";
 import { onMediaGet } from "./api/v1/media.js";
 import { onPipelineGet, onPipelinePatch } from "./api/v1/pipeline.js";
 import { onTtsPost } from "./api/v1/tts.js";
@@ -80,7 +81,17 @@ export async function handleEbookavplayerApi(request, env, ctx) {
   const reExtract = path.match(/^\/books\/([^/]+)\/re-extract$/);
   if (method === "POST" && reExtract) {
     const force = url.searchParams.get("force") === "true";
-    const edge = await onReExtractPost({ env, bookId: reExtract[1], force });
+    const preferProvider = url.searchParams.get("prefer_provider") || null;
+    const edge = await onReExtractPost({
+      env, bookId: reExtract[1], force, preferProvider,
+    });
+    if (edge) return edge;
+    return onRequest({ request, env });
+  }
+
+  const continueExtract = path.match(/^\/books\/([^/]+)\/continue-extract$/);
+  if (method === "POST" && continueExtract) {
+    const edge = await onContinueExtractPost({ request, env, bookId: continueExtract[1] });
     if (edge) return edge;
     return onRequest({ request, env });
   }
@@ -157,6 +168,12 @@ export async function handleEbookavplayerApi(request, env, ctx) {
   const bookGet = path.match(/^\/books\/([^/]+)$/);
   if (method === "GET" && bookGet) {
     const edge = await onBookGet({ env, bookId: bookGet[1] });
+    if (edge) return edge;
+    return onRequest({ request, env });
+  }
+
+  if (method === "DELETE" && bookGet) {
+    const edge = await onBookDelete({ env, bookId: bookGet[1] });
     if (edge) return edge;
     return onRequest({ request, env });
   }

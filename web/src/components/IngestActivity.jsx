@@ -24,6 +24,7 @@ function mergeEventRow(row, ev) {
     step: st.step ?? row.step,
     step_index: st.step_index ?? row.step_index,
     step_total: st.step_total ?? row.step_total,
+    workers: st.workers ?? row.workers ?? [],
     progress_meta: st.progress_meta ?? row.progress_meta,
     debug_log: st.debug_log || row.debug_log || [],
     event_log: row.event_log || [],
@@ -87,12 +88,31 @@ export default function IngestActivity({ jobs, onDone }) {
     };
   }, [jobs]);
 
+  const [collapsed, setCollapsed] = useState(false);
+
   if (!snap.length) return null;
 
   return (
     <section className="vae-ingest-activity" data-testid="ingest-activity">
-      <h2 className="vae-lib-heading">Processing</h2>
-      {snap.map((row) => {
+      <button
+        type="button"
+        className="vae-ingest-toggle"
+        data-testid="ingest-activity-toggle"
+        aria-expanded={!collapsed}
+        onClick={() => setCollapsed((c) => !c)}
+      >
+        <h2 className="vae-lib-heading">
+          Processing
+          {snap.length > 1 ? ` (${snap.length})` : ""}
+        </h2>
+        <span className="vae-ingest-toggle-chevron">{collapsed ? "▸" : "▾"}</span>
+      </button>
+      {collapsed && (
+        <p className="vae-ingest-collapsed-summary" data-testid="ingest-activity-collapsed">
+          {snap.map((row) => `${row.title || row.book_id} · ${Math.round((row.progress || 0) * 100)}%`).join(" — ")}
+        </p>
+      )}
+      {!collapsed && snap.map((row) => {
         const pct = Math.round((row.progress || 0) * 100);
         const steps = stepSummary(row);
         const phaseLabel = row.phase_label || row.stage || "queued";
@@ -122,6 +142,22 @@ export default function IngestActivity({ jobs, onDone }) {
               </div>
             </div>
 
+            {!row.errored && row.phase === "extracting" && row.workers?.length > 0 && (
+              <ul className="vae-ingest-workers" data-testid="ingest-workers">
+                {row.workers.map((w) => (
+                  <li key={w.chapterPos} className="vae-ingest-worker">
+                    <span className="vae-ingest-worker-chapter">
+                      Ch. {w.chapterOfTotal}/{w.totalChapters}
+                    </span>
+                    <span className="vae-ingest-worker-chunk">
+                      chunk {w.chunk}/{w.totalChunks}
+                    </span>
+                    {w.provider && <span className="vae-ingest-worker-provider">{w.provider}</span>}
+                  </li>
+                ))}
+              </ul>
+            )}
+
             {row.errored && (
               <p className="vae-upload-err">Ingest failed — expand for log, or retry upload.</p>
             )}
@@ -150,24 +186,4 @@ export default function IngestActivity({ jobs, onDone }) {
       })}
     </section>
   );
-}
-
-export function mergeCatalogEntries(serverList, pending = []) {
-  const byId = new Map((serverList || []).map((b) => [b.book_id, { ...b }]));
-  for (const p of pending) {
-    const prev = byId.get(p.book_id);
-    if (!prev) {
-      byId.set(p.book_id, { ...p });
-      continue;
-    }
-    byId.set(p.book_id, {
-      ...p,
-      ...prev,
-      title: prev.title || p.title,
-      progress: Math.max(prev.progress || 0, p.progress || 0),
-      phase_label: prev.phase_label || p.phase_label,
-      detail: prev.detail || prev.detail,
-    });
-  }
-  return [...byId.values()].sort((a, b) => (a.title || "").localeCompare(b.title || ""));
 }

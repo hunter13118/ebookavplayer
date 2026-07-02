@@ -357,15 +357,18 @@ export default function OfflinePackTray({ bookId, title, onInstalled, onCatalogR
       <div className="vae-offline-actions">
         <label className="vae-offline-tier">
           Pack type
-          <select value={tier} disabled={busy} onChange={(e) => setTier(e.target.value)}>
-            <option value={TIER_VISUAL}>{tierLabel(TIER_VISUAL)}</option>
-            <option value={TIER_AUDIOBOOK}>{tierLabel(TIER_AUDIOBOOK)}</option>
-          </select>
+          <span className="vae-select-wrap">
+            <select className="vae-select" value={tier} disabled={busy} onChange={(e) => setTier(e.target.value)}>
+              <option value={TIER_VISUAL}>{tierLabel(TIER_VISUAL)}</option>
+              <option value={TIER_AUDIOBOOK}>{tierLabel(TIER_AUDIOBOOK)}</option>
+            </select>
+          </span>
         </label>
         {bookId && tier === TIER_AUDIOBOOK && (
-          <label className="vae-offline-tier vae-offline-check">
+          <label className="vae-offline-tier vae-offline-check vae-checkbox">
             <input type="checkbox" checked={forceRebuild} disabled={busy}
               onChange={(e) => setForceRebuild(e.target.checked)} />
+            <span className="vae-checkbox-box" aria-hidden />
             Force rebuild (ignore cache)
           </label>
         )}

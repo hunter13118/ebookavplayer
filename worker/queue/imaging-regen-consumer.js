@@ -110,6 +110,7 @@ export async function handleImagingRegenMessage(message, env) {
       existingMedia,
       diversify: Boolean(opts.diversify),
       ignorePins: Boolean(opts.ignore_pins),
+      preferProvider: opts.prefer_provider || null,
       compare,
       stageUntilConfirm,
       onComparison: async (row) => {

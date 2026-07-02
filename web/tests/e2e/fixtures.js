@@ -187,7 +187,7 @@ export async function installBackendMocks(page, opts = {}) {
 
   await page.route("**/books/*", async (route) => {
     const url = route.request().url();
-    if (url.includes("/pack")) return route.fallback();
+    if (/\/pack(\/|\?|$)/.test(url)) return route.fallback();
     detailCalls.n += 1;
     const payload = typeof detail === "function"
       ? detail(detailCalls.n)

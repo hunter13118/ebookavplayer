@@ -202,19 +202,23 @@ export default function VoiceField({
 
       <div className="vae-voice-field-row">
 
-        <select
+        <span className="vae-select-wrap">
+          <select
 
-          data-testid={testId}
+            className="vae-select"
 
-          value={value}
+            data-testid={testId}
 
-          onChange={(e) => onChange(parseVoiceSelect(e.target.value, override))}
+            value={value}
 
-        >
+            onChange={(e) => onChange(parseVoiceSelect(e.target.value, override))}
 
-          {buildOptions(voices, compiledVoice, "Book default")}
+          >
 
-        </select>
+            {buildOptions(voices, compiledVoice, "Book default")}
+
+          </select>
+        </span>
 
         <button
 

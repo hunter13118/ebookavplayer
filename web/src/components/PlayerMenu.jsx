@@ -2,7 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 
 import { fetchEdgeVoices, reExtractBook, subscribeJobEvents, jobEventToStatus, saveVoiceOverrides } from "../api.js";
 
+import { getActiveConnection } from "../backends/connections.js";
+
 import ArtStyleSwitcher from "./ArtStyleSwitcher.jsx";
+
+import ProviderSelect from "./ProviderSelect.jsx";
+
+import PinMismatchConfirm from "./PinMismatchConfirm.jsx";
 
 import VoiceField from "./VoiceField.jsx";
 
@@ -45,6 +51,12 @@ export default function PlayerMenu({
   const [extractBusy, setExtractBusy] = useState(false);
 
   const [err, setErr] = useState("");
+
+  const [extractProvider, setExtractProvider] = useState("auto");
+
+  const [pinConfirmOpen, setPinConfirmOpen] = useState(false);
+
+  const activeConnection = getActiveConnection();
 
 
 
@@ -177,7 +189,7 @@ export default function PlayerMenu({
 
 
 
-  async function handleReExtract() {
+  async function runReExtract() {
 
     setExtractBusy(true);
 
@@ -185,7 +197,7 @@ export default function PlayerMenu({
 
     try {
 
-      const { job_id: jobId } = await reExtractBook(book.book_id);
+      const { job_id: jobId } = await reExtractBook(book.book_id, { preferProvider: extractProvider });
 
       onJobStarted?.(jobId);
 
@@ -201,7 +213,31 @@ export default function PlayerMenu({
 
       setExtractBusy(false);
 
+      setPinConfirmOpen(false);
+
     }
+
+  }
+
+
+
+  // Extraction has a real, durable pin (book.extract_provider) — picking a
+  // different explicit provider re-pins the book, so confirm first. "auto"
+  // and a first-ever extraction (no existing pin) skip the confirm.
+
+  async function handleReExtract() {
+
+    const pinned = book?.extract_provider;
+
+    if (extractProvider !== "auto" && pinned && pinned !== extractProvider) {
+
+      setPinConfirmOpen(true);
+
+      return;
+
+    }
+
+    await runReExtract();
 
   }
 
@@ -237,6 +273,12 @@ export default function PlayerMenu({
               onJobStarted={onRegenStarted} onRegenFailed={onRegenFailed} />
 
             <div className="vae-menu-actions">
+
+              <label className="vae-upload-style">Extraction provider
+                <ProviderSelect lane="extract" connection={activeConnection} value={extractProvider}
+                  onChange={setExtractProvider} testId="re-extract-provider"
+                  disabled={disabled || extractBusy} />
+              </label>
 
               <button type="button" className="vae-menu-link" data-testid="re-extract-script"
 
@@ -409,6 +451,15 @@ export default function PlayerMenu({
         {err && <p className="vae-sheet-err">{err}</p>}
 
       </div>
+
+      <PinMismatchConfirm
+        open={pinConfirmOpen}
+        current={book?.extract_provider}
+        requested={extractProvider}
+        busy={extractBusy}
+        onCancel={() => setPinConfirmOpen(false)}
+        onConfirm={runReExtract}
+      />
 
     </div>
 

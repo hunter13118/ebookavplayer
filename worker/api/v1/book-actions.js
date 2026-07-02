@@ -4,6 +4,7 @@ import { emitJobEvent, jobToEvent } from "../../_shared/job-events.js";
 import { multiplexJobEventStream } from "../../_shared/job-sse-stream.js";
 import { ensureImagingLockFresh, markJobStale } from "../../_shared/imaging-lock.js";
 import { loadStoredEpubBytes } from "../../_shared/book-extract-pipeline.js";
+import { getCheckpoint } from "../../_shared/book-checkpoint.js";
 
 function edgeJobsEnabled(env) {
   return Boolean(env.VAE_PACKS && env.VAE_JOBS && env.VAE_JOBS_QUEUE);
@@ -28,7 +29,9 @@ async function enqueueJob(env, msg) {
 }
 
 /** POST /books/:id/re-extract */
-export async function onReExtractPost({ env, bookId, force }) {
+export async function onReExtractPost({
+  env, bookId, force, preferProvider,
+}) {
   if (!edgeJobsEnabled(env)) return null;
   if (!(await bookExists(env, bookId))) {
     return json({ error: "no such book" }, 404);
@@ -55,9 +58,79 @@ export async function onReExtractPost({ env, bookId, force }) {
     job_id: jobId,
     book_id: bookId,
     force_provider: Boolean(force),
+    prefer_provider: preferProvider || null,
   });
 
   return json({ job_id: jobId, book_id: bookId, status: "queued" });
+}
+
+/** POST /books/:id/continue-extract — resume a stalled/partial book from its checkpoint. */
+export async function onContinueExtractPost({ request, env, bookId }) {
+  if (!edgeJobsEnabled(env)) return null;
+
+  const checkpoint = await getCheckpoint(env, bookId);
+  if (!checkpoint) {
+    return json({ error: "no checkpoint for this book — nothing to resume" }, 404);
+  }
+  if (checkpoint.next_chapter_idx >= checkpoint.total_chapters) {
+    return json({ error: "book already fully extracted" }, 400);
+  }
+  if (!(await loadStoredEpubBytes(env, bookId))) {
+    return json({ error: "EPUB not found — re-upload the book first" }, 404);
+  }
+
+  let body = {};
+  try {
+    body = await request.json();
+  } catch {
+    // no body / not JSON — fine, use defaults below.
+  }
+  let preferProvider = body.prefer_provider || null;
+  if (preferProvider === "auto") preferProvider = null;
+
+  const bookRaw = env.VAE_JOBS ? await env.VAE_JOBS.get(`book:${bookId}`) : null;
+  const bookMeta = bookRaw ? JSON.parse(bookRaw) : {};
+
+  const jobId = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
+  const job = {
+    job_id: jobId,
+    book_id: bookId,
+    kind: "continue-extract",
+    status: "queued",
+    progress: checkpoint.chapters_done.length / Math.max(checkpoint.total_chapters, 1),
+    detail: `Resuming at chapter ${checkpoint.next_chapter_idx + 1}/${checkpoint.total_chapters}`,
+    stage: "queued",
+  };
+  await putJob(env, "ingest", jobId, job);
+  await emitJobEvent(env, jobId, jobToEvent(job, "queued"));
+  await putBookIndex(env, bookId, {
+    job_id: jobId,
+    active_job_id: jobId,
+    status: "processing",
+    stage: "queued",
+  });
+
+  await enqueueJob(env, {
+    kind: "continue-extract",
+    job_id: jobId,
+    book_id: bookId,
+    art_style: bookMeta.art_style || "anime",
+    narrator_gender: bookMeta.narrator_gender || "male",
+    generate_art: bookMeta.generate_art !== false,
+    dry_run: false,
+    byo_mode: Boolean(bookMeta.byo_mode),
+    illustration_mode: bookMeta.illustration_mode || null,
+    prefer_provider: preferProvider,
+  });
+
+  return json({
+    job_id: jobId,
+    book_id: bookId,
+    status: "queued",
+    resuming_from_chapter: checkpoint.next_chapter_idx,
+    total_chapters: checkpoint.total_chapters,
+    prefer_provider: preferProvider,
+  });
 }
 
 /** POST /books/:id/moments/generate */
@@ -246,6 +319,7 @@ export async function onJobStatusGet({ env, jobId }) {
     progress: job.progress ?? 0,
     step_index: job.step_index ?? null,
     step_total: job.step_total ?? null,
+    workers: job.workers || [],
     detail: job.detail || "",
     comparisons: job.comparisons || [],
     log: job.log || [],

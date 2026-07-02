@@ -103,22 +103,37 @@ export function cloudflareAiRunUrl(accountId, modelId = CF_FLUX) {
   return `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${modelId}`;
 }
 
+// Exact-match aliases only — the old substring-`includes()` matching wrongly
+// bucketed anything containing "real" (even "unrealistic") into the
+// "realistic" template and silently discarded custom style text a user typed
+// into the art-style picker. Unmatched text now flows through as "custom" so
+// composeImagePrompt can use it verbatim instead of falling back to neutral.
+const STYLE_ALIASES = {
+  realistic: "realistic",
+  real: "realistic",
+  "semi-real": "realistic",
+  "semi-realistic": "realistic",
+  anime: "anime",
+  pixel: "pixel",
+  "pixel-art": "pixel",
+  cartoon: "comic",
+  comic: "comic",
+  neutral: "neutral",
+};
+
 export function artStyleKey(artStyle) {
-  const s = (artStyle || "").toLowerCase();
-  if (s.includes("real") || s === "semi-real") return "realistic";
-  if (s.includes("anime")) return "anime";
-  if (s.includes("pixel")) return "pixel";
-  if (s.includes("cartoon") || s.includes("comic")) return "comic";
-  return "neutral";
+  const s = (artStyle || "").toLowerCase().trim();
+  return STYLE_ALIASES[s] || "custom";
 }
 
 export function composeImagePrompt(description, { subjectType = "character", style = "neutral" } = {}) {
   const subj = subjectType === "background" ? "background" : "character";
   const framing = SUBJECT_FRAMING[subj];
-  const styleDesc = STYLE_TEMPLATES[style] || STYLE_TEMPLATES.neutral;
+  const key = artStyleKey(style);
+  const styleDesc = key === "custom" ? String(style || "").trim() : (STYLE_TEMPLATES[key] || STYLE_TEMPLATES.neutral);
   const desc = String(description || "").trim().replace(/\s+/g, " ");
   const post = subj === "character" ? framing.postTransparent : framing.post;
-  return `${framing.pre} ${desc} ${post} Art style: ${styleDesc}.`;
+  return `${framing.pre} ${desc} ${post} Art style: ${styleDesc || STYLE_TEMPLATES.neutral}.`;
 }
 
 async function fetchTimeout(url, options, ms = PER_PROVIDER_TIMEOUT_MS, fetchFn = fetch) {
@@ -667,6 +682,33 @@ export async function generateImageIsolated(providerId, prompt, {
   return postProcess(result, subjectType, env);
 }
 
+// Members of the "freemium_image" top-level tier — used to map a specific
+// preferred provider id back to which top-level tier it lives under, since
+// preferProvider only reorders *within* runFreemiumChain's sub-chain by
+// default (see orderTiersForPreference below).
+const IMAGE_FREEMIUM_TIER_MEMBERS = new Set([
+  "pollinations-anon", "pollinations-seed", "huggingface", "cloudflare", "workers-ai",
+]);
+
+/**
+ * A user-selected `preferProvider` (from the image ProviderSelect) should win
+ * regardless of which top-level tier it happens to live in — gemini_image and
+ * local_sd are top-level tiers, not members of the freemium_image sub-chain,
+ * so reordering only the sub-chain (as runFreemiumChain already does) never
+ * actually prioritizes them. This moves whichever top-level tier the
+ * preference belongs to to the front, then falls through to the rest as
+ * before if it fails — a soft preference, not a hard pin (unlike text
+ * extraction's pinning, image generation keeps its existing fallback chain).
+ */
+function orderTiersForPreference(tiers, preferProvider) {
+  if (!preferProvider) return tiers;
+  const preferredTier = preferProvider === "gemini_image" || preferProvider === "local_sd"
+    ? preferProvider
+    : (IMAGE_FREEMIUM_TIER_MEMBERS.has(preferProvider) ? "freemium_image" : null);
+  if (!preferredTier || !tiers.includes(preferredTier)) return tiers;
+  return [preferredTier, ...tiers.filter((t) => t !== preferredTier)];
+}
+
 /**
  * Generate one image — Gemini → freemium → local SD (matches Python backends.generate_image).
  */
@@ -676,7 +718,7 @@ export async function generateImage(prompt, {
   referenceImageUrls = null,
 } = {}) {
   if (!env) throw new Error("generateImage: env required");
-  const tiers = await resolvedOrder(env, "image");
+  const tiers = orderTiersForPreference(await resolvedOrder(env, "image"), preferProvider);
   const failures = [];
   const imageParam = buildPollinationsImageParam({ referenceImageUrls, referenceImages });
   const hasRefs = Boolean(referenceImages?.length || imageParam);

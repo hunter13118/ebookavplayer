@@ -1,4 +1,4 @@
-import { listBookIds, json } from "../../_shared/jobs-kv.js";
+import { listBookIds, deleteBookIndex, json } from "../../_shared/jobs-kv.js";
 import {
   enrichCatalogMetaFromPlayback,
   resolveCoverUrl,
@@ -26,6 +26,37 @@ export async function onBooksGet({ env }) {
     return meta;
   }));
   return json(out.filter(Boolean).sort((a, b) => (a.title || "").localeCompare(b.title || "")));
+}
+
+/** Delete every R2 object under a prefix (checkpoints/chapter packs/media are variable-count). */
+export async function deleteR2Prefix(env, prefix) {
+  let cursor;
+  do {
+    const listed = await env.VAE_PACKS.list({ prefix, cursor, limit: 100 });
+    await Promise.all((listed.objects || []).map((o) => env.VAE_PACKS.delete(o.key)));
+    cursor = listed.truncated ? listed.cursor : undefined;
+  } while (cursor);
+}
+
+/** DELETE /books/:id — remove the book from the catalog, R2 pack/media, and its ingest job. */
+export async function onBookDelete({ env, bookId }) {
+  if (!env.VAE_PACKS || !env.VAE_JOBS) return null;
+
+  const metaRaw = await env.VAE_JOBS.get(`book:${bookId}`);
+  const meta = metaRaw ? JSON.parse(metaRaw) : null;
+
+  await deleteBookIndex(env, bookId);
+  if (meta?.job_id) await env.VAE_JOBS.delete(`ingest:${meta.job_id}`);
+
+  await Promise.all([
+    env.VAE_PACKS.delete(`books/${bookId}.json`),
+    env.VAE_PACKS.delete(`books/${bookId}.analysis.json`),
+    env.VAE_PACKS.delete(`uploads/${bookId}.epub`),
+    deleteR2Prefix(env, `books/${bookId}/`),
+    deleteR2Prefix(env, `media/${bookId}/`),
+  ]);
+
+  return json({ book_id: bookId, deleted: true });
 }
 
 export async function onBookGet({ env, bookId }) {
@@ -71,7 +102,17 @@ export async function onBookGet({ env, bookId }) {
       analysis = await axObj.json();
     } catch { /* keep stored playback */ }
   }
-  if (analysis && !hasMomentArt) {
+  // A partial (still-extracting or stalled) book's playback was built by the
+  // per-chapter checkpointed compiler with incremental, stable voice
+  // assignment (see compile-playback.js). The legacy enrichPlaybackFromAnalysis
+  // path recompiles voices/lineIdx from scratch across the whole roster —
+  // running it on a growing partial roster would reassign voices out from
+  // under a listener and drop chapters_ready/total_chapters. Skip it until
+  // the book is fully extracted.
+  const isPartialBook = playback.status === "partial"
+    || (playback.total_chapters != null && (playback.chapters_ready ?? 0) < playback.total_chapters);
+
+  if (analysis && !hasMomentArt && !isPartialBook) {
     try {
       playback = enrichPlaybackFromAnalysis(playback, analysis);
       recompiled = true;

@@ -98,6 +98,7 @@ export async function runEdgeImaging({
   existingMedia = null,
   diversify = false,
   ignorePins = false,
+  preferProvider = null,
   compare = false,
   stageUntilConfirm = false,
   onComparison = null,
@@ -116,7 +117,12 @@ export async function runEdgeImaging({
     cover: existingMedia?.cover || null,
     inserts: { ...(existingMedia?.inserts || {}) },
   };
-  let imagePin = ignorePins ? null : null;
+  // `ignorePins` never actually carried a prior pin into this function — a
+  // regen batch always started fresh regardless of its value (dead branch,
+  // both sides were `null`). It answers "respect an old pin?"; an explicit
+  // `preferProvider` answers "the user picked X for this run" — unrelated,
+  // so it seeds the starting pin unconditionally.
+  let imagePin = preferProvider || null;
   let pollinationsAltFirst = false;
   let ok = 0;
   let fail = 0;
@@ -155,7 +161,7 @@ export async function runEdgeImaging({
     onProgress?.({ kind: "cover", index: 1, total: 1, id: "cover" });
     const title = analysis.title || book_id;
     const coverDesc = `Evocative book cover key art for '${title}'. No text.`;
-    const prompt = composeImagePrompt(coverDesc, { subjectType: "background", style: styleKey });
+    const prompt = composeImagePrompt(coverDesc, { subjectType: "background", style: art_style });
     const seed = hashSeed(`${book_id}:cover:${art_style}${diversify ? `:${Date.now()}` : ""}`);
     const beforeLive = media.cover || null;
     try {
@@ -211,7 +217,7 @@ export async function runEdgeImaging({
     const c = chars[ci];
     onProgress?.({ kind: "character", index: ci + 1, total: chars.length, id: c.id });
     const desc = characterGenDescription(c);
-    const prompt = composeImagePrompt(desc, { subjectType: "character", style: styleKey });
+    const prompt = composeImagePrompt(desc, { subjectType: "character", style: art_style });
     const seed = hashSeed(`${book_id}:${c.id}:${art_style}${diversify ? `:${Date.now()}` : ""}`);
     const beforeLive = media.characters[c.id] || null;
     const refTargets = await referenceTargetsForCharacterWithStylePool(
@@ -273,7 +279,7 @@ export async function runEdgeImaging({
     }
     onProgress?.({ kind: "background", index: si + 1, total: scenes.length, id: sid });
     const desc = scene.background_desc || scene.location || scene.title || sid;
-    const prompt = composeImagePrompt(desc, { subjectType: "background", style: styleKey });
+    const prompt = composeImagePrompt(desc, { subjectType: "background", style: art_style });
     const seed = hashSeed(`${book_id}:${sid}:${art_style}${diversify ? `:${Date.now()}` : ""}`);
     const beforeLive = media.backgrounds[sid] || null;
     try {

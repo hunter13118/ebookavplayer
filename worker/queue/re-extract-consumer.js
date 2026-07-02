@@ -6,7 +6,7 @@ import { createKvReporter } from "../_shared/job-kv-throttle.js";
 import { createPhaseLogger, PHASE } from "../_shared/phase-debug.js";
 
 export async function handleReExtractMessage(message, env) {
-  const { job_id, book_id, force_provider } = message.body;
+  const { job_id, book_id, force_provider, prefer_provider } = message.body;
   const dbg = createPhaseLogger(env, "re-extract", job_id);
   const reporter = createKvReporter();
 
@@ -51,7 +51,7 @@ export async function handleReExtractMessage(message, env) {
       { book_id, title, author, body_text: parsed.body_text },
       {
         env,
-        preferProvider: force_provider ? null : meta.extract_provider,
+        preferProvider: prefer_provider || (force_provider ? null : meta.extract_provider),
         epubChapters: parsed.chapters,
         onProgress: {
           extract: ({ chunk, total, provider: p }) => {

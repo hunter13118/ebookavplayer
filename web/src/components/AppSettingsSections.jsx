@@ -18,37 +18,45 @@ export function DisplaySettings({
       <h3>Display</h3>
       <label className="vae-sheet-field">
         Box style
-        <select data-testid="select-style" value={prefs.displayStyle}
-          onChange={(e) => upd("displayStyle", KEYS.displayStyle, e.target.value)}>
-          <option value="smooth">Smooth (modern)</option>
-          <option value="pixel">Pixel-art</option>
-          <option value="subtitle">Subtitle</option>
-        </select>
+        <span className="vae-select-wrap">
+          <select className="vae-select" data-testid="select-style" value={prefs.displayStyle}
+            onChange={(e) => upd("displayStyle", KEYS.displayStyle, e.target.value)}>
+            <option value="smooth">Smooth (modern)</option>
+            <option value="pixel">Pixel-art</option>
+            <option value="subtitle">Subtitle</option>
+          </select>
+        </span>
       </label>
       <label className="vae-sheet-field">
         Advance
-        <select data-testid="select-advance" value={prefs.autoAdvance ? "auto" : "click"}
-          onChange={(e) => upd("autoAdvance", KEYS.autoAdvance, e.target.value === "auto")}>
-          <option value="auto">Auto</option>
-          <option value="click">Click-through</option>
-        </select>
+        <span className="vae-select-wrap">
+          <select className="vae-select" data-testid="select-advance" value={prefs.autoAdvance ? "auto" : "click"}
+            onChange={(e) => upd("autoAdvance", KEYS.autoAdvance, e.target.value === "auto")}>
+            <option value="auto">Auto</option>
+            <option value="click">Click-through</option>
+          </select>
+        </span>
       </label>
       <label className="vae-sheet-field">
         Theme
-        <select data-testid="select-theme" value={prefs.theme}
-          onChange={(e) => upd("theme", KEYS.theme, e.target.value)}>
-          <option value="dark">Dark</option>
-          <option value="light">Light</option>
-        </select>
+        <span className="vae-select-wrap">
+          <select className="vae-select" data-testid="select-theme" value={prefs.theme}
+            onChange={(e) => upd("theme", KEYS.theme, e.target.value)}>
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+          </select>
+        </span>
       </label>
-      <label className="vae-check vae-sheet-field">
+      <label className="vae-checkbox">
         <input type="checkbox" data-testid="sprite-borders-input" checked={prefs.spriteBorders}
           onChange={(e) => upd("spriteBorders", KEYS.spriteBorders, e.target.checked)} />
+        <span className="vae-checkbox-box" aria-hidden />
         Sprite borders
       </label>
-      <label className="vae-check vae-sheet-field">
+      <label className="vae-checkbox">
         <input type="checkbox" data-testid="portrait-layout-input" checked={prefs.portraitLayout}
           onChange={(e) => upd("portraitLayout", KEYS.portraitLayout, e.target.checked)} />
+        <span className="vae-checkbox-box" aria-hidden />
         Portrait stage layout
       </label>
       {showFullscreen && onToggleFullscreen && (
@@ -72,15 +80,29 @@ export function PlaybackSettings({ prefs, setPrefs }) {
       <h3>Playback steps</h3>
       <label className="vae-sheet-field">
         Rewind lines
-        <input type="number" min={1} max={20} data-testid="rewind-steps-input"
+        <input type="number" min={1} max={20} className="vae-input" data-testid="rewind-steps-input"
           value={prefs.rewindSteps}
           onChange={(e) => upd("rewindSteps", KEYS.rewindSteps, parseInt(e.target.value, 10) || 3)} />
       </label>
       <label className="vae-sheet-field">
         Skip forward lines
-        <input type="number" min={1} max={20} data-testid="next-steps-input"
+        <input type="number" min={1} max={20} className="vae-input" data-testid="next-steps-input"
           value={prefs.nextSteps}
           onChange={(e) => upd("nextSteps", KEYS.nextSteps, parseInt(e.target.value, 10) || 1)} />
+      </label>
+      <label className="vae-sheet-field">
+        Sleep timer
+        <span className="vae-select-wrap">
+          <select className="vae-select" data-testid="sleep-timer-select"
+            value={prefs.sleepTimerMinutes}
+            onChange={(e) => upd("sleepTimerMinutes", KEYS.sleepTimerMinutes, parseInt(e.target.value, 10) || 0)}>
+            <option value={0}>Off</option>
+            <option value={15}>15 minutes</option>
+            <option value={30}>30 minutes</option>
+            <option value={45}>45 minutes</option>
+            <option value={60}>60 minutes</option>
+          </select>
+        </span>
       </label>
     </section>
   );
@@ -126,12 +148,14 @@ export function AudiobookSyncSettings({
       <h3>Audiobook sync</h3>
       <label className="vae-sheet-field">
         Sync strategy
-        <select data-testid="select-timing-algorithm" value={prefs.timingAlgorithm}
-          onChange={(e) => upd("timingAlgorithm", KEYS.timingAlgorithm, e.target.value)}>
-          {TIMING_ALGORITHMS.map((a) => (
-            <option key={a.id} value={a.id} title={a.blurb}>{a.label}</option>
-          ))}
-        </select>
+        <span className="vae-select-wrap">
+          <select className="vae-select" data-testid="select-timing-algorithm" value={prefs.timingAlgorithm}
+            onChange={(e) => upd("timingAlgorithm", KEYS.timingAlgorithm, e.target.value)}>
+            {TIMING_ALGORITHMS.map((a) => (
+              <option key={a.id} value={a.id} title={a.blurb}>{a.label}</option>
+            ))}
+          </select>
+        </span>
       </label>
       {m4bStatus?.attached ? (
         <div className="vae-sheet-field">

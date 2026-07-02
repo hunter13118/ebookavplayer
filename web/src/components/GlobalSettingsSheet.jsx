@@ -2,32 +2,45 @@ import { useEffect, useState } from "react";
 import { fetchEdgeVoices } from "../api.js";
 import { KEYS, setPref } from "../audio/voicePrefs.js";
 import {
-  BRIDGE_CHANGE_EVENT,
-  DEFAULT_LOCAL_EDGE,
-  clearLocalApiBridge,
-  getLocalApiBridge,
-  setLocalApiBridge,
-} from "../localApiBridge.js";
+  CONNECTION_CHANGE_EVENT,
+  OFFLINE_ID,
+  SERVER_ID,
+  addConnection,
+  listConnections,
+  removeConnection,
+} from "../backends/connections.js";
+import { HEALTH_CHANGE_EVENT, getHealthSnapshot, retryConnection } from "../backends/health.js";
 import { DisplaySettings, PlaybackSettings } from "./AppSettingsSections.jsx";
 import VoiceField from "./VoiceField.jsx";
 
-/** Library-level settings: display, playback, default narrator, AI pipeline. */
+const STATUS_LABEL = {
+  unknown: "checking…",
+  checking: "checking…",
+  online: "online",
+  offline: "unreachable",
+};
+
+/** Library-level settings: display, playback, default narrator, AI pipeline, backends. */
 export default function GlobalSettingsSheet({
   open, onClose, prefs, setPrefs, offline, onOpenPipeline,
 }) {
   const [voices, setVoices] = useState([]);
   const [err, setErr] = useState("");
-  const [bridgeUrl, setBridgeUrl] = useState(() => getLocalApiBridge() || DEFAULT_LOCAL_EDGE);
-  const [bridgeOn, setBridgeOn] = useState(() => Boolean(getLocalApiBridge()));
+  const [connections, setConnections] = useState(() => listConnections());
+  const [, setHealthTick] = useState(0);
+  const [newLabel, setNewLabel] = useState("");
+  const [newUrl, setNewUrl] = useState("");
+  const [addErr, setAddErr] = useState("");
 
   useEffect(() => {
-    const sync = () => {
-      const active = getLocalApiBridge();
-      setBridgeOn(Boolean(active));
-      if (active) setBridgeUrl(active);
+    const syncConnections = () => setConnections(listConnections());
+    const syncHealth = () => setHealthTick((n) => n + 1);
+    window.addEventListener(CONNECTION_CHANGE_EVENT, syncConnections);
+    window.addEventListener(HEALTH_CHANGE_EVENT, syncHealth);
+    return () => {
+      window.removeEventListener(CONNECTION_CHANGE_EVENT, syncConnections);
+      window.removeEventListener(HEALTH_CHANGE_EVENT, syncHealth);
     };
-    window.addEventListener(BRIDGE_CHANGE_EVENT, sync);
-    return () => window.removeEventListener(BRIDGE_CHANGE_EVENT, sync);
   }, []);
 
   useEffect(() => {
@@ -106,58 +119,91 @@ export default function GlobalSettingsSheet({
           </section>
         )}
 
-        <section className="vae-menu-section" data-testid="local-api-bridge-settings">
-          <h3>Developer</h3>
+        <section className="vae-menu-section" data-testid="backend-connections-settings">
+          <h3>Backends</h3>
           <p className="vae-sheet-hint">
-            Point API calls at a local wrangler edge worker while using the deployed page.
-            Same machine: <code>http://127.0.0.1:8600/projects/ebookavplayer/api</code>.
-            Or open with <code>?localApi=1</code>.
+            This device and Cloud are always available. Add a remote backend to reach a
+            locally-run wrangler edge (e.g. via a Cloudflare Tunnel) — its library section
+            only appears once it responds to a health check.
           </p>
-          <label className="vae-sheet-field vae-bridge-toggle">
-            <span>
-              <input
-                type="checkbox"
-                checked={bridgeOn}
-                data-testid="local-api-bridge-toggle"
-                onChange={(e) => {
-                  const on = e.target.checked;
-                  setBridgeOn(on);
-                  if (on) setLocalApiBridge(bridgeUrl || DEFAULT_LOCAL_EDGE);
-                  else clearLocalApiBridge();
-                }}
-              />
-              {" "}Local backend bridge
-            </span>
+          <ul className="vae-connection-list" data-testid="connection-list">
+            {connections.map((conn) => {
+              const snap = getHealthSnapshot(conn.id);
+              const isBuiltin = conn.id === OFFLINE_ID || conn.id === SERVER_ID;
+              return (
+                <li key={conn.id} className="vae-connection-row" data-testid={`connection-row-${conn.id}`}>
+                  <span
+                    className={`vae-connection-dot vae-connection-dot-${snap.status}`}
+                    title={STATUS_LABEL[snap.status] || snap.status}
+                  />
+                  <span className="vae-connection-label">
+                    {conn.label}
+                    {conn.baseUrl ? <span className="vae-connection-url"> — {conn.baseUrl}</span> : null}
+                  </span>
+                  {!isBuiltin && snap.status !== "online" && (
+                    <button
+                      type="button"
+                      className="vae-menu-link"
+                      data-testid={`connection-retry-${conn.id}`}
+                      onClick={() => retryConnection(conn)}
+                    >
+                      Retry
+                    </button>
+                  )}
+                  {!isBuiltin && (
+                    <button
+                      type="button"
+                      className="vae-menu-link"
+                      data-testid={`connection-remove-${conn.id}`}
+                      onClick={() => removeConnection(conn.id)}
+                    >
+                      Remove
+                    </button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+          <label className="vae-sheet-field">
+            Label
+            <input
+              type="text"
+              className="vae-input"
+              data-testid="connection-new-label"
+              value={newLabel}
+              onChange={(e) => setNewLabel(e.target.value)}
+              placeholder="M4 Pro (tunnel)"
+            />
           </label>
-          {bridgeOn && (
-            <label className="vae-sheet-field">
-              API base URL
-              <input
-                type="url"
-                data-testid="local-api-bridge-url"
-                value={bridgeUrl}
-                onChange={(e) => setBridgeUrl(e.target.value)}
-                onBlur={() => {
-                  if (bridgeOn && bridgeUrl.trim()) setLocalApiBridge(bridgeUrl.trim());
-                }}
-                placeholder={DEFAULT_LOCAL_EDGE}
-              />
-            </label>
-          )}
-          {bridgeOn && (
-            <button
-              type="button"
-              className="vae-menu-link"
-              data-testid="local-api-bridge-apply"
-              onClick={() => {
-                setLocalApiBridge(bridgeUrl.trim() || DEFAULT_LOCAL_EDGE);
-                onClose();
-                window.location.reload();
-              }}
-            >
-              Apply &amp; reload
-            </button>
-          )}
+          <label className="vae-sheet-field">
+            API base URL
+            <input
+              type="url"
+              className="vae-input"
+              data-testid="connection-new-url"
+              value={newUrl}
+              onChange={(e) => setNewUrl(e.target.value)}
+              placeholder="https://your-tunnel.trycloudflare.com/projects/ebookavplayer/api"
+            />
+          </label>
+          {addErr && <p className="vae-sheet-err">{addErr}</p>}
+          <button
+            type="button"
+            className="vae-menu-link"
+            data-testid="connection-add"
+            onClick={() => {
+              try {
+                addConnection({ label: newLabel, baseUrl: newUrl });
+                setNewLabel("");
+                setNewUrl("");
+                setAddErr("");
+              } catch (e) {
+                setAddErr(e.message || "Could not add backend");
+              }
+            }}
+          >
+            Add remote backend
+          </button>
         </section>
 
         {err && <p className="vae-sheet-err">{err}</p>}
