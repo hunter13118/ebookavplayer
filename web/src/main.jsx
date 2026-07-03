@@ -8,8 +8,11 @@ import { PortfolioClerkProvider } from "./lib/portfolioClerk.jsx";
 import { initLocalApiBridgeFromUrl } from "./localApiBridge.js";
 
 if (!import.meta.env.VITE_DISABLE_PWA) {
-  const { registerSW } = await import("virtual:pwa-register");
-  registerSW({ immediate: true });
+  // Not top-level awaited: the portfolio embed's build target (older browser
+  // set, for broad compat across the whole site) doesn't support top-level
+  // await, and registration is fire-and-forget anyway — nothing downstream
+  // depends on it having resolved.
+  import("virtual:pwa-register").then(({ registerSW }) => registerSW({ immediate: true }));
 }
 initLocalApiBridgeFromUrl();
 
