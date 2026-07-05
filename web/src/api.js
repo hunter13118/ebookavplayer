@@ -444,6 +444,28 @@ export async function saveVoiceOverrides(bookId, overrides) {
   return res.json();
 }
 
+export async function mergeCharacter(bookId, { from, to }) {
+  const res = await fetch(apiUrl(`/books/${encodeURIComponent(bookId)}/characters/merge`), {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ from, to }),
+    signal: AbortSignal.timeout(12000),
+  });
+  if (!res.ok) throw new Error(`character merge: HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function renameCharacter(bookId, { id, name }) {
+  const res = await fetch(apiUrl(`/books/${encodeURIComponent(bookId)}/characters/rename`), {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id, name }),
+    signal: AbortSignal.timeout(12000),
+  });
+  if (!res.ok) throw new Error(`character rename: HTTP ${res.status}`);
+  return res.json();
+}
+
 export async function postResume(bookId, pos) {
   try {
     await fetch(apiUrl(`/books/${encodeURIComponent(bookId)}/progress`), {

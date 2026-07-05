@@ -12,6 +12,8 @@ import PinMismatchConfirm from "./PinMismatchConfirm.jsx";
 
 import VoiceField from "./VoiceField.jsx";
 
+import CharacterManager from "./CharacterManager.jsx";
+
 import { DisplaySettings, PlaybackSettings, AudiobookSyncSettings } from "./AppSettingsSections.jsx";
 
 import {
@@ -347,6 +349,18 @@ export default function PlayerMenu({
         <AudiobookSyncSettings prefs={prefs} setPrefs={setPrefs}
 
           m4bStatus={m4bStatus} onAttachM4b={onAttachM4b} onRemoveM4b={onRemoveM4b} />
+
+
+
+        <section className="vae-menu-section">
+
+          <h3>Characters</h3>
+
+          <p className="vae-sheet-hint">Rename a character, or merge one into an existing one if extraction got it wrong (e.g. "Unnamed male protagonist" → Eizo) — applies everywhere, past and future chapters, sprite and voice included.</p>
+
+          <CharacterManager book={book} onRefresh={onRefresh} disabled={disabled || extractBusy} />
+
+        </section>
 
 
 

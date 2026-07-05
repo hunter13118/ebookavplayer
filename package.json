@@ -20,6 +20,7 @@
     "test:compile-chapter-playback": "node tests/compile-chapter-playback.test.mjs",
     "test:ordered-drain": "node tests/ordered-drain.test.mjs",
     "test:character-reconcile": "node tests/character-reconcile.test.mjs",
+    "test:character-merge": "node tests/character-merge.test.mjs",
     "test:parallel-chapter-drain": "node tests/parallel-chapter-drain.test.mjs",
     "test:raw-chapter-cache": "node tests/raw-chapter-cache.test.mjs",
     "test:reference-images": "node tests/reference-images.test.mjs",

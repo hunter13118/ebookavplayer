@@ -728,6 +728,15 @@ body { margin: 0; background: var(--bg); color: var(--text);
 }
 .vae-pipeline-apply-btn:disabled { opacity: .5; cursor: not-allowed; }
 
+/* ---------- character manager ---------- */
+.vae-character-list { display: flex; flex-direction: column; gap: 10px; }
+.vae-character-row { border: 1px solid var(--box-border); border-radius: 8px; padding: 8px 10px; }
+.vae-character-row-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.vae-character-name { flex: 1; min-width: 120px; font-size: .85rem; padding: 4px 6px;
+  border-radius: 6px; border: 1px solid var(--box-border); background: var(--bg); color: var(--text); }
+.vae-character-merge { display: flex; gap: 8px; align-items: center; }
+.vae-character-merge select { flex: 1; min-width: 0; font-size: .82rem; }
+
 /* ---------- voice picker ---------- */
 .vae-voice-field { margin-bottom: 12px; }
 .vae-voice-field-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin-bottom: 4px; }

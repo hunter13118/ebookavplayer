@@ -29,6 +29,7 @@ import { onPipelineGet, onPipelinePatch } from "./api/v1/pipeline.js";
 import { onTtsPost } from "./api/v1/tts.js";
 import { onProgressGet, onProgressPost } from "./api/v1/progress.js";
 import { onEdgeVoicesGet, onBookVoicesGet, onBookVoicesPost } from "./api/v1/voices.js";
+import { onCharacterMergePatch, onCharacterRenamePatch } from "./api/v1/characters.js";
 import { onQueueBatch } from "./queue/dispatch.js";
 import { json } from "./_shared/jobs-kv.js";
 import { huggingfaceAvailable } from "./_shared/freemium-image.js";
@@ -141,6 +142,20 @@ export async function handleEbookavplayerApi(request, env, ctx) {
   const illustrationRefs = path.match(/^\/books\/([^/]+)\/illustration-refs$/);
   if (method === "PATCH" && illustrationRefs) {
     const edge = await onIllustrationRefsPatch({ request, env, bookId: illustrationRefs[1] });
+    if (edge) return edge;
+    return onRequest({ request, env });
+  }
+
+  const characterMerge = path.match(/^\/books\/([^/]+)\/characters\/merge$/);
+  if (method === "PATCH" && characterMerge) {
+    const edge = await onCharacterMergePatch({ request, env, bookId: characterMerge[1] });
+    if (edge) return edge;
+    return onRequest({ request, env });
+  }
+
+  const characterRename = path.match(/^\/books\/([^/]+)\/characters\/rename$/);
+  if (method === "PATCH" && characterRename) {
+    const edge = await onCharacterRenamePatch({ request, env, bookId: characterRename[1] });
     if (edge) return edge;
     return onRequest({ request, env });
   }

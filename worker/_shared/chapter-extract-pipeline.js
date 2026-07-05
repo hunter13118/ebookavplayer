@@ -23,6 +23,7 @@ import { freemiumExtractBookByChapter } from "./freemium-extract.js";
 import { repairAnalysis } from "./dialogue-repair.js";
 import { attributeAnalysis } from "./dialogue-attribute.js";
 import { compileChapterPlayback } from "./compile-playback.js";
+import { applyCharacterAliases } from "./character-merge.js";
 import {
   getCheckpoint, putCheckpoint, emptyCheckpoint, putChapterPack,
 } from "./book-checkpoint.js";
@@ -88,6 +89,14 @@ export async function runCheckpointedExtraction({
   let checkpoint = await getCheckpoint(env, book_id);
   const isResume = Boolean(checkpoint?.chapters_done?.length);
   if (!checkpoint) checkpoint = emptyCheckpoint(parsed.chapters.length);
+
+  // User-confirmed character merges (e.g. "unnamed-male-protagonist" -> "eizo")
+  // persist here so every chapter extracted from now on — resumed or a fresh
+  // re-extract alike — lands on the canonical id without relying on the
+  // heuristic reconcile to happen to re-match it. See worker/api/v1/characters.js.
+  const characterAliases = env.VAE_JOBS
+    ? JSON.parse((await env.VAE_JOBS.get(`aliases:${book_id}`)) || "{}")
+    : {};
 
   await putBookIndex(env, book_id, {
     book_id, title, author, status: "processing", stage: "parsing",
@@ -178,6 +187,7 @@ export async function runCheckpointedExtraction({
           if (attrLlmOn) {
             repaired = await attributeAnalysisLLM(repaired, { env, preferProvider: provider });
           }
+          repaired = applyCharacterAliases(repaired, characterAliases);
 
           const {
             scenes, newCharactersOut, nextLineIdx, updatedVoiceState,
