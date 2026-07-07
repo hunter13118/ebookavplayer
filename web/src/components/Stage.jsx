@@ -8,7 +8,7 @@ import { sceneDisplayTitle } from "../sceneLabels.js";
 export default function Stage({
   scene, characters, speakerId, lineSprites, curExpression, borders, pixelFilter, portraitLayout,
   illustrationFlash, lineKey, flashActive, flashDismissSignal, flashManual,
-  onFlashDone, onDismissFlash, onSwipeNext, onSwipePrev, children,
+  onFlashDone, onDismissFlash, onSwipeNext, onSwipePrev, sceneDimmed, children,
 }) {
   const touchStart = useRef(null);
 
@@ -84,6 +84,11 @@ export default function Stage({
         autoDismiss={!flashManual}
         onDone={onFlashDone}
         onTap={onDismissFlash}
+      />
+      <div
+        className={`vae-scene-dim-overlay${sceneDimmed ? " show" : ""}`}
+        data-testid="scene-dim-overlay"
+        aria-hidden
       />
       {children}
     </div>

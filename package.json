@@ -9,7 +9,7 @@
     "wrangler": "^4.0.0"
   },
   "scripts": {
-    "dev:worker": "node scripts/sync-dev-vars.mjs && wrangler dev --config worker/wrangler.toml",
+    "dev:worker": "node scripts/sync-dev-vars.mjs && wrangler dev --config worker/wrangler.toml --port \"${PORT:-8600}\"",
     "local:edge": "npm run dev:worker",
     "dev:web": "npm --prefix web run dev",
     "test:sprite-purge": "node tests/sprite-bg-purge.test.mjs",

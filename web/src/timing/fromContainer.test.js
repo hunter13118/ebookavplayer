@@ -131,4 +131,40 @@ describe("computeTimelineFromM4b", () => {
     expect(result.containerInfo.moovFound).toBe(false);
     expect(result.totalDurationMs).toBe(0);
   });
+
+  it("routes the whisperx algorithm through the align server, sending flattened whole-book lines (no boundary guess)", async () => {
+    const bytes = concat([ftyp, moov(1000, 10000, [[0, "C1"], [6000, "C2"]])]);
+    const blob = new Blob([bytes]);
+    const fetchImpl = async (url, opts) => {
+      expect(url).toBe("http://127.0.0.1:7861/align");
+      const lines = JSON.parse(opts.body.get("lines"));
+      // Container's chpl markers are irrelevant to the whisperx request now —
+      // real chapter boundaries come from matching against the real audio,
+      // not from a pre-guessed slice, so no chapter/start_ms/end_ms is sent.
+      expect(lines).toHaveLength(3);
+      const rows = [
+        {
+          status: "chunk",
+          lines: [
+            { idx: 0, start_ms: 0, end_ms: 1000, words: [] },
+            { idx: 1, start_ms: 1000, end_ms: 6000, words: [] },
+            { idx: 2, start_ms: 6000, end_ms: 10000, words: [] },
+          ],
+          processed_ms: 10000, total_ms: 10000, meta: {},
+        },
+        { status: "done", meta: {} },
+      ];
+      const text = rows.map((r) => JSON.stringify(r)).join("\n") + "\n";
+      return { ok: true, body: { getReader: () => { let sent = false; return { async read() { if (sent) return { done: true }; sent = true; return { done: false, value: new TextEncoder().encode(text) }; } }; } } };
+    };
+    const result = await computeTimelineFromM4b({
+      blob, slidesByChapter: TWO_CHAPTER_SBC, algorithmId: "whisperx",
+      connection: { baseUrl: "http://127.0.0.1:7861" }, onChapterProgress: () => {}, fetchImpl,
+    });
+    expect(result.algorithm).toBe("whisperx");
+    expect(result.containerInfo.moovFound).toBe(true);
+    expect(result.lineTimings[0]).toEqual({ startMs: 0, endMs: 1000, durationMs: 1000 });
+    expect(result.lineTimings[2]).toEqual({ startMs: 6000, endMs: 10000, durationMs: 4000 });
+    expect(result.meta.chapterBoundarySource).toBe("acoustic-match");
+  });
 });

@@ -12,6 +12,7 @@ export const KEYS = {
   rewindSteps: "vae-rewind-steps",
   nextSteps: "vae-next-steps",
   timingAlgorithm: "vae-timing-algorithm",   // audiobook→script sync strategy
+  alignConnectionId: "vae-align-connection-id", // which backend connection runs whisperx alignment
   portraitLayout: "vae-portrait-layout",
   progressScope: "vae-progress-scope",
   narratorPitch: "vae-narrator-pitch",
@@ -38,6 +39,7 @@ export function getPrefs() {
     rewindSteps: parseInt(g(KEYS.rewindSteps, "3"), 10) || 3,
     nextSteps: parseInt(g(KEYS.nextSteps, "1"), 10) || 1,
     timingAlgorithm: g(KEYS.timingAlgorithm, "linear"),
+    alignConnectionId: g(KEYS.alignConnectionId, ""),
     portraitLayout: g(KEYS.portraitLayout, "false") === "true",
     progressScope: g(KEYS.progressScope, "chapter"),
     narratorPitch: g(KEYS.narratorPitch, "+0Hz"),

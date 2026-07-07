@@ -4,6 +4,7 @@ export default function ProcessingBar({ stage, progress, label, source, provider
   const stageLabel = stage === "analyzing" ? "Analyzing text"
     : stage === "imaging" ? "Generating art"
     : stage === "parsing" ? "Reading EPUB"
+    : stage === "aligning" ? "Syncing audiobook"
     : stage === "queued" ? "Queued"
     : stage === "done" ? "Complete"
     : "Processing";

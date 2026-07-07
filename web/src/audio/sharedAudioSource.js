@@ -24,9 +24,41 @@ let boundaryTimer = null;
 let activeToken = 0; // invalidates a stale timer/handler after stop()/load()
 let activeSegment = null; // { token, settleAsEnded() } for the in-flight playSharedSegment() call, if any
 
+// True whenever the element is stalled waiting for more data (a real,
+// sometimes multi-second-or-longer delay for a large m4b whose moov atom
+// isn't at the front — see moovAtomScanner.js's comments on this same
+// container quirk). Without surfacing this, a fresh seek into unbuffered
+// territory looks identical on screen to a genuine freeze: same text, same
+// clock, same "playing" status — nothing distinguishes "loading" from
+// "stuck", including to a user tempted to re-press Play (which actually
+// hits Pause once it secretly *has* started, silently reversing it).
+let isBuffering = false;
+const bufferingListeners = new Set();
+
+function setBuffering(next) {
+  if (isBuffering === next) return;
+  isBuffering = next;
+  bufferingListeners.forEach((fn) => fn(next));
+}
+
+export function isSharedAudioBuffering() {
+  return isBuffering;
+}
+
+/** Subscribe to buffering state changes; returns an unsubscribe function. */
+export function onSharedAudioBufferingChange(fn) {
+  bufferingListeners.add(fn);
+  return () => bufferingListeners.delete(fn);
+}
+
 function ensureAudioEl() {
   if (!audioEl) {
     audioEl = new Audio();
+    // Persistent for the element's lifetime (unlike onended/onerror below,
+    // which get swapped per in-flight call) — buffering can start/stop at
+    // any time, not just around a specific playSharedSegment/Continuous call.
+    audioEl.onwaiting = () => setBuffering(true);
+    audioEl.onplaying = () => setBuffering(false);
   }
   return audioEl;
 }
@@ -47,7 +79,10 @@ export function unloadSharedAudio() {
   if (objectUrl) URL.revokeObjectURL(objectUrl);
   objectUrl = null;
   loadedBlob = null;
-  if (audioEl) audioEl.src = "";
+  if (audioEl) {
+    audioEl.src = "";
+    audioEl.currentTime = 0;
+  }
 }
 
 export function isSharedAudioLoaded() {
@@ -113,6 +148,57 @@ export async function playSharedSegment(startMs, endMs, rate, { onStart, onEnd, 
 function clearBoundaryTimer() {
   if (boundaryTimer != null) clearTimeout(boundaryTimer);
   boundaryTimer = null;
+}
+
+/**
+ * Play the loaded shared audio CONTINUOUSLY from fromMs onward — no
+ * boundary-kill setTimeout, unlike playSharedSegment(). This is Mode B
+ * (acoustic-timeline) playback: the caller (orchestrator._playMediaElementClock)
+ * polls getSharedAudioCurrentTimeMs() itself via a single rAF loop to detect
+ * line boundaries and drive typewriter reveal, rather than us chopping
+ * playback into discrete per-line segments.
+ *
+ * onEnded fires once, only on real end-of-file or a genuine element error —
+ * a later call to this function or to stopSharedAudio() supersedes/cancels
+ * this one silently (same superseding convention as playSharedSegment).
+ */
+export async function playSharedContinuous(fromMs, rate, { onEnded, onError } = {}) {
+  if (!loadedBlob) { onError?.(new Error("playSharedContinuous: no shared audio loaded")); return; }
+  const el = ensureAudioEl();
+  const myToken = ++activeToken;
+  clearBoundaryTimer();
+  activeSegment = null;
+
+  el.onended = () => { if (myToken === activeToken) onEnded?.(); };
+  el.onerror = () => { if (myToken === activeToken) onError?.(new Error("shared audio playback error")); };
+
+  try {
+    el.playbackRate = rate || 1;
+    el.currentTime = Math.max(0, fromMs / 1000);
+    await el.play();
+  } catch (e) {
+    if (myToken === activeToken) onError?.(e);
+  }
+}
+
+/** Read the shared audio element's current playhead position, in ms. */
+export function getSharedAudioCurrentTimeMs() {
+  return audioEl ? (audioEl.currentTime || 0) * 1000 : 0;
+}
+
+/** Read the shared audio element's total duration, in ms (0 before metadata loads). */
+export function getSharedAudioDurationMs() {
+  return audioEl && Number.isFinite(audioEl.duration) ? audioEl.duration * 1000 : 0;
+}
+
+/** Seek the shared audio element without starting or stopping playback. */
+export function seekSharedAudioMs(ms) {
+  if (audioEl) audioEl.currentTime = Math.max(0, ms / 1000);
+}
+
+/** Update playbackRate on the live element without seeking or restarting. */
+export function setSharedAudioPlaybackRate(rate) {
+  if (audioEl) audioEl.playbackRate = rate || 1;
 }
 
 /**

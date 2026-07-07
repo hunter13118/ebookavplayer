@@ -147,6 +147,14 @@ body { margin: 0; background: var(--bg); color: var(--text);
 .vae-illustration-flash.show { opacity: 1; }
 .vae-illustration-flash img { max-width: 94%; max-height: 90%; object-fit: contain;
   border-radius: 10px; box-shadow: 0 12px 40px rgba(0,0,0,.55); pointer-events: none; }
+/* Slight fade away from the scene while a narrator-filler gap plays (audio
+   content with no book-line counterpart) — same opacity-transition pattern
+   as .vae-illustration-flash above, but a lighter dim (not a full cover) and
+   sitting below the dialogue box (z-index 4) so the narrator bubble reads
+   clearly on top of it. */
+.vae-scene-dim-overlay { position: absolute; inset: 0; z-index: 2;
+  background: rgba(8,10,18,.55); opacity: 0; transition: opacity 500ms ease; pointer-events: none; }
+.vae-scene-dim-overlay.show { opacity: 1; }
 .vae-player-fullscreen { position: fixed; inset: 0; z-index: 200; background: var(--bg);
   overflow: auto; padding: 8px; max-width: none; }
 .vae-player-portrait .vae-stage { aspect-ratio: 9/16; min-height: min(78vh, 820px); }
@@ -177,6 +185,11 @@ body { margin: 0; background: var(--bg); color: var(--text);
 .vae-progress-meta { display: flex; justify-content: space-between; align-items: baseline;
   gap: 8px; margin-top: 4px; font-size: .72rem; color: var(--muted); }
 .vae-progress-time { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.vae-gap-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.vae-gap-item { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%;
+  text-align: left; white-space: normal; }
+.vae-gap-label { font-size: .78rem; font-weight: 600; color: var(--accent); }
+.vae-gap-preview { font-size: .8rem; color: var(--muted); }
 
 @media (max-width: 640px) {
   .vae-app { padding: 6px; max-width: none; }
@@ -341,6 +354,11 @@ body { margin: 0; background: var(--bg); color: var(--text);
   padding: 4px 10px; font-size: .78rem; color: var(--muted); cursor: pointer;
   font-variant-numeric: tabular-nums; }
 .vae-sleep-timer-badge:hover { color: var(--text); border-color: var(--accent); }
+
+.vae-buffering-badge { display: inline-flex; align-items: center; align-self: center;
+  background: var(--panel); border: 1px solid var(--box-border); border-radius: 999px;
+  padding: 4px 10px; margin: 6px 0; font-size: .78rem; color: var(--muted);
+  animation: vae-pulse 1.2s ease-in-out infinite; }
 
 /* ---------- Library landing ---------- */
 .vae-library-landing { min-height:100vh; display:flex; flex-direction:column; background:var(--bg); }

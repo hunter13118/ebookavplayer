@@ -42,9 +42,14 @@ export function countSlides(slidesByChapter) {
  * @param {string} marker
  * @param {import('./types.js').ChapterTiming[]} chapters
  * @param {Object} [meta]
+ * @param {Array<{id:string,startMs:number,endMs:number,text:string}>} [syntheticSegments]
+ *        Audio-only content with no book-line counterpart (WhisperX gap
+ *        detection) — narrator-filler entries the orchestrator merges into
+ *        the playback timeline alongside `lineTimings`, keyed by timestamp
+ *        rather than line index. Empty for every algorithm except whisperx.
  * @returns {import('./types.js').TimingResult}
  */
-export function buildResult(algorithm, marker, chapters, meta = {}) {
+export function buildResult(algorithm, marker, chapters, meta = {}, syntheticSegments = []) {
   /** @type {Record<number,{startMs:number,endMs:number,durationMs:number}>} */
   const lineTimings = {};
   let totalDurationMs = 0;
@@ -58,7 +63,9 @@ export function buildResult(algorithm, marker, chapters, meta = {}) {
       };
     }
   }
-  return { algorithm, marker, unit: "line", totalDurationMs, chapters, lineTimings, meta };
+  return {
+    algorithm, marker, unit: "line", totalDurationMs, chapters, lineTimings, meta, syntheticSegments,
+  };
 }
 
 /**

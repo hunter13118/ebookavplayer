@@ -7,6 +7,7 @@ import { linearSplit, LINEAR_MARKER } from "./linearSplit.js";
 import { punctuationDensity, PUNCTUATION_MARKER } from "./punctuationDensity.js";
 import { moovAtomTiming, MOOV_MARKER } from "./moovAtomScanner.js";
 import { forcedAlignerClient, ALIGNER_MARKER } from "./forcedAlignerClient.js";
+import { whisperxAlignerClient, WHISPERX_MARKER } from "./whisperxAlignerClient.js";
 
 export const DEFAULT_ALGORITHM = "linear";
 
@@ -43,6 +44,14 @@ export const ALGORITHMS = [
     tier: "local-server",
     blurb: "Frame-perfect acoustic alignment via a local aligner. Best quality; needs the local host.",
     run: forcedAlignerClient,
+  },
+  {
+    id: "whisperx",
+    label: "WhisperX forced-align (local, most accurate)",
+    marker: WHISPERX_MARKER,
+    tier: "local-server",
+    blurb: "Transcribes what the audiobook actually says and fuzzy-matches it to your lines. Real acoustic timing, chapter-by-chapter — needs a local align server connection.",
+    run: whisperxAlignerClient,
   },
 ];
 

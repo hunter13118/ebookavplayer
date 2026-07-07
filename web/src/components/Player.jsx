@@ -16,6 +16,8 @@ import ReplaceArtSheet from "./ReplaceArtSheet.jsx";
 
 import EpubPlatesSheet from "./EpubPlatesSheet.jsx";
 
+import GapNavSheet from "./GapNavSheet.jsx";
+
 import IllustrationGallerySheet from "./IllustrationGallerySheet.jsx";
 
 import BannerStack from "./BannerStack.jsx";
@@ -56,7 +58,11 @@ import {
 
 import { buildSlidesByChapter, computeTimelineFromM4b } from "../timing/index.js";
 
+import { getConnection } from "../backends/connections.js";
+
 import { storeM4b, loadM4b, loadM4bName, removeM4b } from "../offline/m4bStore.js";
+
+import { storeAlignManifest, loadAlignManifest, removeAlignManifest } from "../offline/alignCache.js";
 
 import { loadSharedAudio, unloadSharedAudio } from "../audio/sharedAudioSource.js";
 
@@ -103,11 +109,23 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
   const [ttsError, setTtsError] = useState(null);
 
   const [m4bStatus, setM4bStatus] = useState({ attached: false, busy: false, fileName: null, error: null });
+  // Progress log for m4b alignment, shown via the same ProcessingLog used
+  // for extraction/imaging — see applyM4bTimeline's onChapterProgress/
+  // onGapsReady below.
+  const [alignEventLog, setAlignEventLog] = useState([]);
+  // Background WhisperX alignment can still be streaming in when the user
+  // navigates to a different book — this always tracks whichever book_id is
+  // CURRENTLY showing, so a stale chunk/result from a previous book's
+  // alignment can be told apart and ignored instead of corrupting the new
+  // book's timeline/status.
+  const activeBookIdRef = useRef(bk.book_id);
+  activeBookIdRef.current = bk.book_id;
 
   const [menuOpen, setMenuOpen] = useState(false);
 
   const [replaceOpen, setReplaceOpen] = useState(false);
   const [platesOpen, setPlatesOpen] = useState(false);
+  const [gapNavOpen, setGapNavOpen] = useState(false);
 
   const {
     comparePending,
@@ -281,20 +299,29 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
     && (bk.progress != null && bk.progress < 1);
 
   const imaging = imagingJob.active;
+  const aligning = Boolean(m4bStatus.aligning);
 
-  const showProcessingBar = processing || imaging || comparePending;
+  const showProcessingBar = processing || imaging || comparePending || aligning;
 
-  const barStage = imagingJob.active ? imagingJob.stage : (bookJobStatus?.stage || bk.stage);
+  const barStage = imagingJob.active ? imagingJob.stage
+    : aligning ? "aligning"
+    : (bookJobStatus?.stage || bk.stage);
 
-  const barProgress = imagingJob.active ? imagingJob.progress : (bookJobStatus?.progress ?? bk.progress);
+  const barProgress = imagingJob.active ? imagingJob.progress
+    : aligning ? (m4bStatus.progress && m4bStatus.progress.total ? m4bStatus.progress.chapter / m4bStatus.progress.total : 0)
+    : (bookJobStatus?.progress ?? bk.progress);
 
-  const barLabel = imagingJob.active ? imagingJob.label : (bookJobStatus?.detail || null);
+  const barLabel = imagingJob.active ? imagingJob.label
+    : aligning ? (m4bStatus.progress
+        ? `${Math.round(m4bStatus.progress.chapter / 60000)}/${Math.round(m4bStatus.progress.total / 60000)} min transcribed`
+        : "Starting…")
+    : (bookJobStatus?.detail || null);
 
   const barProviderWait = imagingJob.active && imagingJob.providerWait;
 
-  const barSource = imagingJob.active ? "job" : "book";
+  const barSource = imagingJob.active ? "job" : aligning ? "align" : "book";
 
-  const displayProcessingLog = imagingJob.active ? processingLog : bookEventLog;
+  const displayProcessingLog = imagingJob.active ? processingLog : aligning ? alignEventLog : bookEventLog;
 
 
 
@@ -384,23 +411,96 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
     return () => clearInterval(id);
   }, [sleepTimerStartedAt, prefs.sleepTimerMinutes, orch]);
 
+  // Mode B's tick loop is requestAnimationFrame-driven, which browsers fully
+  // suspend while this tab is hidden — playback itself keeps going, but the
+  // displayed line/scene/clock go stale until a frame fires again. Catch up
+  // instantly the moment the tab is visible again instead of leaving the
+  // user looking at a frozen screen until the next natural frame.
+  useEffect(() => {
+    const onVisibilityChange = () => { if (!document.hidden) orch.resyncDisplay(); };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, [orch]);
+
   const applyM4bTimeline = useCallback(async (blob, fileName) => {
 
     const slidesByChapter = buildSlidesByChapter(bk);
 
-    const result = await computeTimelineFromM4b({
+    if (prefs.timingAlgorithm !== "whisperx") {
+      const result = await computeTimelineFromM4b({ blob, slidesByChapter, algorithmId: prefs.timingAlgorithm });
+      loadSharedAudio(blob);
+      orch.setTimeline(result.lineTimings, result.meta);
+      setM4bStatus({ attached: true, busy: false, fileName: fileName || null, error: null, progress: null });
+      return;
+    }
 
-      blob, slidesByChapter, algorithmId: prefs.timingAlgorithm,
+    const connection = getConnection(prefs.alignConnectionId);
+    if (!connection?.baseUrl) {
+      throw new Error("Pick an align server connection in Settings before using WhisperX sync.");
+    }
 
+    // A fully-resolved manifest from a prior run of this same (unchanged)
+    // book + m4b — use it directly, no need for the progressive dance below.
+    const cached = await loadAlignManifest(bk.book_id, "whisperx", blob.size, slidesByChapter);
+    if (cached) {
+      loadSharedAudio(blob);
+      orch.setTimeline(cached.lineTimings, cached.meta, cached.syntheticSegments);
+      setM4bStatus({ attached: true, busy: false, fileName: fileName || null, error: null, progress: null });
+      return;
+    }
+
+    // No cache: play immediately on an instant client-side estimate (the
+    // same "linear" split algorithm 1 uses — a proportional character-count
+    // guess, no acoustics, no network), then refine it live in place as the
+    // local align server streams real per-line timings back a chunk at a
+    // time — usually starting within seconds, well before the whole book
+    // finishes aligning. See whisperxAlignerClient.js / server.py.
+    const estimate = await computeTimelineFromM4b({ blob, slidesByChapter, algorithmId: "linear" });
+    loadSharedAudio(blob);
+    orch.setTimeline(estimate.lineTimings, { ...estimate.meta, strategy: "acoustic" });
+    setM4bStatus({
+      attached: true, busy: false, fileName: fileName || null, error: null, aligning: true, progress: null,
+    });
+    setAlignEventLog([]);
+
+    const bookIdAtStart = bk.book_id;
+    const isStale = () => activeBookIdRef.current !== bookIdAtStart;
+
+    computeTimelineFromM4b({
+      blob, slidesByChapter, algorithmId: "whisperx", connection,
+      onChapterProgress: (processedMs, totalMs) => {
+        if (isStale()) return;
+        setM4bStatus((s) => ({ ...s, aligning: true, progress: { chapter: processedMs, total: totalMs } }));
+        setAlignEventLog((log) => [...log, {
+          ts: Date.now(), type: "progress",
+          text: `Transcribed ${Math.round(processedMs / 60000)}/${Math.round(totalMs / 60000)} min`,
+          phase: "aligning", progress: totalMs ? processedMs / totalMs : 0,
+        }].slice(-120));
+      },
+      onLinesReady: (partial) => { if (!isStale()) orch.extendTimeline(partial); },
+      onGapsReady: (gaps) => {
+        if (isStale()) return;
+        orch.extendTimeline(null, gaps);
+        setAlignEventLog((log) => [...log, {
+          ts: Date.now(), type: "gap",
+          text: `Found ${gaps.length} narrator aside${gaps.length === 1 ? "" : "s"} not in the ebook`,
+          phase: "aligning", progress: null,
+        }].slice(-120));
+      },
+    }).then(async (finalResult) => {
+      if (isStale()) return;
+      // Authoritative final merge (covers any line the chunked stream never
+      // reached, e.g. right at the tail) + persist for next time.
+      orch.setTimeline(finalResult.lineTimings, finalResult.meta, finalResult.syntheticSegments);
+      await storeAlignManifest(bk.book_id, "whisperx", blob.size, slidesByChapter, finalResult);
+      if (isStale()) return;
+      setM4bStatus((s) => ({ ...s, aligning: false, progress: null }));
+    }).catch((e) => {
+      if (isStale()) return;
+      setM4bStatus((s) => ({ ...s, aligning: false, progress: null, error: e?.message || "Alignment failed" }));
     });
 
-    loadSharedAudio(blob);
-
-    orch.setTimeline(result.lineTimings);
-
-    setM4bStatus({ attached: true, busy: false, fileName: fileName || null, error: null });
-
-  }, [bk, prefs.timingAlgorithm, orch]);
+  }, [bk, prefs.timingAlgorithm, prefs.alignConnectionId, orch]);
 
 
 
@@ -433,6 +533,7 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
     try {
 
       await removeM4b(bk.book_id);
+      await removeAlignManifest(bk.book_id, "whisperx");
 
     } finally {
 
@@ -550,7 +651,13 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
 
   const scene = (bk.scenes || [])[sceneIndex] || null;
 
-  const curLine = lines[st.index] || null;
+  // Frozen at the last real scene while a gap plays — st.index deliberately
+  // doesn't advance during one (see orchestrator.js), so sceneIndex/scene
+  // above already stay put with no special-casing needed. st.line is the
+  // orchestrator's own synthetic narrator pseudo-line during a gap (built in
+  // Orchestrator._emit) — falls back to the ordinary lines[st.index] lookup
+  // the rest of the time, including before the orchestrator's first emit.
+  const curLine = st.syntheticSegment ? st.line : (lines[st.index] || null);
 
   const spotlightId = useMemo(
 
@@ -613,15 +720,32 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
 
     : lines;
 
-  const scopeTotalSec = bookDurationSec(scopeLines, prefs.speed);
+  // Mode B: prefer the real m4b clock over the character-count estimate.
+  // Falls back to the estimate outside acoustic mode or before a chapter's
+  // boundary lines have real timings.
+  const chapterStartMs = chapterScoped && curChapter ? orch.lineTimings?.[curChapter.startLine]?.startMs : null;
 
-  const scopeElapsed = chapterScoped && curChapter
+  const chapterEndMs = chapterScoped && curChapter ? orch.lineTimings?.[curChapter.endLine]?.endMs : null;
 
-    ? Math.max(0, elapsedSec(lines, st.index, st.revealed, prefs.speed)
+  const useRealChapterTime = st.durationMs != null && chapterStartMs != null && chapterEndMs != null;
 
-      - elapsedSec(lines, curChapter.startLine, 0, prefs.speed))
+  const scopeTotalSec = useRealChapterTime
 
-    : elapsedSec(lines, st.index, st.revealed, prefs.speed);
+    ? (chapterEndMs - chapterStartMs) / 1000
+
+    : bookDurationSec(scopeLines, prefs.speed);
+
+  const scopeElapsed = useRealChapterTime
+
+    ? Math.max(0, Math.min(scopeTotalSec, (st.currentTimeMs - chapterStartMs) / 1000))
+
+    : (chapterScoped && curChapter
+
+      ? Math.max(0, elapsedSec(lines, st.index, st.revealed, prefs.speed)
+
+        - elapsedSec(lines, curChapter.startLine, 0, prefs.speed))
+
+      : elapsedSec(lines, st.index, st.revealed, prefs.speed));
 
 
 
@@ -867,9 +991,9 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
 
   const notReady = lines.length === 0;
 
-  const totalSec = bookDurationSec(lines, prefs.speed);
+  const totalSec = st.durationMs != null ? st.durationMs / 1000 : bookDurationSec(lines, prefs.speed);
 
-  const elapsed = elapsedSec(lines, st.index, st.revealed, prefs.speed);
+  const elapsed = st.currentTimeMs != null ? st.currentTimeMs / 1000 : elapsedSec(lines, st.index, st.revealed, prefs.speed);
 
 
 
@@ -931,6 +1055,18 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
             </select>
 
           </label>
+
+        )}
+
+        {orch.syntheticSegments?.length > 0 && (
+
+          <button type="button" className="vae-toolbar-btn vae-gap-nav-btn" data-testid="open-gap-nav"
+
+            onClick={() => setGapNavOpen(true)} aria-label="Narration outside the book">
+
+            Narration outside book
+
+          </button>
 
         )}
 
@@ -1004,7 +1140,9 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
 
             onSwipeNext={() => next(prefs.nextSteps || 1)}
 
-            onSwipePrev={() => rewind(prefs.rewindSteps || 3)}>
+            onSwipePrev={() => rewind(prefs.rewindSteps || 3)}
+
+            sceneDimmed={Boolean(st.syntheticSegment)}>
 
             <DialogueBox line={curLine} speakerName={speakerName} revealed={st.revealed}
 
@@ -1012,7 +1150,11 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
 
           </Stage>
 
-
+          {st.buffering && (
+            <div className="vae-buffering-badge" data-testid="buffering-badge">
+              Buffering…
+            </div>
+          )}
 
           <div className="vae-player-bottom">
 
@@ -1112,6 +1254,14 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
         open={platesOpen}
         onClose={() => setPlatesOpen(false)}
         onSaved={() => refreshBook().catch(() => {})}
+      />
+
+      <GapNavSheet
+        open={gapNavOpen}
+        onClose={() => setGapNavOpen(false)}
+        gaps={orch.syntheticSegments}
+        firstLineStartMs={orch.lineTimings?.[0]?.startMs}
+        onSeekToGap={(id) => { orch.seekToGap(id); setGapNavOpen(false); }}
       />
 
       <IllustrationGallerySheet

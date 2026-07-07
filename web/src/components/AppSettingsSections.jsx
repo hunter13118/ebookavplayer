@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { KEYS, setPref } from "../audio/voicePrefs.js";
 import { describeAlgorithms } from "../timing/registry.js";
+import { listConnections } from "../backends/connections.js";
 
 const TIMING_ALGORITHMS = describeAlgorithms();
 
@@ -157,11 +158,32 @@ export function AudiobookSyncSettings({
           </select>
         </span>
       </label>
+      {prefs.timingAlgorithm === "whisperx" && (
+        <label className="vae-sheet-field">
+          Align server
+          <span className="vae-select-wrap">
+            <select className="vae-select" data-testid="select-align-connection" value={prefs.alignConnectionId}
+              onChange={(e) => upd("alignConnectionId", KEYS.alignConnectionId, e.target.value)}>
+              <option value="">Choose a connection…</option>
+              {listConnections().filter((c) => c.baseUrl).map((c) => (
+                <option key={c.id} value={c.id}>{c.label}</option>
+              ))}
+            </select>
+          </span>
+        </label>
+      )}
       {m4bStatus?.attached ? (
         <div className="vae-sheet-field">
           <span data-testid="m4b-attached-label">
             Attached: {m4bStatus.fileName || "audiobook.m4b"}
           </span>
+          {m4bStatus.aligning && (
+            <span className="vae-sheet-hint" data-testid="m4b-aligning-progress">
+              {m4bStatus.progress
+                ? `Refining sync in background — ${Math.round(m4bStatus.progress.chapter / 60000)}/${Math.round(m4bStatus.progress.total / 60000)} min transcribed. Playable now.`
+                : "Refining sync in background. Playable now."}
+            </span>
+          )}
           <button type="button" className="vae-menu-link" data-testid="m4b-remove"
             onClick={onRemoveM4b} disabled={busy}>
             Remove
