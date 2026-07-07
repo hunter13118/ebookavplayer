@@ -157,6 +157,14 @@ See [server/app.py](server/app.py) for the FastAPI app, and
 checklist (pytest, live Edge TTS smoke, Gemini smoke script). That checklist
 predates the Workers port and does not cover `worker/`.
 
+## Optional: local LLM extraction (Ollama)
+
+The worker can run the EPUB extraction mega-pass against a locally-running
+Ollama model instead of Gemini/cloud fallbacks — free, offline, no rate limit.
+This also covers pointing any frontend (including the deployed production
+site) at your local worker via the "local API bridge." Full writeup:
+[docs/LOCAL_LLM_EXTRACTION.md](docs/LOCAL_LLM_EXTRACTION.md).
+
 ## Optional: local WhisperX align server
 
 Backs the `whisperx-local` timing tier ([web/src/timing/whisperxAlignerClient.js](web/src/timing/whisperxAlignerClient.js)):
