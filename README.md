@@ -5,36 +5,70 @@ game-style reading experience where characters speak in their own voices over
 scene backgrounds, with typewriter text synced to the audio. A visual aid for
 *listening* (treadmill / study / passenger seat), not a movie.
 
-See [`visual-audiobook-brief.md`](visual-audiobook-brief.md) for the full design
-brief. This repo is the MVP scaffold built against it.
+See [`visual-audiobook-brief.md`](visual-audiobook-brief.md) for the full design brief.
+
+## Which backend do I use?
+
+There are **two** backend implementations in this repo. If you only read one
+line from this README, read this one:
+
+> **`worker/` (Cloudflare Workers) is the current, actively developed backend.**
+> `server/` (Python/FastAPI) is an earlier implementation kept for reference
+> and because a few dev tools still import individual modules from it
+> (`server/align/forced_aligner.py`). Don't start with `uvicorn` unless you
+> have a specific reason to — start with `npm run dev:worker`.
+
+## Quick start (current stack)
+
+```bash
+npm install                    # root: wrangler, fflate, pngjs, jpeg-js
+cd web && npm install && cd .. # web client deps
+
+cp .env.example .env           # add GEMINI_API_KEY (free tier via AI Studio)
+```
+
+Two terminals:
+
+```bash
+npm run dev:worker             # terminal 1 — Worker API on :8600 (wrangler dev)
+cd web && npm run dev          # terminal 2 — Vite client on :5173
+```
+
+Open **http://localhost:5173**. With the worker running you get real ingest +
+voiced playback; with no backend reachable, the client falls back to the
+embedded demo (*The Silver Gate*) so the UI is always demonstrable.
+
+For the full walkthrough (env vars, every test target, troubleshooting,
+Claude Code setup), see **[SETUP.md](SETUP.md)**.
 
 ## What's here
 
 ```
-server/                 FastAPI backend (does the heavy lifting; client stays dumb)
-  audio/edge_tts.py      Edge neural TTS — copied to a tee from the Gyōkan
-                         parallel-reader (Communicate.stream pattern)
-  audio/voices.py        per-CHARACTER voice assignment + pitch de-collision
-  analyze/prompt.py      the single Gemini mega-pass prompt (one call per book)
-  analyze/schema.py      analysis + playback pydantic schemas
-  analyze/gemini.py      Gemini client (mega-pass)
-  epub/parse.py          EPUB -> chapters/text/embedded-image bytes
-  images/generate.py     Gemini image gen (primary chars/bg) + stock-pool fallback
-  playback/compile.py    analysis -> lightweight playback JSON the client consumes
-  app.py                 /tts, /voices/edge, /books, /ingest (background job)
-  sample/                sample analysis + host builder
+worker/                 Cloudflare Workers backend (current)
+  worker.js              routes /api/v1/* → handlers
+  api/v1/                books, ingest, characters, tts, voices, media, progress...
+  _shared/                extraction pipeline, compile, voice-assign, character-merge (48 modules)
+  durable-objects/        job/queue coordination
+  wrangler.toml           R2 + KV bindings, dev port
+
+server/                 Legacy FastAPI backend (reference only; see note above)
+  align/forced_aligner.py  still imported by scripts/local-align-server
+  analyze/, epub/, images/, playback/, audio/  original mega-pass pipeline
+  app.py                  /tts, /voices/edge, /books, /ingest
+
 web/                     React + Vite client
-  src/App.jsx                view router: Library landing <-> Player
-  src/library.js             resume / reading-progress (localStorage + server sync)
-  src/audio/playSpeech.js    Edge playback — copied to a tee (seqToken cancel,
-                             one /tts call per line, routed by character)
-  src/audio/orchestrator.js  single timing authority (audio + sprite + typewriter)
-  src/audio/timing.js        pure pacing math (unit-tested)
-  src/components/            Library, BookCard, Uploader, ProcessingBar,
-                             Stage, Sprite, DialogueBox (3 styles), Controls, ...
+  src/audio/               orchestrator.js (timing authority), playSpeech.js,
+                           sharedAudioSource.js, lineAt.js
+  src/timing/              alignment strategies: fromContainer, registry,
+                           whisperxAlignerClient, slides
+  src/offline/             offline pack cache, alignment cache
+  src/components/          Library, Player, Stage, Sprite, dialogue boxes,
+                           CharacterManager, GapNavSheet, Controls...
+
+scripts/local-align-server/  Local WhisperX forced-alignment bridge (dev tool)
 data/books/              per-book sidecars (.analysis/.media/.status/.progress)
-                         + compiled sample
-tests/                   python + node tests; web/tests/e2e Playwright specs
+tests/                   node + python tests; web/tests/e2e Playwright specs
+```
 
 ## Landing page & library
 
@@ -42,62 +76,31 @@ The app opens on a **library**: a grid of book covers (real title always
 beneath). A book still being processed shows a spinner + live progress instead
 of a cover; a book you've started shows a reading-progress bar and a Resume
 chip. Below the grid is an **upload tray** — drop an EPUB and it kicks off the
-Gemini pipeline, appearing immediately as a processing placeholder that polls
-to ready.
+extraction pipeline, appearing immediately as a processing placeholder that
+polls to ready.
 
-Because the Gemini mega-pass is atomic, a book becomes **playable the moment
-analysis finishes** (gradient placeholders for art). Opening it then shows a
-**pinned top progress bar**, and generated character/scene art streams in live
-via polling, upgrading placeholders without interrupting playback. Resume
-position (book / chapter / scene / line) is saved to localStorage and synced to
-`/books/{id}/progress`.
-```
-
-## Quick start
-
-Backend (Python 3.10+):
-
-```bash
-pip install -r requirements.txt
-cp .env.example .env          # add GEMINI_API_KEY for ingest; TTS needs no key
-uvicorn server.app:app --host 0.0.0.0 --port 8600 --reload --reload-dir server
-```
-
-Frontend:
-
-```bash
-cd web
-npm install
-echo "VITE_API_BASE=http://localhost:8600" > .env.local
-npm run dev                   # http://localhost:5173
-```
-
-Open the client. With the backend running you get **voiced** playback (Edge TTS);
-with no backend it plays the embedded demo (`The Silver Gate`) as text + sprites
-with silent timed reveal, so the UI is always demonstrable.
+Because extraction is atomic, a book becomes **playable the moment analysis
+finishes** (gradient placeholders for art). Opening it then shows a **pinned
+top progress bar**, and generated character/scene art streams in live via
+polling, upgrading placeholders without interrupting playback. Resume position
+(book / chapter / scene / line) is saved to localStorage and synced to the
+progress endpoint.
 
 ## Ingest a book
 
-`POST /ingest` with an EPUB (multipart `file`, optional `art_style`,
-`narrator_gender`) returns a `job_id`; poll `GET /ingest/{job_id}`. The job runs
-the single Gemini mega-pass, image generation, and compiles a playback book into
-`data/books/`. The client lists it at `GET /books`.
-
-## How the Edge TTS matches the parallel-reader
-
-`server/audio/edge_tts.py` and `web/src/audio/playSpeech.js` are copied from the
-Gyōkan project's proven implementation. The only adaptation: Gyōkan routed
-voices by **language**; here every playback line carries its own
-character voice/pitch/rate, so we route by **character** and never by screen
-position. `pitch`/`rate` are passed through to `edge-tts` for collision
-de-duplication (deeper male / higher child) per the brief.
+`POST /api/v1/ingest` with an EPUB (multipart `file`, optional `art_style`,
+`narrator_gender`) returns a `job_id`; poll its progress endpoint. The job runs
+extraction, image generation, and compiles a playback book that the client
+lists via the books endpoint.
 
 ## Status
 
-MVP scaffold. End-to-end path is wired and verified except where a host is
-required (live TTS network, `npm run build`, Gemini API). See
-[`docs/HOST_CHECKLIST.md`](docs/HOST_CHECKLIST.md). Phase 2 (per the brief):
-character art variants, offline caching, advanced audio effects (cave echo).
+Actively developed. Recent work: chapter-checkpointed extraction, character
+management (merge/rename post-extraction), multi-backend image/extract
+providers, and a four-tier audio↔script timing engine (including a local
+WhisperX forced-alignment tier). See [`docs/HOST_CHECKLIST.md`](docs/HOST_CHECKLIST.md)
+for the legacy Python-path host checklist.
 
-**Cursor / host handoff:** [`CURSOR_HANDOFF.md`](CURSOR_HANDOFF.md) (short status +
-guardrails), [`HANDOFF.md`](HANDOFF.md) (full contract + stub registry).
+**Historical handoffs (point-in-time status snapshots, not living docs):**
+[`CURSOR_HANDOFF.md`](CURSOR_HANDOFF.md), [`HANDOFF.md`](HANDOFF.md) — both
+predate the Workers port and describe the original FastAPI-only MVP.

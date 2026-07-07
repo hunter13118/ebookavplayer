@@ -1,5 +1,9 @@
 # Host checklist — what to verify on your machine
 
+> **This checklist covers the legacy Python/FastAPI backend (`server/`).**
+> For the current Cloudflare Workers stack (`worker/`, `npm run dev:worker`),
+> see [`../SETUP.md`](../SETUP.md) instead. This doc predates the Workers port.
+
 The build sandbox has **no PyPI/npm install and no outbound network to the Edge
 endpoint**, so the items below could not be exercised here and need a quick pass
 on your host. Everything else (pure logic, schema shapes, EPUB parsing, voice
