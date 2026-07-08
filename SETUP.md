@@ -126,6 +126,27 @@ protagonist" that's really "Eizo"):
   (merges across analysis.json + playback.json); alias applied at extraction
   time via [chapter-extract-pipeline.js:99-101](worker/_shared/chapter-extract-pipeline.js#L99)
 
+## Tweaking parallel chapter extraction
+
+[worker/_shared/chapter-extract-pipeline.js:138](worker/_shared/chapter-extract-pipeline.js#L138)
+reads `VAE_EXTRACT_CONCURRENCY` (default **3**) — how many chapters the worker
+extracts at once, regardless of which provider is handling extraction. Set it
+in root `.env`.
+
+**If extraction is running through a cloud provider** (Cerebras/Groq/Mistral/
+OpenRouter/etc.), raising this is likely a straightforward win — those aren't
+bottlenecked by your machine's compute, only by their own rate limits. Not
+benchmarked in this repo; increase and watch for 429s.
+
+**If extraction is running through Ollama** (see
+[docs/LOCAL_LLM_EXTRACTION.md](docs/LOCAL_LLM_EXTRACTION.md)), **more
+concurrency is not free and may not help at all** — see the benchmark there.
+On the machine this was tested on (M4 Pro, 48GB), parallel Ollama decode was
+*slower in aggregate* than running requests one at a time, so both
+`VAE_EXTRACT_CONCURRENCY` and `OLLAMA_NUM_PARALLEL` are set to **1**. Don't
+assume a bigger number is better here without re-running the benchmark on
+your own hardware first.
+
 ## Troubleshooting
 
 | Issue | Fix |
@@ -137,6 +158,7 @@ protagonist" that's really "Eizo"):
 | `.env` edits don't take effect in `dev:worker` | You're editing `worker/.dev.vars` directly — edit root `.env` instead, `sync-dev-vars.mjs` regenerates it |
 | Character merge doesn't persist | Confirm the KV binding in [worker/wrangler.toml:31](worker/wrangler.toml#L31) is configured |
 | Graphify bootstrap fails | Install Ollama locally, or use `--backend web` (needs an API key) |
+| Local Ollama extraction feels slow with `VAE_EXTRACT_CONCURRENCY` > 1 | Expected on Apple Silicon per the benchmark above — lower it to 1, don't raise it |
 
 ---
 
@@ -176,6 +198,37 @@ python3 scripts/local-align-server/server.py
 
 Tested by [tests/test_local_align_server.py](tests/test_local_align_server.py).
 
+## Optional: local image gen server (`local_sd` tier)
+
+Backs the `local_sd` image tier — a self-contained server, no cloud key and
+no dependency on another project (earlier revisions of this repo pointed at
+a War Council-hosted endpoint; that's gone, see
+[docs/ECOSYSTEM_INTEGRATION.md](docs/ECOSYSTEM_INTEGRATION.md) for why).
+Three interchangeable model profiles (turbo-fast-but-not-anime,
+anime-native-but-slow, anime-native-and-fast), device auto-detection
+(CUDA/MPS/CPU), a real batched-generation endpoint, IP-Adapter reference-image
+conditioning for character consistency (with a per-character face-crop tool
+for group EPUB illustrations), a revived character-expression-variant
+pipeline, and the batching benchmark results (including a hard MPS crash
+ceiling worth knowing about before raising batch sizes) are all covered in
+**[docs/LOCAL_IMAGE_GEN.md](docs/LOCAL_IMAGE_GEN.md)** — start there.
+
+Quick start (base generation only — see LOCAL_IMAGE_GEN.md for the full
+install list needed for reference-image conditioning and face cropping):
+```bash
+source venv/bin/activate  # or your Python env
+pip install torch diffusers transformers accelerate peft
+python3 scripts/local-image-server/server.py
+# Exposes GET /health, GET /models, POST /generate, POST /generate_batch,
+# POST /generate_expression_set
+# set LOCAL_IMAGE_URL=http://127.0.0.1:7860 in .env
+```
+
+On macOS with Homebrew Python, first startup may fail with
+`CERTIFICATE_VERIFY_FAILED` even though `curl`/browsers work fine — see
+[docs/LOCAL_IMAGE_GEN.md](docs/LOCAL_IMAGE_GEN.md#bugs-hit-and-fixed-getting-here-for-the-next-person)
+for the fix (`pip install pip-system-certs`).
+
 ---
 
 ## Claude Code setup
@@ -210,6 +263,8 @@ pointers:
 | Voice assignment | [voice-assign.js](worker/_shared/voice-assign.js), [PlayerMenu.jsx](web/src/components/PlayerMenu.jsx) |
 | Playback compilation | [compile-playback.js](worker/_shared/compile-playback.js) |
 | Timing/alignment | [orchestrator.js](web/src/audio/orchestrator.js), [timing/registry.js](web/src/timing/registry.js), [whisperxAlignerClient.js](web/src/timing/whisperxAlignerClient.js) |
+| Local LLM extraction (Ollama) | [docs/LOCAL_LLM_EXTRACTION.md](docs/LOCAL_LLM_EXTRACTION.md) |
+| Local image generation | [docs/LOCAL_IMAGE_GEN.md](docs/LOCAL_IMAGE_GEN.md) |
 | Web UI | [Player.jsx](web/src/components/Player.jsx), [vite.config.js](web/vite.config.js) |
 | Tests | [tests/](tests/) directory, [package.json](package.json) scripts |
 | Environment | [.env.example](.env.example), [worker/wrangler.toml](worker/wrangler.toml) |

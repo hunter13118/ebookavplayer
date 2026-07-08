@@ -96,6 +96,21 @@ quota (or want privacy), route the mega-pass to War Council via MCP:
 N segmentations. Same `BookAnalysis` output contract; the reader's `analyze_book`
 gains a second backend behind the existing interface.
 
+**Future enhancement (not built):** today each app in this ecosystem that
+wants local/offline LLM access stands up its own thing — ebookavplayer has
+its own direct Ollama client ([worker/_shared/freemium-extract.js](../worker/_shared/freemium-extract.js)'s
+`ollamaExtract`, see [LOCAL_LLM_EXTRACTION.md](LOCAL_LLM_EXTRACTION.md)) and
+its own local SDXL image server ([scripts/local-image-server](../scripts/local-image-server)),
+independent of War Council entirely. A cleaner long-term shape: **route all
+of an app's local-LLM needs (text extraction, image gen, whatever comes
+next) through War Council's MCP surface** instead of each app reimplementing
+its own local-model plumbing — War Council already does multi-model
+orchestration, failover, and RAG; reinventing a thinner slice of that per-app
+is duplicated effort. Deliberately not done yet: the direct-Ollama and
+direct-SDXL paths above were built standalone specifically to avoid a
+War Council dependency while iterating quickly on this repo alone. Revisit
+once the local-LLM surface area here stabilizes.
+
 ### GradeTheGrader — extraction QA
 4 parallel Gemini-Flash judges scoring text against a rubric (Recharts radar).
 Role: **the eval harness for the extraction step.** Feed it the mega-pass output
