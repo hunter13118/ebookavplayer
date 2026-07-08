@@ -266,6 +266,17 @@ export async function applyCostEfficientPipeline() {
   return res.json();
 }
 
+export async function applyLocalExtractPreset(presetId) {
+  const res = await fetch(apiUrl("/pipeline"), {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ apply_local_extract_preset: presetId }),
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) throw new Error(`pipeline: HTTP ${res.status}`);
+  return res.json();
+}
+
 export async function revertMediaAsset(bookId, kind, key, { style } = {}) {
   const body = { kind, key };
   if (style) body.style = style;

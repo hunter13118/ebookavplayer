@@ -8,7 +8,13 @@ const SMALL_BOOK_CHAPTER_THRESHOLD = 15;
 /** Pick a sensible default extraction provider from an estimated chapter count. */
 function defaultProviderForSize(chapterCount, env) {
   if (chapterCount <= SMALL_BOOK_CHAPTER_THRESHOLD) return "gemini";
-  if (String(env.OLLAMA_BASE_URL || "").trim()) return "ollama-7b";
+  // ollama-30b (Qwen3 MoE) is the fastest local model measured for the
+  // default sequential case (~53 tok/s solo with OLLAMA_FLASH_ATTENTION=1) —
+  // see docs/LOCAL_LLM_EXTRACTION.md. ollama-20b is a close second on solo
+  // speed but far more concurrency-tolerant; pick it instead via
+  // `prefer_provider` or the local-extract-preset picker if you run with
+  // VAE_EXTRACT_CONCURRENCY > 1.
+  if (String(env.OLLAMA_BASE_URL || "").trim()) return "ollama-30b";
   return "cerebras";
 }
 

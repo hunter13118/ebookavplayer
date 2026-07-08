@@ -3,6 +3,7 @@
  * Config persisted in KV `pipeline:config`; drives freemium chain order.
  */
 import { evaluateCostEfficiency } from "./pipeline-cost-guide.js";
+import { LOCAL_EXTRACT_PRESETS, activeLocalExtractPreset } from "./local-extract-presets.js";
 
 const KV_KEY = "pipeline:config";
 
@@ -42,7 +43,29 @@ const STAGE_META = {
     optionalEnv: ["OLLAMA_BASE_URL"],
     modelEnv: "OLLAMA_MODEL_14B",
     defaultModel: "qwen2.5:14b",
-    note: "Local dev only — larger/slower model, needs `ollama serve` at OLLAMA_BASE_URL",
+    note: "Local dev only — larger/slower model, needs `ollama serve` at OLLAMA_BASE_URL. Benchmarked slower and less capable than ollama-30b on this same hardware — see docs/LOCAL_LLM_EXTRACTION.md.",
+  },
+  "ollama-30b": {
+    label: "Ollama 30B-A3B (local, fastest solo)",
+    icon: "🏠",
+    tier: "local",
+    lane: "extract",
+    requires: [],
+    optionalEnv: ["OLLAMA_BASE_URL"],
+    modelEnv: "OLLAMA_MODEL_30B",
+    defaultModel: "qwen3:30b-a3b",
+    note: "Local dev only — Mixture-of-Experts (30B total/~3B active params/token). With OLLAMA_FLASH_ATTENTION=1 (recommended, see docs/LOCAL_LLM_EXTRACTION.md), this is the fastest local model measured for single-chapter extraction (~53 tok/s solo) — the default lead stage. Loses more of its speed under concurrency than ollama-20b, so prefer that one instead if VAE_EXTRACT_CONCURRENCY > 1. Needs `ollama serve` at OLLAMA_BASE_URL.",
+  },
+  "ollama-20b": {
+    label: "Ollama GPT-OSS 20B (local, best for concurrency)",
+    icon: "🏠",
+    tier: "local",
+    lane: "extract",
+    requires: [],
+    optionalEnv: ["OLLAMA_BASE_URL"],
+    modelEnv: "OLLAMA_MODEL_20B",
+    defaultModel: "gpt-oss:20b",
+    note: "Local dev only — MoE (~20B total/~3.6B active params/token). Close second on solo speed to ollama-30b (~44 tok/s solo with OLLAMA_FLASH_ATTENTION=1), but by far the most concurrency-tolerant local model measured (~30 tok/s aggregate at 8-way concurrency vs. every other model losing 40-90% of its solo throughput). Prefer this one over ollama-30b if VAE_EXTRACT_CONCURRENCY > 1. Needs `ollama serve` at OLLAMA_BASE_URL. See docs/LOCAL_LLM_EXTRACTION.md.",
   },
   cerebras: {
     label: "Cerebras",
@@ -154,7 +177,7 @@ const GEMINI_IMAGE_MODELS = [
 function laneDefault(lane) {
   const map = {
     extract: {
-      order: ["ollama-7b", "ollama-14b", "gemini", "cerebras", "groq", "mistral", "openrouter", "cloudflare"],
+      order: ["ollama-30b", "ollama-20b", "ollama-7b", "ollama-14b", "gemini", "cerebras", "groq", "mistral", "openrouter", "cloudflare"],
       disabled: ["ollama-14b"],
     },
     image: { order: ["gemini_image", "freemium_image", "local_sd"], disabled: [] },
@@ -180,7 +203,7 @@ export function defaultConfig(env = {}) {
   }
   // Ollama only makes sense when a local dev server is configured — never in production.
   if (!String(env.OLLAMA_BASE_URL || "").trim()) {
-    cfg.extract.disabled = [...new Set([...(cfg.extract.disabled || []), "ollama-7b", "ollama-14b"])];
+    cfg.extract.disabled = [...new Set([...(cfg.extract.disabled || []), "ollama-20b", "ollama-30b", "ollama-7b", "ollama-14b"])];
   }
   return cfg;
 }
@@ -325,5 +348,12 @@ export async function publicView(env) {
     lanes[lane] = { title: laneTitle(lane), items };
   }
   const cost_guide = evaluateCostEfficiency(cfg, env);
-  return { lanes, config: cfg, source: persisted ? "edge-kv" : "edge-defaults", cost_guide };
+  const local_extract_guide = {
+    presets: LOCAL_EXTRACT_PRESETS,
+    active: activeLocalExtractPreset(cfg),
+    ollamaConfigured: Boolean(String(env.OLLAMA_BASE_URL || "").trim()),
+  };
+  return {
+    lanes, config: cfg, source: persisted ? "edge-kv" : "edge-defaults", cost_guide, local_extract_guide,
+  };
 }

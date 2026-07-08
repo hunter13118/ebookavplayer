@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { fetchPipeline, patchPipeline, applyCostEfficientPipeline } from "../api.js";
+import { fetchPipeline, patchPipeline, applyCostEfficientPipeline, applyLocalExtractPreset } from "../api.js";
 
 function tipClass(level) {
   if (level === "ok") return "vae-pipeline-tip ok";
@@ -121,6 +121,55 @@ function CostGuidePanel({ guide, onApply, busy }) {
   );
 }
 
+function LocalExtractPresetPanel({ guide, onApply, busy }) {
+  if (!guide?.presets?.length) return null;
+  const { presets, active, ollamaConfigured } = guide;
+
+  return (
+    <aside className="vae-local-presets" data-testid="local-extract-presets">
+      <div className="vae-pipeline-cost-head">
+        <strong>Local extraction presets</strong>
+      </div>
+      {!ollamaConfigured && (
+        <p className="vae-pipeline-cost-summary">
+          Set <code>OLLAMA_BASE_URL</code> (see docs/LOCAL_LLM_EXTRACTION.md) to
+          enable local extraction and use these presets.
+        </p>
+      )}
+      <ul className="vae-local-preset-list">
+        {presets.map((p) => (
+          <li key={p.id} className={`vae-local-preset${active === p.id ? " active" : ""}`}>
+            <div className="vae-pipeline-cost-head">
+              <strong>{p.label}</strong>
+              {active === p.id && <span className="vae-pipeline-cost-badge ok">Active</span>}
+            </div>
+            <p className="vae-local-preset-eff">{p.effectiveness}</p>
+            <p className="vae-pipeline-cost-summary">{p.summary}</p>
+            <ul className="vae-local-preset-env">
+              {p.recommendedEnv.map((e) => (
+                <li key={e.key}>
+                  <code>{e.key}={e.value}</code>
+                  {e.note && <span className="vae-local-preset-note"> — {e.note}</span>}
+                </li>
+              ))}
+            </ul>
+            {active !== p.id && (
+              <button
+                type="button"
+                className="vae-pipeline-apply-btn"
+                disabled={busy || !ollamaConfigured}
+                onClick={() => onApply(p.id)}
+              >
+                Use this
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+    </aside>
+  );
+}
+
 /** Drag-and-drop AI pipeline editor (model order + enable/disable). */
 export default function PipelineSheet({ open, onClose }) {
   const [data, setData] = useState(null);
@@ -173,6 +222,21 @@ export default function PipelineSheet({ open, onClose }) {
     }
   }
 
+  async function applyLocalPreset(presetId) {
+    setBusy(true);
+    setErr("");
+    try {
+      const updated = await applyLocalExtractPreset(presetId);
+      setData(updated);
+      setPending({});
+      setDirty(false);
+    } catch (e) {
+      setErr(e.message || "Could not apply preset.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function save() {
     if (!dirty) { onClose?.(); return; }
     setBusy(true);
@@ -203,6 +267,7 @@ export default function PipelineSheet({ open, onClose }) {
           Toggle models on or off and drag to set fallback order. Disabled stages are skipped.
         </p>
         <CostGuidePanel guide={data?.cost_guide} onApply={applyPreset} busy={busy} />
+        <LocalExtractPresetPanel guide={data?.local_extract_guide} onApply={applyLocalPreset} busy={busy} />
         {err && <p className="vae-sheet-err">{err}</p>}
         {!data && !err && <p className="vae-sheet-hint">Loading…</p>}
         {data?.lanes && Object.entries(data.lanes).map(([key, lane]) => (

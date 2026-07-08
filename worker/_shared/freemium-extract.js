@@ -27,6 +27,8 @@ const PROVIDER_MODELS = {
   openrouter: "meta-llama/llama-3.3-70b-instruct:free",
   cloudflare: "@cf/meta/llama-3.1-8b-instruct",
   "ollama-7b": "qwen2.5:7b",
+  "ollama-20b": "gpt-oss:20b",
+  "ollama-30b": "qwen3:30b-a3b",
   "ollama-14b": "qwen2.5:14b",
 };
 
@@ -260,9 +262,14 @@ async function callProvider(pid, { cfg, env, systemPrompt, userText }) {
       userText,
     });
   }
-  if (pid === "ollama-7b" || pid === "ollama-14b") {
+  if (pid === "ollama-7b" || pid === "ollama-20b" || pid === "ollama-30b" || pid === "ollama-14b") {
     const base = (env.OLLAMA_BASE_URL || "http://localhost:11434").replace(/\/$/, "");
-    const modelEnvKey = pid === "ollama-7b" ? "OLLAMA_MODEL_7B" : "OLLAMA_MODEL_14B";
+    const modelEnvKey = {
+      "ollama-7b": "OLLAMA_MODEL_7B",
+      "ollama-20b": "OLLAMA_MODEL_20B",
+      "ollama-30b": "OLLAMA_MODEL_30B",
+      "ollama-14b": "OLLAMA_MODEL_14B",
+    }[pid];
     return ollamaExtract({
       providerId: pid,
       baseUrl: base,
