@@ -13,6 +13,13 @@ import {
   referenceTargetsForCharacterWithStylePool,
   publicMediaOrigin,
 } from "./reference-images.js";
+import { expressionPromptSuffix } from "./moment-inserts.js";
+import { normalizeExpressionBucket } from "./expression-bucket.js";
+import { getChapterPack } from "./book-checkpoint.js";
+
+// Expression Sensitivity Plan Phase 3d: starting subset per the plan's own
+// "Open questions" note — expand once cost/quality is confirmed acceptable.
+export const DEFAULT_EXPRESSIVE_BUCKETS = ["happy", "angry", "sad", "surprised"];
 
 function characterGenDescription(c) {
   const parts = [c.description, c.name, c.id].filter(Boolean);
@@ -106,6 +113,8 @@ export async function runEdgeImaging({
   onProviderAttempt = null,
   onProviderWait = null,
   onImageFailure = null,
+  generateExpressiveSprites = false,
+  expressiveBuckets = DEFAULT_EXPRESSIVE_BUCKETS,
 }) {
   const styleKey = artStyleKey(art_style);
   const maxChars = optionalLimit(env, "VAE_IMAGING_MAX_CHARS");
@@ -116,6 +125,8 @@ export async function runEdgeImaging({
     backgrounds: { ...(existingMedia?.backgrounds || {}) },
     cover: existingMedia?.cover || null,
     inserts: { ...(existingMedia?.inserts || {}) },
+    // Expression Sensitivity Plan Phase 3d: { [characterId]: { [bucket]: url } }
+    expressionSprites: { ...(existingMedia?.expressionSprites || {}) },
   };
   // `ignorePins` never actually carried a prior pin into this function — a
   // regen batch always started fresh regardless of its value (dead branch,
@@ -255,6 +266,51 @@ export async function runEdgeImaging({
         });
       }
       dbg?.log("P3_IMAGES", `char ok ${c.id}`, { provider: img.provider, staged: !stored.promoted });
+
+      // Expression Sensitivity Plan Phase 3d: 2-4 alt-expression portrait
+      // variants for primary characters only (cost control), using the base
+      // sprite just generated as a reference so the alt-expression stays
+      // recognizably the same character. Opt-in, best-effort — one variant
+      // failing doesn't affect the base sprite or the others.
+      if (generateExpressiveSprites && c.importance === "primary" && stored.promoted) {
+        const exprSprites = {};
+        for (const bucket of expressiveBuckets) {
+          onProgress?.({
+            kind: "expression_sprite", index: ci + 1, total: chars.length, id: `${c.id}:${bucket}`,
+          });
+          const exprPrompt = composeImagePrompt(`${desc}. ${expressionPromptSuffix(bucket)}`, {
+            subjectType: "character", style: art_style,
+          });
+          const exprSeed = hashSeed(`${book_id}:${c.id}:${art_style}:expr:${bucket}`);
+          try {
+            const exprImg = await generateImage(exprPrompt, {
+              subjectType: "character",
+              preferProvider: imagePin,
+              seed: exprSeed,
+              env,
+              pollinationsAltFirst,
+              referenceImages: [img.bytes],
+              onAttempt: (provider) => onProviderAttempt?.(provider, { kind: "expression_sprite", id: `${c.id}:${bucket}` }),
+              onProviderWait: (provider, waitMs) => onProviderWait?.(provider, { kind: "expression_sprite", id: `${c.id}:${bucket}`, waitMs }),
+            });
+            const fname = `char_${c.id}_expr_${bucket}.png`;
+            await env.VAE_PACKS.put(r2MediaKey(book_id, art_style, fname), exprImg.bytes, {
+              httpMetadata: { contentType: exprImg.contentType || "image/png" },
+            });
+            exprSprites[bucket] = mediaUrl(book_id, art_style, fname, { bust });
+            ok += 1;
+            dbg?.log("P3_IMAGES", `expr sprite ok ${c.id}:${bucket}`, { provider: exprImg.provider });
+          } catch (e) {
+            fail += 1;
+            const errText = String(e.message || e).slice(0, 300);
+            dbg?.log("P3_IMAGES", `expr sprite fail ${c.id}:${bucket}`, { error: errText.slice(0, 120) });
+            onImageFailure?.({ kind: "expression_sprite", id: `${c.id}:${bucket}`, error: errText });
+          }
+        }
+        if (Object.keys(exprSprites).length) {
+          media.expressionSprites[c.id] = { ...(media.expressionSprites[c.id] || {}), ...exprSprites };
+        }
+      }
     } catch (e) {
       fail += 1;
       const errText = String(e.message || e).slice(0, 300);
@@ -268,7 +324,18 @@ export async function runEdgeImaging({
   let bgGenerated = 0;
   for (let si = 0; si < scenes.length; si++) {
     const scene = scenes[si];
-    const sid = scene.id || `scene-${si}`;
+    // Ignores scene.id (was `scene.id || fallback`) for the same reason
+    // compile-playback.js does — the model frequently reproduces the schema
+    // hint's example id ("scene-0001") literally instead of incrementing it,
+    // sometimes for dozens of scenes in a row within one chapter. Trusting
+    // it here meant every one of those scenes' backgrounds generated into
+    // the SAME media.backgrounds key, each overwriting the last — 97 of 133
+    // scenes collided into "scene-0001" on a real extracted book, so only
+    // one (arbitrary, whichever finished last) background ever survived,
+    // and it didn't even line up with compilePlayback's own positional ids
+    // below, which never trusted scene.id in the first place. Match that
+    // scheme exactly here so image keys and compiled scene ids agree.
+    const sid = `scene-${String(si + 1).padStart(4, "0")}`;
     if (!wantsBackground(filter, sid)) continue;
     if (maxBgs && bgGenerated >= maxBgs) break;
     const reuse = scene.reuse_background_of;
@@ -335,7 +402,7 @@ export async function runEdgeImaging({
   return { playback, media, stats: { ok, fail, stock, pin: imagePin } };
 }
 
-function compilePlaybackWithMedia(analysis, opts) {
+export function compilePlaybackWithMedia(analysis, opts) {
   const base = compilePlayback(analysis, opts);
   const { media } = opts;
   if (!media) return base;
@@ -348,14 +415,61 @@ function compilePlaybackWithMedia(analysis, opts) {
         p.sprite = media.characters[p.character_id];
       }
     }
+    // Expression Sensitivity Plan Phase 3d: sprite_url was schema-only,
+    // dormant infra (server/analyze/schema.py PlaybackLine.sprite_url;
+    // Player.jsx/Stage.jsx already read it) until this — set it whenever
+    // this line's speaker has a generated variant for its expression bucket.
+    if (media.expressionSprites) {
+      for (const line of scene.lines || []) {
+        const sprites = media.expressionSprites[line.character_id];
+        if (!sprites) continue;
+        const bucket = normalizeExpressionBucket(line.expression);
+        if (sprites[bucket]) line.sprite_url = sprites[bucket];
+      }
+    }
   }
   if (media.characters) {
     for (const [id, url] of Object.entries(media.characters)) {
       if (base.characters?.[id]) base.characters[id].sprite = url;
     }
   }
+  if (media.expressionSprites) {
+    for (const [id, sprites] of Object.entries(media.expressionSprites)) {
+      if (base.characters?.[id]) base.characters[id].expressionSprites = sprites;
+    }
+  }
   if (media.cover) base.cover = media.cover;
   return base;
+}
+
+/**
+ * Aggregates whatever media (character sprites, scene backgrounds, alt-
+ * expression sprites) has already been generated across a set of chapter
+ * packs — the reuse seed for both the per-chapter imaging consumer (worker/
+ * queue/chapter-imaging-consumer.js, only the chapters strictly before its
+ * own) and the whole-book finalization phase (chapter-extract-pipeline.js,
+ * every chapter) so neither regenerates a character or background that
+ * parallel per-chapter imaging already produced while extraction was still
+ * running on later chapters.
+ */
+export async function existingMediaFromChapterPacks(env, bookId, chapterPositions) {
+  const media = {
+    characters: {}, backgrounds: {}, cover: null, inserts: {}, expressionSprites: {},
+  };
+  for (const pos of chapterPositions) {
+    const pack = await getChapterPack(env, bookId, pos);
+    if (!pack) continue;
+    for (const [id, c] of Object.entries(pack.characters || {})) {
+      if (c?.sprite) media.characters[id] = c.sprite;
+      if (c?.expressionSprites) {
+        media.expressionSprites[id] = { ...(media.expressionSprites[id] || {}), ...c.expressionSprites };
+      }
+    }
+    for (const s of pack.scenes || []) {
+      if (s.background) media.backgrounds[s.id] = s.background;
+    }
+  }
+  return media;
 }
 
 function hashSeed(s) {

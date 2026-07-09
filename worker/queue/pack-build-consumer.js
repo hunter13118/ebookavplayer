@@ -66,7 +66,7 @@ export async function handlePackBuildMessage(message, env) {
     const bookObj = await env.VAE_PACKS.get(`books/${book_id}.json`);
     if (!bookObj) throw new Error(`playback missing for ${book_id}`);
     const book = JSON.parse(await bookObj.text());
-    const packStyle = style || book.art_style || "semi-real";
+    const packStyle = style || book.art_style || "anime";
 
     const { bytes, manifest, audioManifest } = await buildPackOnEdge({
       env,

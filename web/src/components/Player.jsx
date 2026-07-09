@@ -4,6 +4,8 @@ import Stage from "./Stage.jsx";
 
 import DialogueBox from "./DialogueBox.jsx";
 
+import DirectorsLog from "./DirectorsLog.jsx";
+
 import Controls from "./Controls.jsx";
 
 import TtsErrorModal from "./TtsErrorModal.jsx";
@@ -29,6 +31,7 @@ import { useCompareModal } from "../hooks/compareModalContext.jsx";
 import { useRegenFeedback } from "../hooks/useRegenFeedback.js";
 
 import { Orchestrator } from "../audio/orchestrator.js";
+import { nextTension } from "../audio/tension.js";
 
 import { sleepTimerRemainingMs } from "../audio/timing.js";
 
@@ -659,6 +662,22 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
   // the rest of the time, including before the orchestrator's first emit.
   const curLine = st.syntheticSegment ? st.line : (lines[st.index] || null);
 
+  // Expression Sensitivity Plan Phase 4: per-scene "tension" that builds
+  // across consecutive high-intensity lines and decays on calm narration —
+  // resets whenever the scene itself changes. Gaps (synthetic narrator
+  // filler) don't drive it either way, same as a calm line would.
+  const [tension, setTension] = useState(0);
+  const lastTensionSceneRef = useRef(scene?.id);
+  useEffect(() => {
+    if (lastTensionSceneRef.current !== scene?.id) {
+      lastTensionSceneRef.current = scene?.id;
+      setTension(0);
+      return;
+    }
+    if (st.syntheticSegment) return;
+    setTension((prev) => nextTension(prev, lines[st.index] || null));
+  }, [st.index, st.syntheticSegment, scene?.id, lines]);
+
   const spotlightId = useMemo(
 
     () => spotlightCharacterId(lines, st.index),
@@ -1007,6 +1026,8 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
 
     prefs.fullscreen ? "vae-player-fullscreen" : "",
 
+    `vae-perf-${prefs.performanceMode || "balanced"}`,
+
   ].filter(Boolean).join(" ");
 
 
@@ -1120,6 +1141,12 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
 
             curExpression={curLine?.expression}
 
+            curIntensity={curLine?.intensity}
+
+            performanceMode={prefs.performanceMode}
+
+            tension={tension}
+
             borders={prefs.spriteBorders} pixelFilter={bk.art_filter === "pixel"}
 
             portraitLayout={prefs.portraitLayout}
@@ -1147,6 +1174,10 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
             <DialogueBox line={curLine} speakerName={speakerName} revealed={st.revealed}
 
               style={prefs.displayStyle} onAdvance={advanceClick} />
+
+            <DirectorsLog line={curLine} speakerName={speakerName}
+
+              performanceMode={prefs.performanceMode} tension={tension} enabled={prefs.directorsLog} />
 
           </Stage>
 

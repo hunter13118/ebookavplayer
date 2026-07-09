@@ -41,7 +41,7 @@ export async function handleReExtractMessage(message, env) {
 
     const bookMetaRaw = await env.VAE_JOBS.get(`book:${book_id}`);
     const meta = bookMetaRaw ? JSON.parse(bookMetaRaw) : {};
-    const art_style = meta.art_style || "semi-real";
+    const art_style = meta.art_style || "anime";
     const narrator_gender = meta.narrator_gender || "male";
 
     dbg.log(PHASE.P2_EXTRACT, "start", { chapters: parsed.chapters?.length });

@@ -70,6 +70,16 @@ export async function onQueueBatch(batch, env) {
 
       }
 
+      if (kind === "chapter-imaging") {
+
+        const { handleChapterImagingMessage } = await import("./chapter-imaging-consumer.js");
+
+        await handleChapterImagingMessage(message, env);
+
+        continue;
+
+      }
+
       if (kind === "moment-generate") {
 
         await emitStarted(env, message);
@@ -87,6 +97,30 @@ export async function onQueueBatch(batch, env) {
         const { handlePackBuildMessage } = await import("./pack-build-consumer.js");
 
         await handlePackBuildMessage(message, env);
+
+        continue;
+
+      }
+
+      if (kind === "expression-repass") {
+
+        await emitStarted(env, message);
+
+        const { handleExpressionRepassMessage } = await import("./expression-repass-consumer.js");
+
+        await handleExpressionRepassMessage(message, env);
+
+        continue;
+
+      }
+
+      if (kind === "illustration-character-match") {
+
+        await emitStarted(env, message);
+
+        const { handleIllustrationCharacterMatchMessage } = await import("./illustration-character-match-consumer.js");
+
+        await handleIllustrationCharacterMatchMessage(message, env);
 
         continue;
 

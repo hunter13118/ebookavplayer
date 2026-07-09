@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 
-import { fetchEdgeVoices, reExtractBook, subscribeJobEvents, jobEventToStatus, saveVoiceOverrides } from "../api.js";
+import {
+  fetchEdgeVoices, reExtractBook, runExpressionRepass, subscribeJobEvents, jobEventToStatus, saveVoiceOverrides,
+} from "../api.js";
 
 import { getActiveConnection } from "../backends/connections.js";
 
@@ -11,8 +13,6 @@ import ProviderSelect from "./ProviderSelect.jsx";
 import PinMismatchConfirm from "./PinMismatchConfirm.jsx";
 
 import VoiceField from "./VoiceField.jsx";
-
-import CharacterManager from "./CharacterManager.jsx";
 
 import { DisplaySettings, PlaybackSettings, AudiobookSyncSettings } from "./AppSettingsSections.jsx";
 
@@ -51,6 +51,8 @@ export default function PlayerMenu({
   const [busy, setBusy] = useState(false);
 
   const [extractBusy, setExtractBusy] = useState(false);
+
+  const [expressionRepassBusy, setExpressionRepassBusy] = useState(false);
 
   const [err, setErr] = useState("");
 
@@ -223,6 +225,21 @@ export default function PlayerMenu({
 
 
 
+  async function handleExpressionRepass() {
+    setExpressionRepassBusy(true);
+    setErr("");
+    try {
+      const { job_id: jobId } = await runExpressionRepass(book.book_id, { preferProvider: extractProvider });
+      onJobStarted?.(jobId);
+      await pollJob(jobId);
+      await onRefresh?.();
+    } catch (e) {
+      setErr(e?.message || "Could not re-tag expressions.");
+    } finally {
+      setExpressionRepassBusy(false);
+    }
+  }
+
   // Extraction has a real, durable pin (book.extract_provider) — picking a
   // different explicit provider re-pins the book, so confirm first. "auto"
   // and a first-ever extraction (no existing pin) skip the confirm.
@@ -292,6 +309,16 @@ export default function PlayerMenu({
 
               </button>
 
+              <button type="button" className="vae-menu-link" data-testid="expression-repass"
+
+                disabled={disabled || extractBusy || expressionRepassBusy}
+
+                onClick={handleExpressionRepass}>
+
+                {expressionRepassBusy ? "Re-tagging expressions…" : "Re-tag expressions"}
+
+              </button>
+
               <button type="button" className="vae-menu-link" data-testid="open-replace"
 
                 disabled={disabled || extractBusy}
@@ -304,13 +331,13 @@ export default function PlayerMenu({
 
               {onOpenPlates && (
 
-                <button type="button" className="vae-menu-link" data-testid="open-epub-plates"
+                <button type="button" className="vae-menu-link" data-testid="open-character-settings"
 
                   disabled={disabled || extractBusy}
 
                   onClick={() => { onClose(); onOpenPlates(); }}>
 
-                  Art references…
+                  Character settings…
 
                 </button>
 
@@ -349,18 +376,6 @@ export default function PlayerMenu({
         <AudiobookSyncSettings prefs={prefs} setPrefs={setPrefs}
 
           m4bStatus={m4bStatus} onAttachM4b={onAttachM4b} onRemoveM4b={onRemoveM4b} />
-
-
-
-        <section className="vae-menu-section">
-
-          <h3>Characters</h3>
-
-          <p className="vae-sheet-hint">Rename a character, or merge one into an existing one if extraction got it wrong (e.g. "Unnamed male protagonist" → Eizo) — applies everywhere, past and future chapters, sprite and voice included.</p>
-
-          <CharacterManager book={book} onRefresh={onRefresh} disabled={disabled || extractBusy} />
-
-        </section>
 
 
 

@@ -11,8 +11,8 @@ export default function ArtStyleSwitcher({ book, disabled, onRefresh, onJobStart
 
   const styles = book?.styles?.length
     ? book.styles
-    : [{ id: "semi-real", label: "Semi-realistic", status: "ready" }];
-  const active = book?.active_style || "semi-real";
+    : [{ id: "anime", label: "Anime (light novels)", status: "ready" }];
+  const active = book?.active_style || "anime";
 
   async function swapReady(styleId, { mode } = {}) {
     setBusy(true);

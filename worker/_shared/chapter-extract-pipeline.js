@@ -12,8 +12,11 @@
  * caller should treat as retryable exactly like today's whole-book path.
  *
  * Once every chapter succeeds, runs image generation exactly as the legacy
- * whole-book path did (unchanged — parallel per-chapter imaging is Phase 2,
- * deferred).
+ * whole-book path did — except now seeded with existingMediaFromChapterPacks
+ * (see below), so anything VAE_PARALLEL_IMAGING already generated per-chapter
+ * while later chapters were still extracting gets reused here instead of
+ * regenerated. See docs/LOCAL_LLM_EXTRACTION.md's "Parallel per-chapter
+ * imaging" section and worker/queue/chapter-imaging-consumer.js.
  */
 import { extractEpubText } from "./epub-text.js";
 import { extractEpubImages } from "./epub-images.js";
@@ -22,13 +25,14 @@ import { loadStoredEpubBytes } from "./book-extract-pipeline.js";
 import { freemiumExtractBookByChapter } from "./freemium-extract.js";
 import { repairAnalysis } from "./dialogue-repair.js";
 import { attributeAnalysis } from "./dialogue-attribute.js";
-import { compileChapterPlayback } from "./compile-playback.js";
+import { runExpressionRepass, auditExpressionFlatness, isExpressionRepassEnabled } from "./expression-repass.js";
+import { compileChapterPlayback, synthesizeUndeclaredCharacters } from "./compile-playback.js";
 import { applyCharacterAliases } from "./character-merge.js";
 import {
   getCheckpoint, putCheckpoint, emptyCheckpoint, putChapterPack,
 } from "./book-checkpoint.js";
 import { putBookIndex } from "./jobs-kv.js";
-import { runEdgeImaging } from "./edge-imaging.js";
+import { runEdgeImaging, existingMediaFromChapterPacks } from "./edge-imaging.js";
 import { countImagingSteps } from "./ingest-progress.js";
 import { normalizeIllustrationMode, applyDirectIllustrations } from "./illustrations.js";
 import { PHASE } from "./phase-debug.js";
@@ -45,9 +49,77 @@ async function writeJsonR2(env, key, data) {
   });
 }
 
+// Opt-in (default off, matching VAE_EXPRESSION_REPASS/generate_expressive_sprites
+// convention) — new, more complex code path (separate queue, its own
+// consumer). The fallback when it's off, or the enqueue fails, or the queue
+// never gets a turn is simply today's behavior: nothing generates until the
+// whole book finishes extracting, then the existing final imaging phase
+// runs exactly as before. See docs/LOCAL_LLM_EXTRACTION.md.
+function isParallelImagingEnabled(env) {
+  return env.VAE_PARALLEL_IMAGING === "true" || env.VAE_PARALLEL_IMAGING === "1";
+}
+
+/**
+ * Which provider a (re)started extraction run should use. An explicit
+ * preferProvider on THIS call is a deliberate override (e.g. resuming with a
+ * different model than last time) and must win — checkpoint.provider_used is
+ * only the fallback for a plain "just resume" call that didn't ask for
+ * anything specific, so it stays consistent with whatever earlier chapters
+ * already used instead of restarting the freemium fallback cascade from
+ * scratch. Previously inverted (checkpoint always won), which silently
+ * ignored any prefer_provider passed to a resume.
+ */
+export function resolveResumeProvider(preferProvider, checkpoint) {
+  return preferProvider || checkpoint?.provider_used || null;
+}
+
+/**
+ * Matches each extracted illustration plate to the chapter it belongs to, so
+ * the extraction prompt can tell the model which illustration index is near
+ * the text it's currently reading (see freemium-extract.js's
+ * getChapterIllustrations / ILLUSTRATION PLATES prompt section).
+ *
+ * Exact spine_path equality (the original approach) silently matched almost
+ * nothing on real light-novel EPUBs: illustration plates conventionally live
+ * on their own dedicated spine pages (`insert1.xhtml`, `Color1.xhtml`,
+ * `bonus1.xhtml`, ...) sitting *between* chapter files in the spine, not
+ * embedded inside a chapter's own file — confirmed against a real J-Novel
+ * Club EPUB where 13 of 14 plates went unmatched this way. Instead, walk the
+ * full spine order (`orderedPaths`, includes the plate/front-matter pages
+ * `chapters` filters out) and attach each plate to the next real chapter
+ * that follows it in spine order — the plate conventionally introduces the
+ * chapter it precedes. A plate with no following chapter (back-matter: color
+ * inserts, bonus content, sign-up pages) is left unmatched rather than
+ * guessed at.
+ */
+export function matchIllustrationsToChapters(orderedPaths, chapters, imageMeta) {
+  const illustrationsByChapterPos = new Map();
+  if (!orderedPaths?.length || !chapters?.length || !imageMeta?.length) return illustrationsByChapterPos;
+
+  const chapterPosByPath = new Map(chapters.map((c, pos) => [c.spine_path, pos]));
+  const pathIndex = new Map(orderedPaths.map((p, i) => [p, i]));
+
+  for (const meta of imageMeta) {
+    if (!meta.sourcePath) continue;
+    let chapterPos = chapterPosByPath.get(meta.sourcePath);
+    if (chapterPos === undefined) {
+      const start = pathIndex.get(meta.sourcePath);
+      if (start === undefined) continue;
+      for (let i = start + 1; i < orderedPaths.length; i += 1) {
+        const pos = chapterPosByPath.get(orderedPaths[i]);
+        if (pos !== undefined) { chapterPos = pos; break; }
+      }
+    }
+    if (chapterPos === undefined) continue;
+    if (!illustrationsByChapterPos.has(chapterPos)) illustrationsByChapterPos.set(chapterPos, []);
+    illustrationsByChapterPos.get(chapterPos).push({ index: meta.index, textContext: meta.textContext });
+  }
+  return illustrationsByChapterPos;
+}
+
 export async function runCheckpointedExtraction({
   env, job_id, book_id, art_style, narrator_gender, illustration_mode,
-  dry_run, generate_art, byo_mode, prefer_provider, report, dbg,
+  dry_run, generate_art, generate_expressive_sprites, byo_mode, prefer_provider, report, dbg,
 }) {
   const wantArt = generate_art !== false && !dry_run && !byo_mode;
 
@@ -73,18 +145,9 @@ export async function runCheckpointedExtraction({
   });
   await report("parsing", 1, { detail: `Parsed ${parsed.chars} chars · ${parsed.chapter_count} chapters` });
 
-  // Match each extracted plate's source spine file to the chapter it belongs
-  // to, so the extraction prompt can tell the model which illustration index
-  // is near the text it's currently reading (see freemium-extract.js's
-  // getChapterIllustrations / ILLUSTRATION PLATES prompt section).
-  const illustrationsByChapterPos = new Map();
-  for (const meta of epubExtract.imageMeta || []) {
-    if (!meta.sourcePath) continue;
-    const chapterPos = parsed.chapters.findIndex((c) => c.spine_path === meta.sourcePath);
-    if (chapterPos < 0) continue;
-    if (!illustrationsByChapterPos.has(chapterPos)) illustrationsByChapterPos.set(chapterPos, []);
-    illustrationsByChapterPos.get(chapterPos).push({ index: meta.index, textContext: meta.textContext });
-  }
+  const illustrationsByChapterPos = matchIllustrationsToChapters(
+    parsed.orderedPaths, parsed.chapters, epubExtract.imageMeta,
+  );
 
   let checkpoint = await getCheckpoint(env, book_id);
   const isResume = Boolean(checkpoint?.chapters_done?.length);
@@ -131,7 +194,7 @@ export async function runCheckpointedExtraction({
   const { isAttrLlmEnabled, attributeAnalysisLLM } = await import("./dialogue-attribute-llm.js");
   const attrLlmOn = isAttrLlmEnabled(env);
 
-  let provider = checkpoint.provider_used || prefer_provider;
+  let provider = resolveResumeProvider(prefer_provider, checkpoint);
   let model = "";
   let stopDetail = null;
 
@@ -189,6 +252,47 @@ export async function runCheckpointedExtraction({
           }
           repaired = applyCharacterAliases(repaired, characterAliases);
 
+          // Expression Sensitivity Plan Phase 1d/1e/1f: a small, best-effort
+          // enhancement pass — never let it fail the chapter. Either always
+          // on (VAE_EXPRESSION_REPASS=1) or auto-triggered only when Phase 0's
+          // flatness audit flags this specific chapter as suspiciously flat.
+          try {
+            // Prior chapters' compiled (and possibly user-edited via
+            // CharacterManager) temperament wins over this chunk's own
+            // re-extraction of an already-known character, since the model
+            // rarely re-derives it on a repeat mention — this chapter's own
+            // analysis only fills in characters not yet known.
+            const temperamentByCharacter = {
+              ...Object.fromEntries(
+                (repaired.characters || []).filter((c) => c.temperament).map((c) => [c.id, c.temperament]),
+              ),
+              ...Object.fromEntries(
+                Object.entries(knownCharacters).filter(([, c]) => c.temperament).map(([id, c]) => [id, c.temperament]),
+              ),
+            };
+            if (isExpressionRepassEnabled(env)) {
+              repaired = {
+                ...repaired,
+                scenes: await runExpressionRepass(repaired.scenes, { env, temperamentByCharacter }),
+              };
+            } else {
+              const audit = auditExpressionFlatness(repaired.scenes);
+              if (audit.suspiciouslyFlat) {
+                dbg.log(PHASE.P2_EXTRACT, "expression audit flagged chapter as flat — running focused repass", {
+                  chapterPos, ...audit,
+                });
+                repaired = {
+                  ...repaired,
+                  scenes: await runExpressionRepass(repaired.scenes, { env, temperamentByCharacter }),
+                };
+              }
+            }
+          } catch (e) {
+            dbg.log(PHASE.P2_EXTRACT, "expression repass failed (non-fatal, keeping original tags)", {
+              chapterPos, error: e.message || String(e),
+            });
+          }
+
           const {
             scenes, newCharactersOut, nextLineIdx, updatedVoiceState,
           } = compileChapterPlayback(repaired, {
@@ -200,6 +304,36 @@ export async function runCheckpointedExtraction({
           });
 
           await putChapterPack(env, book_id, chapterPos, { scenes, characters: newCharactersOut });
+
+          // Parallel imaging (Phase 2, no longer deferred — see file header):
+          // enqueue this chapter's new characters/scenes onto a separate
+          // queue so art generation can run concurrently with later
+          // chapters still extracting, instead of waiting for the whole
+          // book. Best-effort — the final imaging phase below is the
+          // fallback either way (this queue not existing yet, an enqueue
+          // failure, or the local dev queue simulator not giving it a turn
+          // all degrade to exactly today's behavior, nothing lost).
+          if (wantArt && isParallelImagingEnabled(env) && env.VAE_IMAGING_QUEUE) {
+            const newCharacterIds = Object.keys(newCharactersOut || {});
+            const sceneIds = scenes.map((s) => s.id);
+            if (newCharacterIds.length || sceneIds.length) {
+              await env.VAE_IMAGING_QUEUE.send({
+                kind: "chapter-imaging",
+                job_id,
+                book_id,
+                chapterPos,
+                art_style,
+                narrator_gender,
+                generate_expressive_sprites: Boolean(generate_expressive_sprites),
+                new_character_ids: newCharacterIds,
+                scene_ids: sceneIds,
+              }).catch((e) => {
+                dbg.log(PHASE.P2_EXTRACT, "chapter-imaging enqueue failed (non-fatal)", {
+                  chapterPos, error: e.message || String(e),
+                });
+              });
+            }
+          }
 
           knownCharacters = { ...knownCharacters, ...newCharactersOut };
           mergedScenes = [...mergedScenes, ...scenes];
@@ -286,8 +420,31 @@ export async function runCheckpointedExtraction({
 
   // Every chapter succeeded — finalize the full analysis + playback, then run
   // imaging exactly as the legacy whole-book path (unchanged for this phase).
+  //
+  // `chapters` must live on `analysis`, not just on the hand-built `playback`
+  // below — any imaging run (runEdgeImaging -> compilePlaybackWithMedia ->
+  // compilePlayback) rebuilds playback FROM analysis via
+  // `chapters: analysis.chapters || []`, so if it's missing here it silently
+  // vanishes from the live playback the very first time art regenerates,
+  // even though it was present right after this initial finalize.
+  // Same reasoning as compile-playback.js's synthesizeUndeclaredCharacters:
+  // the model doesn't always keep characters[] in sync with who it actually
+  // uses in scenes/lines. compileChapterPlayback already patches this for
+  // the compiled *playback* per-chapter, but analysis.json's own characters
+  // array needs the same treatment — otherwise a character who only exists
+  // because of that synthesis (never declared by the model) is invisible to
+  // every endpoint that patches analysis.characters directly: illustration-
+  // refs, rename, merge, temperament. Confirmed as a real bug: assigning an
+  // EPUB plate to such a character via the Character settings UI saved
+  // "successfully" but silently did nothing, because the patch loop found
+  // no matching id to update.
+  const analysisCharacters = [
+    ...mergedAnalysisCharacters,
+    ...synthesizeUndeclaredCharacters(mergedAnalysisCharacters, mergedAnalysisScenes, []),
+  ];
   const analysis = {
-    book_id, title, author, characters: mergedAnalysisCharacters, scenes: mergedAnalysisScenes,
+    book_id, title, author, characters: analysisCharacters, scenes: mergedAnalysisScenes,
+    chapters: parsed.chapters.map((c) => ({ index: c.index, title: c.title })),
   };
   if (Object.keys(illustrationUrls).length) {
     analysis.illustration_urls = illustrationUrls;
@@ -365,13 +522,24 @@ export async function runCheckpointedExtraction({
       detail: `Generating art (0/${imgPlan.total})`, step: "imaging", stepIndex: 0, stepTotal: imgPlan.total,
     });
 
+    // If VAE_PARALLEL_IMAGING generated art per-chapter while later chapters
+    // were still extracting (see the chapter-imaging enqueue in
+    // onChapterComplete below), this is the reuse seed — whatever's already
+    // sitting in each chapter's pack gets skipped here instead of
+    // regenerated, so this final phase often has little or nothing left to
+    // do by the time every chapter's text has finished.
+    const allChapterPositions = Array.from({ length: checkpoint.total_chapters }, (_, i) => i);
+    const existingMedia = await existingMediaFromChapterPacks(env, book_id, allChapterPositions);
+
     const img = await runEdgeImaging({
       env,
       book_id,
       analysis,
       art_style,
       narrator_gender,
+      existingMedia,
       dbg,
+      generateExpressiveSprites: Boolean(generate_expressive_sprites),
       onCoverReady: (coverUrl) => {
         putBookIndex(env, book_id, { cover: coverUrl }).catch(() => {});
       },

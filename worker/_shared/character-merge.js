@@ -77,6 +77,79 @@ export function renameCharacterInPlayback(playback, id, name) {
   return { ...playback, characters, scenes };
 }
 
+/** Expression Sensitivity Plan Phase 1f: set/edit a character's baseline
+ * temperament in place — no scene/line rewrite needed, it's context for the
+ * expression re-pass (worker/_shared/expression-repass.js), not a display field. */
+export function setCharacterTemperamentInAnalysis(analysis, id, temperament) {
+  if (!(analysis.characters || []).some((c) => c.id === id)) return analysis;
+  return {
+    ...analysis,
+    characters: analysis.characters.map((c) => (c.id === id ? { ...c, temperament } : c)),
+  };
+}
+
+export function setCharacterTemperamentInPlayback(playback, id, temperament) {
+  if (!playback.characters?.[id]) return playback;
+  return {
+    ...playback,
+    characters: { ...playback.characters, [id]: { ...playback.characters[id], temperament } },
+  };
+}
+
+/** User-editable character description — overrides whatever the extraction
+ * model wrote, same shape/pattern as temperament above. Display-only (shown
+ * in the character profile viewer), not fed back into any prompt. */
+export function setCharacterDescriptionInAnalysis(analysis, id, description) {
+  if (!(analysis.characters || []).some((c) => c.id === id)) return analysis;
+  return {
+    ...analysis,
+    characters: analysis.characters.map((c) => (c.id === id ? { ...c, description } : c)),
+  };
+}
+
+export function setCharacterDescriptionInPlayback(playback, id, description) {
+  if (!playback.characters?.[id]) return playback;
+  return {
+    ...playback,
+    characters: { ...playback.characters, [id]: { ...playback.characters[id], description } },
+  };
+}
+
+const MAX_REFERENCE_IMAGES = 8;
+
+/** User-uploaded reference pictures of their own choosing, shown in the
+ * character profile viewer — R2-backed media URLs (own /media/ route), not
+ * routed through external_refs.js's fetch-based mechanism (that one is for
+ * arbitrary remote URLs and deliberately blocks internal/localhost hosts as
+ * an SSRF guard; these are always same-worker URLs anyway). Not yet wired
+ * into image generation as a reference source — see
+ * docs/TODO_ILLUSTRATIONS_PROFILES_POLISH.md item 2 for that follow-up. */
+export function addCharacterReferenceImageInAnalysis(analysis, id, url) {
+  if (!(analysis.characters || []).some((c) => c.id === id)) return analysis;
+  return {
+    ...analysis,
+    characters: analysis.characters.map((c) => (c.id === id ? {
+      ...c,
+      reference_images: [...new Set([...(c.reference_images || []), url])].slice(-MAX_REFERENCE_IMAGES),
+    } : c)),
+  };
+}
+
+export function addCharacterReferenceImageInPlayback(playback, id, url) {
+  if (!playback.characters?.[id]) return playback;
+  const c = playback.characters[id];
+  return {
+    ...playback,
+    characters: {
+      ...playback.characters,
+      [id]: {
+        ...c,
+        reference_images: [...new Set([...(c.reference_images || []), url])].slice(-MAX_REFERENCE_IMAGES),
+      },
+    },
+  };
+}
+
 /**
  * Applied to a freshly-extracted chapter's analysis before it's compiled,
  * so a user-confirmed alias (from an earlier merge) is honored the moment a

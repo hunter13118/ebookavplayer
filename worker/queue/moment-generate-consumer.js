@@ -77,7 +77,7 @@ export async function handleMomentGenerateMessage(message, env) {
 
     const bookMetaRaw = await env.VAE_JOBS?.get(`book:${book_id}`);
     const bookMeta = bookMetaRaw ? JSON.parse(bookMetaRaw) : {};
-    const art_style = bookMeta.art_style || playback?.active_style || playback?.art_style || "semi-real";
+    const art_style = bookMeta.art_style || playback?.active_style || playback?.art_style || "anime";
 
     const desc = momentDescription(analysis, scene, tweaked, { lineIdx });
     const prompt = composeImagePrompt(desc, { subjectType: "character", style: art_style });

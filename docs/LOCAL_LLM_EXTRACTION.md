@@ -253,20 +253,44 @@ The result is genuinely split by model, not a clean win either way:
   combination found in this entire investigation for that specific case —
   better than every Ollama config tested, flash attention included.
 
-**Not wired into the codebase.** Given `VAE_EXTRACT_CONCURRENCY=1` is (still)
-the recommended default — solo beats parallel for every *other* config tested
-— the practical win today is flash attention alone (already enabled, zero
-integration cost). MLX would require a second serving stack (separate Python
-venv, `mlx-lm`, its own SSL/networking quirks encountered during this
-session's testing) gated behind something like `MLX_BASE_URL`, mirroring how
-`OLLAMA_BASE_URL` gates Ollama, purely as an *additional* opt-in option next
-to `ollama-20b`/`ollama-30b` — never replacing them. Worth revisiting if/when
-concurrent chapter extraction becomes a real requirement rather than a
-benchmarked curiosity.
+**Now wired in as an opt-in stage: `mlx-30b`.** Given `VAE_EXTRACT_CONCURRENCY=1`
+is (still) the recommended default — solo beats parallel for every *other*
+config tested — this only pays off once you've deliberately raised
+`VAE_EXTRACT_CONCURRENCY` above 1. Setup:
+
+```bash
+python3 -m venv .venv-mlx && source .venv-mlx/bin/activate  # separate venv — don't mix with the repo's main one
+pip install mlx-lm
+mlx_lm.server --model mlx-community/Qwen3-30B-A3B-4bit --port 8081
+```
+
+```bash
+# .env
+MLX_BASE_URL=http://localhost:8081
+```
+
+`npm run dev:worker` picks this up via `sync-dev-vars.mjs` exactly like
+`OLLAMA_BASE_URL`. This gates a new extract stage, `mlx-30b`
+([worker/_shared/pipeline-registry.js](../worker/_shared/pipeline-registry.js)),
+force-disabled whenever `MLX_BASE_URL` is unset — same hard-gate pattern as
+the four `ollama-*` stages, purely additive and never replacing them. The
+worker calls it via `mlxExtract()`
+([worker/_shared/freemium-extract.js](../worker/_shared/freemium-extract.js)),
+reusing the same OpenAI-compatible request shape `mlx_lm.server` exposes, with
+no real API key required and the same long, no-rate-limit timeout Ollama gets.
+A fourth preset, **Best for concurrent chapters (MLX, experimental)**
+(`local_mlx_concurrent`, see below), leads with it.
+
+**Note on tunneling:** running this alongside Ollama does *not* add a second
+thing you need to expose to the internet. Only the worker itself
+(`:8600`) ever gets a `cloudflared` tunnel (see Part 2 below) — Ollama
+(`:11434`) and `mlx_lm.server` (`:8081`) are both plain localhost-only
+processes the worker fans out to on your machine, invisible to whatever's on
+the other end of the tunnel.
 
 ### Choosing a preset
 
-Three named presets exist, each pinning a different local model to the front
+Four named presets exist, each pinning a different local model to the front
 of the extract chain (still a fallback chain, not exclusive — the others stay
 available if the leader errors out). Pick one via **Settings → AI Pipeline →
 Local extraction presets** in the app (drag-free — a "Use this" button applies
@@ -277,7 +301,8 @@ directly. Definitions live in
 | Preset (`id`) | Leads with | Effectiveness (this machine) | Recommended env | Pick this when |
 |---|---|---|---|---|
 | **Fastest** (`local_fastest_solo`) — default | `ollama-30b` (qwen3:30b-a3b) | ~53 tok/s solo | `OLLAMA_FLASH_ATTENTION=1`, `OLLAMA_NUM_PARALLEL=1`, `VAE_EXTRACT_CONCURRENCY=1` | Almost always — you're extracting one book/chapter at a time (the default) |
-| **Best for concurrent chapters** (`local_best_concurrent`) | `ollama-20b` (gpt-oss:20b) | ~44 tok/s solo, ~30 tok/s aggregate @ 8-way concurrency | same, but `VAE_EXTRACT_CONCURRENCY=4`+ | You've deliberately raised `VAE_EXTRACT_CONCURRENCY` above 1 — every other model loses 40-90% of its throughput there, this one barely does |
+| **Best for concurrent chapters** (`local_best_concurrent`) | `ollama-20b` (gpt-oss:20b) | ~44 tok/s solo, ~30 tok/s aggregate @ 8-way concurrency | same, but `VAE_EXTRACT_CONCURRENCY=4`+ | You've deliberately raised `VAE_EXTRACT_CONCURRENCY` above 1 — every other Ollama model loses 40-90% of its throughput there, this one barely does |
+| **Best for concurrent chapters (MLX, experimental)** (`local_mlx_concurrent`) | `mlx-30b` (qwen3:30b-a3b via MLX) | ~18.6 tok/s solo, ~39.1 tok/s aggregate @ 8-way concurrency | `MLX_BASE_URL` set, `VAE_EXTRACT_CONCURRENCY=4`+ | Same as above, but you want the single best concurrent number measured — beats every Ollama config, at the cost of a second local server process (Apple Silicon only) |
 | **Lightweight** (`local_lightweight`) | `ollama-7b` (qwen2.5:7b) | ~42 tok/s solo, 4.7GB download | same as Fastest (flash attention is neutral for this model) | Tight disk/RAM budget, or hardware where the MoE models haven't been validated |
 
 `OLLAMA_FLASH_ATTENTION`/`OLLAMA_NUM_PARALLEL` are `ollama serve` process env
@@ -401,6 +426,53 @@ Then add that URL to `VAE_CORS_ORIGINS` (above), restart `dev:worker`, and
 visit the deployed site with
 `?localApi=https://<random>.trycloudflare.com/projects/ebookavplayer/api`.
 
+### Reaching local Ollama/MLX from a *deployed* Worker (attempted 2026-07-08, blocked on this machine)
+
+Different problem from the one above: not bridging a local *frontend* to the
+deployed site, but having an actually-`wrangler deploy`d Worker (real edge,
+real Queues — which would also sidestep `wrangler dev`'s local queue
+simulator flaking on long-running consumers) call back to Ollama/MLX running
+on a home machine. `localhost` means nothing to a Worker running on
+Cloudflare's edge, so this needs a tunnel running persistently on the model
+machine, with the Worker's `OLLAMA_BASE_URL`/`MLX_BASE_URL` pointed at the
+tunnel hostname instead.
+
+**What was built and still exists, unused:**
+- Named Cloudflare Tunnel `vae-ollama` (id `f407cc6c-9971-4519-855a-f0a2fab67067`),
+  DNS-routed to `ollama.hunterthemilkman.com` → `localhost:11434` and
+  `mlx.hunterthemilkman.com` → `localhost:8081` (config at
+  `~/.cloudflared/config.yml` on that machine).
+- A Cloudflare Access application gating both hostnames with a Service Auth
+  policy + service token (`vae-worker`).
+- `cfAccessHeaders(env)` in
+  [worker/_shared/freemium-extract.js](../worker/_shared/freemium-extract.js) —
+  reads `CF_ACCESS_CLIENT_ID`/`CF_ACCESS_CLIENT_SECRET` and attaches them to
+  the Ollama/MLX fetch calls. No-ops against a bare `localhost` target, so
+  it's safe to leave wired in permanently.
+
+**Why it doesn't work today:** the model machine has an always-on, per-device
+VPN/MDM network policy (not optional, not network-specific — confirmed
+active regardless of which Wi-Fi it's on) that sinkholes DNS lookups for
+domains it doesn't recognize to a filtering appliance. This isn't narrowly
+about `cloudflared`'s SRV-record edge discovery (`_v2-origintunneld._tcp.argotunnel.com`)
+— a fresh `ngrok` tunnel hostname got redirected to the *exact same*
+sinkhole IP, serving an unrelated TLS cert. That rules out both "it's an SRV
+lookup quirk" (proven: the real SRV records resolve fine over DNS-over-HTTPS,
+port 53 specifically is what's intercepted) and "it's cloudflared-specific"
+(ngrok, a completely different tunnel vendor over plain HTTPS, hit the same
+wall). Docker Desktop wasn't installed to test whether a separate VM network
+namespace escapes it — worth trying first on a future attempt, though if the
+interception happens at the network/router boundary rather than purely via
+the OS resolver config, it likely wouldn't help either.
+
+**Revisit this from a different machine** — one without that device policy.
+Everything above (tunnel, DNS, Access app, service token, the
+`cfAccessHeaders` code) is ready to use as-is; only the tunnel *connector*
+needs to run somewhere else. `cloudflared tunnel run vae-ollama` on that
+machine (using the same `~/.cloudflared/` credentials, or re-authenticate
+fresh) plus setting `OLLAMA_BASE_URL`/`MLX_BASE_URL` as deployed-Worker
+secrets to the tunnel hostnames is the whole remaining task.
+
 ## Putting it together: fully local, fully free extraction from the hosted site
 
 1. `ollama serve` + `ollama pull gpt-oss:20b` (Part 1 prerequisites). Leave
@@ -417,14 +489,133 @@ visit the deployed site with
    your machine except the frontend's API calls (which stay on your own
    tunnel if you're using one).
 
+## Chunk size vs. progress granularity vs. scene continuity
+
+`EXTRACT_CHUNK_MAX_TOKENS` (default 2000, see `.env.example`) controls how
+much text goes into each extract round-trip. Smaller means more, faster
+round-trips per chapter — more frequent `chunk N/M` progress ticks instead of
+one slow local-model call sitting silent for many minutes. This is the knob
+to reach for if a local model (30B/dense especially) goes quiet for a long
+stretch with no feedback.
+
+`OLLAMA_NUM_CTX` (see `.env.example`) auto-scales with this — 8x the chunk
+budget, floored at 4096 — instead of a fixed 16384 sized for the old
+2000-token default. A smaller chunk budget means the real prompt (system +
+rules + chunk + known-characters) needs far less context than 16384 gave it
+room for, and a smaller context window is less KV-cache for Ollama to
+compute attention over on every generation step — real, measurable overhead
+independent of which model is doing the generating. Override it directly if
+the computed value turns out wrong for a specific book (a very long known-
+characters list deep into a dense book is the main way it could need more
+room than the default ratio assumes).
+
+Two things this does *not* cost you:
+
+- **Character continuity** — `extractChapterRaw`'s known-character list is
+  threaded into every chunk's prompt regardless of chunk count, unrelated to
+  chunk size.
+- **Scene continuity** — chunk boundaries land wherever the token budget
+  runs out, which can be mid-scene. The model flags this itself: if its last
+  scene is cut off mid-action (not a real scene end), it sets
+  `scene_continues: true` on it. The next chunk's prompt gets an "OPEN SCENE
+  FROM PREVIOUS CHUNK" note (`formatOpenScene` in freemium-extract.js) naming
+  that exact scene id, location, and present characters, instructing the
+  model to continue the same scene id rather than starting a new one.
+  `mergeChapterScenes` then stitches matching ids back into one scene
+  (concatenated lines, unioned present-characters) instead of leaving two
+  partial scene entries. See the SCENE_CONTINUES rule in
+  [worker/_shared/dialogue-rules.js](../worker/_shared/dialogue-rules.js) and
+  [tests/scene-continuity.test.mjs](../tests/scene-continuity.test.mjs).
+
+  This is best-effort, not a guarantee — it depends on the model actually
+  setting the flag and reusing the id as instructed. If it doesn't (weaker
+  models are more likely to miss it), `mergeChapterScenes` falls back to
+  today's plain concatenation for that scene — additive, never worse than
+  the pre-existing behavior. Smaller chunks still raise how often a scene
+  boundary gets hit at all, just not how gracefully it's handled when it
+  does.
+
+## Also worth knowing: hybrid-reasoning models and `think`
+
+Qwen3 (and other hybrid-reasoning models — check a model's capabilities via
+`curl localhost:11434/api/show -d '{"model":"..."}'`) generate a hidden
+chain-of-thought before their actual answer unless told not to. That
+reasoning is pure overhead for a structured-extraction task — we only want
+the JSON — and its length doesn't scale down with a smaller
+`EXTRACT_CHUNK_MAX_TOKENS`; a single chunk was observed sitting 3+ minutes
+even at 800 input tokens. `ollamaExtract` in freemium-extract.js sends
+`think: false` on every request unconditionally — Ollama ignores it
+harmlessly for models that don't support hybrid reasoning, so this is safe
+across the board. If a local extraction still seems to sit far longer than
+expected on one chunk after this, check for an active TCP connection to
+Ollama (`lsof -nP -iTCP:11434 | grep ESTABLISHED`) and `ollama ps` showing
+the model actively loaded — if both are true, it's genuinely working, just
+slow on that particular chunk, not stuck.
+
+## Parallel per-chapter imaging
+
+`VAE_PARALLEL_IMAGING=true` (off by default) generates art for a chapter's
+new characters/scenes on a separate queue (`vae-imaging`, its own producer/
+consumer binding in `worker/wrangler.toml`) as soon as that chapter is
+checkpointed — instead of the default sequential pipeline, which extracts
+*every* chapter first and only then runs one whole-book imaging phase at the
+very end.
+
+**Why a separate queue, not just calling it inline:** the existing
+`pack-build` job shares the same physical queue as ingest/continue-extract
+(`vae-jobs`), and that's exactly why offline-pack-caching gets stuck queued
+behind a long-running extraction (see the Troubleshooting section above and
+`SETUP.md`'s "stuck showing Processing" row). A genuinely separate queue
+resource is what lets Cloudflare Queues run the two consumers concurrently
+instead of one blocking the other.
+
+**Why chapter packs, not the merged `books/{id}.json` playback:** the
+extraction loop rewrites `books/{id}.json` wholesale from its own in-memory
+scene list on *every* chapter completion, so anything written there by a
+concurrently-running imaging consumer would just get clobbered on the next
+chapter's completion. Each chapter's own pack
+(`books/{id}/chapters/{pos}.json`) has no concurrent writer once its
+initial `putChapterPack` call has happened, so `chapter-imaging-consumer.js`
+writes generated sprite/background URLs there instead — no read-modify-write
+race to reason about.
+
+**How the two ends meet:** the whole-book finalization phase (still runs
+after every chapter's *text* is done, per-chapter imaging or not) calls
+`existingMediaFromChapterPacks` first, aggregating whatever's already sitting
+in every chapter's pack, and passes that in as `runEdgeImaging`'s
+`existingMedia` — so anything already generated in parallel gets reused
+rather than regenerated. If per-chapter imaging finished everything already,
+this final phase has little or nothing left to do. If `VAE_PARALLEL_IMAGING`
+is off, an enqueue failed, or the local dev queue simulator never gave
+`vae-imaging` a turn, this degrades to exactly today's sequential behavior —
+nothing is lost either way.
+
+Character consistency risk: same as any other art-generation timing —
+generating a character's reference art the moment they first appear (rather
+than waiting for the whole book) means a later chapter's fuller
+characterization can't retroactively inform that first image. This is an
+accepted trade-off, not a regression — the existing regenerate-art workflow
+(`ArtStyleSwitcher`, `imaging-regen` jobs) is the way to fix a specific
+character's look after the fact, same as it already was before this feature
+existed.
+
+See `tests/chapter-imaging.test.mjs` and
+[worker/queue/chapter-imaging-consumer.js](../worker/queue/chapter-imaging-consumer.js).
+
 ## Troubleshooting
 
 | Symptom | Likely cause |
 |---|---|
 | Ingest still uses Gemini even with `OLLAMA_BASE_URL` set | `.env` edited but `worker/.dev.vars` is stale — restart `npm run dev:worker` so `sync-dev-vars.mjs` reruns; don't hand-edit `worker/.dev.vars` |
 | Extraction times out around 20 minutes | Expected ceiling (`OLLAMA_TIMEOUT_MS`) — a dense 14B/32B model on CPU-only hardware on a long chapter can be genuinely slow; try `gpt-oss:20b`/`qwen2.5:7b` or chunk the book smaller (`EXTRACT_CHUNK_MAX_TOKENS`) |
+| A chunk sits with no visible progress for many minutes (30B/dense models especially) — not timed out, just silent | Expected: one chunk = one round-trip, and local generation on a big model can genuinely take a long time with zero incremental feedback mid-request. Lower `EXTRACT_CHUNK_MAX_TOKENS` (try 600-1000) for more, smaller, faster round-trips per chapter — same `chunk N/M` progress display, just ticking more often. Character continuity across chunks is unaffected either way. Scene continuity across the chunk boundary itself is also handled now (see below) — if it's actually stuck (no live TCP connection to Ollama, `ollama ps` idle), cancel it from the Library — see [SETUP.md](../SETUP.md)'s "stuck showing Processing" row |
 | Wondering whether to raise `OLLAMA_NUM_PARALLEL`/`VAE_EXTRACT_CONCURRENCY` | Don't, without benchmarking first — on this repo's test machine it made aggregate throughput *worse* than sequential for every model except `gpt-oss:20b` (see benchmark table above) |
+| A hybrid-reasoning model (qwen3, gpt-oss) still "feels" slower per-chunk than a plain dense model with lower peak tok/s | Likely genuine — `think: false` disables the visible reasoning chain, but a reasoning-tuned model's real generation may still run longer per token of actual output than a model with no reasoning capability at all (check via `/api/show`'s `capabilities` list). If quality allows it for your book, a same-family dense model with zero `thinking` capability (e.g. `qwen2.5:14b` — bigger than `qwen2.5:7b`, same non-reasoning family) is a real fix, not just a workaround |
+| Resuming with a different `prefer_provider` than last time keeps using the old one | Fixed 2026-07-08 — `checkpoint.provider_used` used to always win over an explicit `prefer_provider` on `continue-extract`. Now an explicit request on the call overrides it; only a plain "just resume" (no `prefer_provider`) falls back to the checkpoint. See `resolveResumeProvider` in chapter-extract-pipeline.js and `tests/resume-provider.test.mjs` |
 | `ollama-7b`/`ollama-20b`/`ollama-30b`/`ollama-14b` don't appear in the pipeline config UI | They're force-disabled whenever `OLLAMA_BASE_URL` is unset — this is intentional, not a bug |
+| Extraction stalls on one chapter with `freemium_extract: all providers failed (3) — Expected ',' or '}' after property value` or `Expected ',' or ']' after array element` in JSON at position N | Three possible causes, all read as the same class of JSON.parse error: (1) the model emitted a literal, unescaped `"` inside a string value (nested quotation marks are the usual trigger), (2) it simply forgot a comma between two properties/array elements, or (3) — confirmed the most common cause by directly reproducing against the live model with a real stalled chunk — **the response was truncated**: generation ran out of context/tokens mid-structure and just stops, with no misplaced character anywhere (the giveaway: JSON.parse's error position lands exactly at the end of the string, e.g. `position 8890` on an 8890-char response). This is genuinely non-deterministic even at `temperature: 0.2` (re-running the identical prompt against the identical chunk on `qwen3:30b-a3b` sometimes parses cleanly, sometimes doesn't — MoE routing/batching isn't bit-for-bit reproducible), so a pinned local provider's 3 retries can still all fail, or all pass, depending on luck. `parseModelJson` (freemium-extract.js) repairs all three: `escapeStrayQuotes` fixes the stray-quote case, an iterative `insertCommaAtPosition` pass (using the exact offset JSON.parse names, and refusing to fire at end-of-string so it doesn't misfire on a truncation) fixes a genuinely-missing separator, and `closeTruncatedJson` closes whatever brackets/strings were still open when generation stopped — dropping a dangling, cut-off-mid-value final field rather than guessing its content, so the chunk still comes back usable minus that one item. When any of these kick in, a `console.warn` logs the repaired snippet plus a preview of the neighboring chunks' source text so you can manually confirm they extracted cleanly too. See `tests/parse-model-json-repair.test.mjs`. If the warning never appears and the stall persists, it's a genuinely unrecoverable response (e.g. no JSON structure at all) — check the worker log for the exact parse error |
+| A finished book (all chapters extracted, imaging under way) suddenly shows `status: "error"` / "Cancelled before any chapters finished" in the Library, even though the cover art and chapters clearly exist | Fixed 2026-07-09 — `worker/queue/imaging-regen-consumer.js`'s first `touchBook()` call (setting `imaging_locked`/`stage`) fired *before* the real book index was loaded from KV, so its `prev` hint was still the function's empty initial `{}`. Since `putBookIndex` skips its own KV read whenever a `prev` hint is passed, that first call overwrote the persisted index — silently dropping `chapters_ready`/`total_chapters`/`title`/`cover`/etc down to just the 4 fields in that patch. A later unrelated `cancel-processing` call then read `chapters_ready: 0` and wrote a harsh "nothing finished" error, even though extraction was fully done. The book's actual data (`books/{id}.json`, `.analysis.json`, chapter packs, generated media) was never touched — only the KV index entry used for the Library listing. Recovery for an already-corrupted index: re-derive the correct values from `books/{id}.json` (scene/line counts, cover) and the real chapter-pack count in R2, then `wrangler kv key put --binding VAE_JOBS --local "book:{id}"` with a corrected JSON blob — no need to re-extract or re-image anything already done. |
+| Backgrounds/sprites never populate on a book stuck "processing" imaging (still showing gradient placeholders however long you wait), and/or chapter titles never show up in the chapter dropdown even after re-extracting | Fixed 2026-07-09 — four layered bugs found while debugging a real stuck book (My Quiet Blacksmith Life, Vol. 6), each masking the next until fixed in order: (1) the KV index-wipe bug above; (2) `compile-playback.js` trusted the model's self-reported `scene.id` — the model frequently reproduces the extraction schema's example id ("scene-0001") literally instead of incrementing it, sometimes for 20+ consecutive scenes within one chapter, so 133 real scenes compiled down to as few as 32 unique ids and image generation/lookup collided onto the same few keys; (3) `chapter-extract-pipeline.js`'s finalize step wrote `chapters` onto the hand-built `playback` object but never onto `analysis` — harmless until the *first* imaging run, which rebuilds playback from analysis via `compilePlayback`'s `chapters: analysis.chapters || []`, silently dropping every chapter title; (4) the same scene.id-trust bug as (2), independently, in `edge-imaging.js`'s background-generation loop — fixing (2) alone wasn't enough, because the function that actually *drives* image generation reads straight from `analysis.scenes[].id`, not from the already-compiled playback. All four fixed to always trust positional index (`scene-${i+1}`) over the model's own id. A 5th non-bug pitfall hit while recovering: queues have no cancel primitive (documented on `onCancelProcessingPost`) — an old *staged-comparison* imaging job left running from before the fix kept retrying and growing its Durable Object comparisons log past SQLite's blob size limit, throwing continuously and starving the new, correctly-behaving job of execution time; a full `wrangler dev` restart was required to actually kill it (`imaging/unlock` only resets a KV flag, it doesn't stop a running consumer invocation). Recovering an already-corrupted book (like this one) without a full re-extraction: re-derive `chapters` from `extractEpubText` on the stored EPUB (cheap, no LLM call), recompile `analysis.json`/`playback.json` with the fixed `compilePlayback`, write both back via `wrangler r2 object put <bucket>/<key> --local --file <path>`, then re-run imaging. Separate, lower-priority issue noticed during this recovery, not yet fixed: `buildChaptersFromSpine` (`epub-text.js`) sometimes misclassifies a front-matter/color-plate spine page as a real chapter, producing a bogus chapter entry whose title is literally the book's own title — cosmetic (extra junk entries in the chapter list), not blocking. |
 | Bridge banner doesn't appear / API calls still hit production | Check `localStorage["vae-api-base"]` in devtools; the `?localApi=` param only applies once on load, then rewrites the URL to remove itself |
 | Bridged frontend gets CORS errors in the console | Its origin isn't in `worker/_shared/cors.js`'s allow-list and isn't covered by `VAE_CORS_ORIGINS` — add it and restart `dev:worker` |
 | Tunnel works but requests still fail | `cloudflared` free quick tunnels rotate URLs on restart — update `VAE_CORS_ORIGINS` and the `?localApi=` URL together each time |
@@ -434,11 +625,15 @@ visit the deployed site with
 | Topic | File(s) |
 |---|---|
 | Ollama extract provider | [worker/_shared/freemium-extract.js](../worker/_shared/freemium-extract.js) (`ollamaExtract`) |
+| MLX extract provider (experimental, Apple Silicon only) | [worker/_shared/freemium-extract.js](../worker/_shared/freemium-extract.js) (`mlxExtract`) |
 | Ollama concurrency (`OLLAMA_NUM_PARALLEL`) vs. worker concurrency (`VAE_EXTRACT_CONCURRENCY`) | `~/.zshrc` (env var, not `.env`); [SETUP.md](../SETUP.md#tweaking-parallel-chapter-extraction) |
 | Provider chain / gating | [worker/_shared/pipeline-registry.js](../worker/_shared/pipeline-registry.js) |
 | Default provider selection | [worker/api/v1/ingest.js](../worker/api/v1/ingest.js) |
 | Env sync | [scripts/sync-dev-vars.mjs](../scripts/sync-dev-vars.mjs), [worker/.dev.vars.example](../worker/.dev.vars.example) |
 | Local API bridge | [web/src/localApiBridge.js](../web/src/localApiBridge.js), [web/src/components/LocalApiBridgeBanner.jsx](../web/src/components/LocalApiBridgeBanner.jsx), [web/src/api.js](../web/src/api.js) |
 | CORS | [worker/_shared/cors.js](../worker/_shared/cors.js) |
+| Scene continuity across chunk boundaries | [worker/_shared/freemium-extract.js](../worker/_shared/freemium-extract.js) (`mergeChapterScenes`, `formatOpenScene`), [worker/_shared/dialogue-rules.js](../worker/_shared/dialogue-rules.js) (SCENE_CONTINUES rule) |
+| Stray-quote JSON repair (recovers a model response broken by an unescaped `"` in a string value) | [worker/_shared/freemium-extract.js](../worker/_shared/freemium-extract.js) (`parseModelJson`, `escapeStrayQuotes`, `fromModelContent`), [tests/parse-model-json-repair.test.mjs](../tests/parse-model-json-repair.test.mjs) |
+| Parallel per-chapter imaging (`VAE_PARALLEL_IMAGING`) | [worker/queue/chapter-imaging-consumer.js](../worker/queue/chapter-imaging-consumer.js), [worker/_shared/edge-imaging.js](../worker/_shared/edge-imaging.js) (`existingMediaFromChapterPacks`), [worker/wrangler.toml](../worker/wrangler.toml) (`vae-imaging` queue) |
 | Local image generation (same local-first spirit, different bottleneck — real batching wins/loses/crashes depending on model, not a uniform "concurrency doesn't help" story) | [docs/LOCAL_IMAGE_GEN.md](LOCAL_IMAGE_GEN.md) |
 | General setup | [../SETUP.md](../SETUP.md) |

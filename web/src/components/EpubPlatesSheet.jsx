@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
-import { saveExternalRefs, saveIllustrationRefs } from "../api.js";
+import {
+  backfillIllustrations, matchIllustrationsToCharacters, saveExternalRefs, saveIllustrationRefs,
+  subscribeJobEvents, jobEventToStatus,
+} from "../api.js";
 import {
   characterIllustrationRefs,
   listIllustrationPlates,
   plateAssignmentMap,
 } from "../illustrationCatalog.js";
 import { mediaImageSrc } from "../media.js";
+import CharacterManager from "./CharacterManager.jsx";
 
 function PlateThumb({ url, index }) {
   const [broken, setBroken] = useState(false);
@@ -63,6 +67,10 @@ export default function EpubPlatesSheet({ book, open, onClose, onSaved }) {
   const [err, setErr] = useState("");
   const [saved, setSaved] = useState(false);
   const [extSaved, setExtSaved] = useState(false);
+  const [backfillBusy, setBackfillBusy] = useState(false);
+  const [backfillResult, setBackfillResult] = useState("");
+  const [matchBusy, setMatchBusy] = useState(false);
+  const [matchResult, setMatchResult] = useState("");
 
   useEffect(() => {
     if (!open) return;
@@ -146,6 +154,56 @@ export default function EpubPlatesSheet({ book, open, onClose, onSaved }) {
     }
   }
 
+  async function handleBackfill() {
+    setBackfillBusy(true);
+    setErr("");
+    setBackfillResult("");
+    try {
+      const result = await backfillIllustrations(book.book_id);
+      onSaved?.(result);
+      setBackfillResult(
+        result.plates_found > 0
+          ? `Found ${result.plates_found} plate${result.plates_found === 1 ? "" : "s"}.`
+          : "No images found in this EPUB.",
+      );
+    } catch (e) {
+      setErr(e?.message || "Could not backfill illustrations.");
+    } finally {
+      setBackfillBusy(false);
+    }
+  }
+
+  function waitForJob(jobId) {
+    return new Promise((resolve, reject) => {
+      const unsub = subscribeJobEvents(jobId, {
+        onEvent: (ev) => {
+          const st = jobEventToStatus(ev);
+          const done = ev.type === "done" || st.status === "done";
+          const errored = ev.type === "error" || st.status === "error";
+          if (done) { unsub(); resolve(st); }
+          else if (errored) { unsub(); reject(new Error(st.detail || st.error || "Matching failed.")); }
+        },
+        onError: (err) => { unsub(); reject(err || new Error("Lost connection to matching job.")); },
+      });
+    });
+  }
+
+  async function handleMatchCharacters() {
+    setMatchBusy(true);
+    setErr("");
+    setMatchResult("");
+    try {
+      const { job_id: jobId } = await matchIllustrationsToCharacters(book.book_id);
+      const st = await waitForJob(jobId);
+      await onSaved?.();
+      setMatchResult(st.detail || "Done.");
+    } catch (e) {
+      setErr(e?.message || "Could not match plates to characters.");
+    } finally {
+      setMatchBusy(false);
+    }
+  }
+
   async function handleSaveExternal() {
     setExtBusy(true);
     setErr("");
@@ -165,14 +223,54 @@ export default function EpubPlatesSheet({ book, open, onClose, onSaved }) {
     <div className="vae-sheet-backdrop" data-testid="epub-plates-sheet" onClick={onClose}>
       <div className="vae-sheet vae-plates-sheet" onClick={(e) => e.stopPropagation()}>
         <header className="vae-sheet-head">
-          <h2>Art references</h2>
+          <h2>Character settings</h2>
           <button type="button" className="vae-sheet-close" onClick={onClose}>×</button>
         </header>
 
+        <section className="vae-menu-section">
+          <h3>Characters</h3>
+          <p className="vae-sheet-hint">
+            Rename a character, edit their description, upload reference pictures, or merge one
+            into an existing one if extraction got it wrong (e.g. &ldquo;Unnamed male
+            protagonist&rdquo; → Eizo) — applies everywhere, past and future chapters, sprite and
+            voice included.
+          </p>
+          <CharacterManager book={book} onRefresh={onSaved} />
+        </section>
+
+        <h3 className="vae-sheet-subhead">EPUB illustrations</h3>
         <p className="vae-sheet-hint">
           EPUB plates come from the book file. External URLs (Fandom, wiki, etc.) are stored separately
           and fetched only when generating art — not copied to R2.
         </p>
+
+        <div className="vae-menu-actions">
+          <button
+            type="button"
+            className="vae-menu-link"
+            data-testid="illustrations-backfill"
+            disabled={backfillBusy}
+            onClick={handleBackfill}
+          >
+            {backfillBusy ? "Scanning EPUB…" : "Re-scan EPUB for plates"}
+          </button>
+          {backfillResult && <span className="vae-sheet-hint">{backfillResult}</span>}
+        </div>
+
+        {plates.length > 0 && (
+          <div className="vae-menu-actions">
+            <button
+              type="button"
+              className="vae-menu-link"
+              data-testid="illustrations-match-characters"
+              disabled={matchBusy}
+              onClick={handleMatchCharacters}
+            >
+              {matchBusy ? "Matching plates to characters…" : "Auto-match plates to characters"}
+            </button>
+            {matchResult && <span className="vae-sheet-hint">{matchResult}</span>}
+          </div>
+        )}
 
         {plates.length > 0 ? (
           <>

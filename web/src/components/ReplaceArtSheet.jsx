@@ -99,6 +99,7 @@ export default function ReplaceArtSheet({ book, open, onClose, onStarted, onFail
   const [styleOverride, setStyleOverride] = useState(() => resolveReplaceArtStyle(book));
   const [imageProvider, setImageProvider] = useState("auto");
   const activeConnection = getActiveConnection();
+  const [collapsedGroups, setCollapsedGroups] = useState(() => new Set());
 
 
 
@@ -173,6 +174,13 @@ export default function ReplaceArtSheet({ book, open, onClose, onStarted, onFail
 
     setFocusedKey(items[0]?.key || "");
 
+    // Collapse every chapter group but the first by default — long books
+    // otherwise mean scrolling through dozens of always-expanded sections
+    // just to reach the "Replace" button. "Cover" and "Other" (ungrouped
+    // items with no chapter) stay expanded since they're small/singular.
+    const chGroups = listArtMediaGroups(book).filter((g) => g.id.startsWith("chapter-"));
+    setCollapsedGroups(new Set(chGroups.slice(1).map((g) => g.id)));
+
   }, [open, book?.book_id, book?.byo_mode, items]);
 
 
@@ -180,6 +188,32 @@ export default function ReplaceArtSheet({ book, open, onClose, onStarted, onFail
   if (!open) return null;
 
 
+
+  function toggleGroupCollapsed(groupId) {
+    setCollapsedGroups((prev) => {
+      const n = new Set(prev);
+      if (n.has(groupId)) n.delete(groupId);
+      else n.add(groupId);
+      return n;
+    });
+  }
+
+  // "All characters" / "All scenes" toggle scoped to one chapter group —
+  // selects every item of that kind in the group if not all are already
+  // selected, otherwise deselects them (standard checkbox tri-state avoidance).
+  function toggleGroupKind(group, kind) {
+    const kindKeys = group.items.filter((it) => it.kind === kind).map((it) => it.key);
+    if (!kindKeys.length) return;
+    const allSelected = kindKeys.every((k) => selected.has(k));
+    setSelected((prev) => {
+      const n = new Set(prev);
+      for (const k of kindKeys) {
+        if (allSelected) n.delete(k);
+        else n.add(k);
+      }
+      return n;
+    });
+  }
 
   function toggleKey(key, multi) {
 
@@ -586,11 +620,56 @@ export default function ReplaceArtSheet({ book, open, onClose, onStarted, onFail
 
         <div className="vae-art-picker" data-testid="replace-art-picker">
 
-          {groups.map((group) => (
+          {groups.map((group) => {
+            const isChapterGroup = group.id.startsWith("chapter-");
+            const collapsed = isChapterGroup && collapsedGroups.has(group.id);
+            const chars = group.items.filter((it) => it.kind === "characters");
+            const scenes = group.items.filter((it) => it.kind === "backgrounds");
+            const allCharsSelected = chars.length > 0 && chars.every((it) => selected.has(it.key));
+            const allScenesSelected = scenes.length > 0 && scenes.every((it) => selected.has(it.key));
+
+            return (
 
             <section key={group.id} className="vae-art-group" data-testid="replace-art-group">
 
-              <h3 className="vae-art-group-title">{group.label}</h3>
+              <div className="vae-art-group-head">
+                <button
+                  type="button"
+                  className="vae-art-group-title"
+                  data-testid="replace-art-group-toggle"
+                  onClick={() => isChapterGroup && toggleGroupCollapsed(group.id)}
+                  aria-expanded={!collapsed}
+                >
+                  {isChapterGroup && <span className="vae-art-group-chevron" aria-hidden>{collapsed ? "▸" : "▾"}</span>}
+                  <h3>{group.label}</h3>
+                </button>
+                {multi && (chars.length > 0 || scenes.length > 0) && (
+                  <div className="vae-art-group-kind-toggles">
+                    {chars.length > 0 && (
+                      <button
+                        type="button"
+                        className={`vae-btn vae-btn-xs${allCharsSelected ? " active" : ""}`}
+                        data-testid="replace-group-toggle-characters"
+                        onClick={() => toggleGroupKind(group, "characters")}
+                      >
+                        All characters
+                      </button>
+                    )}
+                    {scenes.length > 0 && (
+                      <button
+                        type="button"
+                        className={`vae-btn vae-btn-xs${allScenesSelected ? " active" : ""}`}
+                        data-testid="replace-group-toggle-scenes"
+                        onClick={() => toggleGroupKind(group, "backgrounds")}
+                      >
+                        All scenes
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {!collapsed && (
 
               <div className="vae-art-group-grid">
 
@@ -641,9 +720,13 @@ export default function ReplaceArtSheet({ book, open, onClose, onStarted, onFail
 
               </div>
 
+              )}
+
             </section>
 
-          ))}
+            );
+
+          })}
 
         </div>
 

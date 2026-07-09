@@ -19,6 +19,39 @@ function slugToName(id) {
     .join(" ");
 }
 
+/**
+ * The extraction model doesn't always keep its own `characters[]` array in
+ * sync with the character ids it actually uses in `present_character_ids`/
+ * `line.character_id` — confirmed against a real extracted book where the
+ * series protagonist ("eizo") was referenced throughout scenes and dialogue
+ * but never once declared in any chunk's `characters[]`. Left unhandled,
+ * this meant two different things silently happened for the exact same
+ * character: `present` (built with a `charInfo[id] || {name: slugToName(id), ...}`
+ * fallback) showed a reasonable synthesized name, while every LINE they
+ * spoke fell through to `charInfo[cid] || charInfo.narrator` — misattributed
+ * to the Narrator, wrong voice and all — and the character never made it
+ * into `charactersOut`/`knownCharacters` at all, so they were invisible to
+ * anything that lists characters from that map (the art-gen menu,
+ * CharacterManager). Scanning for referenced-but-undeclared ids up front and
+ * treating them exactly like a normally-declared character (proper voice
+ * assignment included, not just a display-only patch) fixes all three at
+ * the same root cause instead of separately patching each symptom.
+ */
+export function synthesizeUndeclaredCharacters(declaredCharacters, scenes, alreadyKnownIds) {
+  const declared = new Set([
+    ...(declaredCharacters || []).map((c) => c.id).filter(Boolean),
+    ...(alreadyKnownIds || []),
+    "narrator",
+  ]);
+  const referenced = new Set();
+  for (const scene of scenes || []) {
+    for (const id of scene.present_character_ids || []) if (id) referenced.add(id);
+    for (const line of scene.lines || []) if (line.character_id) referenced.add(line.character_id);
+  }
+  const missing = [...referenced].filter((id) => !declared.has(id));
+  return missing.map((id) => ({ id, name: slugToName(id), importance: "secondary", gender: "unknown" }));
+}
+
 function illustrationCaption(text) {
   const t = String(text || "").trim();
   if (!t) return null;
@@ -38,13 +71,17 @@ function applyInsertFields(lineOut, sourceLine, lineIdx, media) {
 }
 
 export function compilePlayback(analysis, {
-  art_style = "semi-real",
+  art_style = "anime",
   narrator_gender = "male",
   media = null,
 } = {}) {
   const nvoice = narratorVoice(narrator_gender);
-  const voiceMap = assignVoices(analysis.characters || []);
-  for (const c of analysis.characters || []) {
+  const declaredCharacters = [
+    ...(analysis.characters || []),
+    ...synthesizeUndeclaredCharacters(analysis.characters, analysis.scenes, []),
+  ];
+  const voiceMap = assignVoices(declaredCharacters);
+  for (const c of declaredCharacters) {
     if (!c.id) continue;
     const va = voiceMap[c.id];
     if (va && va.voice === nvoice) {
@@ -54,7 +91,7 @@ export function compilePlayback(analysis, {
   }
 
   const charactersOut = {};
-  for (const c of analysis.characters || []) {
+  for (const c of declaredCharacters) {
     if (!c.id) continue;
     const va = voiceMap[c.id] || { voice: nvoice, pitch: "+0Hz", rate: "+0%" };
     charactersOut[c.id] = {
@@ -66,6 +103,7 @@ export function compilePlayback(analysis, {
       pitch: va.pitch || "+0Hz",
       rate: va.rate || "+0%",
       description: c.description || "",
+      temperament: c.temperament || "",
     };
   }
   charactersOut.narrator = {
@@ -119,7 +157,13 @@ export function compilePlayback(analysis, {
     });
 
     return {
-      id: scene.id || `scene-${String(si + 1).padStart(4, "0")}`,
+      // Deliberately ignores scene.id (was `scene.id || fallback`) — see the
+      // detailed comment on the per-chapter compile below: the model
+      // frequently reproduces the schema hint's example id ("scene-0001")
+      // literally instead of incrementing it, even for consecutive scenes
+      // within the same extraction. `si` is unique by construction; trust
+      // that instead.
+      id: `scene-${String(si + 1).padStart(4, "0")}`,
       chapter: scene.chapter ?? 1,
       title: scene.title || scene.location || `Scene ${si + 1}`,
       location: scene.location || "",
@@ -160,7 +204,7 @@ export function compilePlayback(analysis, {
  * speaking again in this chapter.
  */
 export function compileChapterPlayback(chapterAnalysis, {
-  art_style = "semi-real",
+  art_style = "anime",
   narrator_gender = "male",
   voiceState,
   knownCharacters = {},
@@ -168,10 +212,16 @@ export function compileChapterPlayback(chapterAnalysis, {
 } = {}) {
   const nvoice = narratorVoice(narrator_gender);
   const priorAssignments = voiceState?.assignments || {};
-  const { usedCounts, assignments } = assignVoicesIncremental(chapterAnalysis.characters || [], voiceState);
+  const declaredCharacters = [
+    ...(chapterAnalysis.characters || []),
+    ...synthesizeUndeclaredCharacters(
+      chapterAnalysis.characters, chapterAnalysis.scenes, Object.keys(knownCharacters || {}),
+    ),
+  ];
+  const { usedCounts, assignments } = assignVoicesIncremental(declaredCharacters, voiceState);
 
   // Collision-avoid only the voices newly assigned this chapter.
-  for (const c of chapterAnalysis.characters || []) {
+  for (const c of declaredCharacters) {
     if (!c.id || priorAssignments[c.id]) continue;
     const va = assignments[c.id];
     if (va && va.voice === nvoice) {
@@ -181,7 +231,7 @@ export function compileChapterPlayback(chapterAnalysis, {
   }
 
   const newCharactersOut = {};
-  for (const c of chapterAnalysis.characters || []) {
+  for (const c of declaredCharacters) {
     if (!c.id || priorAssignments[c.id]) continue;
     const va = assignments[c.id] || { voice: nvoice, pitch: "+0Hz", rate: "+0%" };
     newCharactersOut[c.id] = {
@@ -197,6 +247,7 @@ export function compileChapterPlayback(chapterAnalysis, {
       pitch: va.pitch || "+0Hz",
       rate: va.rate || "+0%",
       description: c.description || "",
+      temperament: c.temperament || "",
     };
   }
 
@@ -259,10 +310,22 @@ export function compileChapterPlayback(chapterAnalysis, {
     // CHAPTER at a time from an independently-extracted chunk — the model has
     // no visibility into other chapters' scene ids, and the schema hint's
     // example ("scene-0001") means it reliably reproduces the same ids for
-    // every chapter, model-supplied or fallback alike. Always qualify with the
-    // chapter number so ids stay globally unique across the whole book.
+    // every chapter. Always qualify with the chapter number so ids stay
+    // globally unique across the whole book.
+    //
+    // Deliberately ignores scene.id entirely now (was `scene.id || fallback`)
+    // — confirmed against a real extracted book that the model doesn't just
+    // reproduce "scene-0001" identically *across* chapters, it frequently
+    // reproduces it identically *within* one chapter too (21 of 29 scenes in
+    // one real chapter all came back as literal "scene-0001"), so trusting
+    // scene.id caused massive id collisions even with the chapter-number
+    // qualifier: those scenes shared a compiled id, so imaging /
+    // background-lookup / player scene-selection all silently pointed at
+    // whichever one of them happened to win the collision. `si` (this map's
+    // own index into chapterAnalysis.scenes) is unique by construction —
+    // trust that instead of the model's self-reported id.
     const chapterTag = chapterAnalysis.chapterIndex ?? "x";
-    const rawSceneId = scene.id || `scene-${String(si + 1).padStart(4, "0")}`;
+    const rawSceneId = `scene-${String(si + 1).padStart(4, "0")}`;
     return {
       id: `ch${chapterTag}-${rawSceneId}`,
       chapter: scene.chapter ?? chapterAnalysis.chapterIndex ?? 1,
@@ -315,7 +378,7 @@ export function applyInsertsToLines(playback) {
 export function enrichPlaybackFromAnalysis(playback, analysis, { narrator_gender = "male" } = {}) {
   const inserts = harvestInsertMap(playback);
   const fresh = compilePlayback(analysis, {
-    art_style: playback.art_style || "semi-real",
+    art_style: playback.art_style || "anime",
     narrator_gender,
     media: Object.keys(inserts).length ? { inserts } : null,
   });

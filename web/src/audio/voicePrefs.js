@@ -18,6 +18,15 @@ export const KEYS = {
   narratorPitch: "vae-narrator-pitch",
   narratorRate: "vae-narrator-rate",
   narratorVolume: "vae-narrator-volume",
+  // Expression Sensitivity Plan Phase 4: scales prosody offset %, animation
+  // amplitude, and whether the stage-flash/shake fires at all — the safety
+  // valve so "almost dramatic ... performance" is a choice, not a fixed
+  // assumption about every reader's taste. subtle | balanced | full.
+  performanceMode: "vae-performance-mode",
+  // Expression Sensitivity Plan Phase 4 debug overlay (DirectorsLog.jsx) —
+  // useful for tuning expression tags outside of dev builds too, but should
+  // stay off by default since it's a debugging tool, not a reader feature.
+  directorsLog: "vae-directors-log",
 };
 
 const NARRATOR_M = "en-US-AndrewMultilingualNeural";
@@ -45,6 +54,8 @@ export function getPrefs() {
     narratorPitch: g(KEYS.narratorPitch, "+0Hz"),
     narratorRate: g(KEYS.narratorRate, "+0%"),
     narratorVolume: g(KEYS.narratorVolume, "+0%"),
+    performanceMode: g(KEYS.performanceMode, "balanced"),
+    directorsLog: g(KEYS.directorsLog, "false") === "true",
     fullscreen: false,
   };
 }

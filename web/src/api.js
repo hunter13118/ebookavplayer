@@ -74,7 +74,7 @@ export async function fetchEdgeVoices(locale) {
 
 export async function ingestBook(file, {
   artStyle = "anime", narratorGender = "male", dryRun = false, generateArt = true, byoMode = false,
-  preferProvider = "auto", connection,
+  generateExpressiveSprites = false, preferProvider = "auto", connection,
 } = {}) {
   const fd = new FormData();
   fd.append("file", file);
@@ -83,6 +83,7 @@ export async function ingestBook(file, {
   fd.append("dry_run", dryRun ? "true" : "false");
   fd.append("generate_art", generateArt ? "true" : "false");
   fd.append("byo_mode", byoMode ? "true" : "false");
+  fd.append("generate_expressive_sprites", generateExpressiveSprites ? "true" : "false");
   fd.append("prefer_provider", preferProvider || "auto");
   const res = await fetch(apiUrl("/ingest", connection), { method: "POST", body: fd });
   if (!res.ok) throw new Error(`ingest: HTTP ${res.status}`);
@@ -345,6 +346,17 @@ export async function reExtractBook(bookId, { force = false, preferProvider, con
   return res.json();
 }
 
+export async function runExpressionRepass(bookId, { preferProvider, connection } = {}) {
+  const res = await fetch(apiUrl(`/books/${encodeURIComponent(bookId)}/expression-repass`, connection), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ prefer_provider: preferProvider && preferProvider !== "auto" ? preferProvider : null }),
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) throw new Error(`expression-repass: HTTP ${res.status}`);
+  return res.json();
+}
+
 export async function replaceMedia(bookId, opts = {}) {
   const { connection, ...body } = opts;
   async function post() {
@@ -405,6 +417,21 @@ export async function unlockImaging(bookId, { force = false, connection } = {}) 
   return res.json();
 }
 
+/** Stop treating a stuck/in-flight job as active — see onCancelProcessingPost
+ *  for what this can and can't do (no queue cancel primitive, so it can't
+ *  interrupt a running consumer invocation, only mark it terminal). */
+export async function cancelProcessing(bookId, { connection } = {}) {
+  const res = await fetch(apiUrl(`/books/${encodeURIComponent(bookId)}/cancel-processing`, connection), {
+    method: "POST",
+    signal: fetchSignal(8000),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `cancel-processing: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
 /** @deprecated use replaceMedia */
 export const regenerateMedia = replaceMedia;
 
@@ -430,6 +457,26 @@ export async function saveIllustrationRefs(bookId, body) {
     signal: AbortSignal.timeout(12000),
   });
   if (!res.ok) throw new Error(`illustration-refs: HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function backfillIllustrations(bookId) {
+  const res = await fetch(apiUrl(`/books/${encodeURIComponent(bookId)}/illustrations/backfill`), {
+    method: "POST",
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!res.ok) throw new Error(`illustrations/backfill: HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function matchIllustrationsToCharacters(bookId) {
+  const res = await fetch(apiUrl(`/books/${encodeURIComponent(bookId)}/illustrations/match-characters`), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({}),
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) throw new Error(`illustrations/match-characters: HTTP ${res.status}`);
   return res.json();
 }
 
@@ -474,6 +521,39 @@ export async function renameCharacter(bookId, { id, name }) {
     signal: AbortSignal.timeout(12000),
   });
   if (!res.ok) throw new Error(`character rename: HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function setCharacterTemperament(bookId, { id, temperament }) {
+  const res = await fetch(apiUrl(`/books/${encodeURIComponent(bookId)}/characters/temperament`), {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id, temperament }),
+    signal: AbortSignal.timeout(12000),
+  });
+  if (!res.ok) throw new Error(`character temperament: HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function setCharacterDescription(bookId, { id, description }) {
+  const res = await fetch(apiUrl(`/books/${encodeURIComponent(bookId)}/characters/description`), {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id, description }),
+    signal: AbortSignal.timeout(12000),
+  });
+  if (!res.ok) throw new Error(`character description: HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function uploadCharacterReferenceImage(bookId, charId, file) {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(
+    apiUrl(`/books/${encodeURIComponent(bookId)}/characters/${encodeURIComponent(charId)}/reference-image`),
+    { method: "POST", body: form, signal: AbortSignal.timeout(30000) },
+  );
+  if (!res.ok) throw new Error(`character reference image: HTTP ${res.status}`);
   return res.json();
 }
 

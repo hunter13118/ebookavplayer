@@ -36,8 +36,26 @@ describe("chapterNav", () => {
   });
 
   it("uses epub chapter titles in labels", () => {
+    // book.chapters entries (chapter-extract-pipeline.js) carry the number
+    // as `.index`, not `.chapter` — this is the real shape sent by both
+    // call sites (PlayerMenu.jsx, Player.jsx).
+    const ch = chapters[0];
+    expect(chapterLabel(ch, [{ index: 1, title: "The Silver Gate" }]))
+      .toBe("Ch. 1: The Silver Gate");
+  });
+
+  it("falls back to a generic label when chapterMeta uses the wrong field", () => {
+    // Regression guard for the bug itself: a `.chapter`-keyed entry (the
+    // field chapterLabel used to — incorrectly — match on) should never
+    // match, since no real chapterMeta caller ever sends that shape.
     const ch = chapters[0];
     expect(chapterLabel(ch, [{ chapter: 1, title: "The Silver Gate" }]))
-      .toBe("Ch. 1: The Silver Gate");
+      .toBe("Chapter 1");
+  });
+
+  it("falls back to a generic label with no chapterMeta", () => {
+    const ch = chapters[0];
+    expect(chapterLabel(ch, null)).toBe("Chapter 1");
+    expect(chapterLabel(ch, [])).toBe("Chapter 1");
   });
 });

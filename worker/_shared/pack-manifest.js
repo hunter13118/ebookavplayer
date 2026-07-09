@@ -15,7 +15,7 @@ export function buildPackManifest({
   audioLineCount = 0,
   createdAt,
 }) {
-  const resolvedStyle = style || "semi-real";
+  const resolvedStyle = style || "anime";
   const id = bookId || "unknown";
   return {
     format: FORMAT_ID,

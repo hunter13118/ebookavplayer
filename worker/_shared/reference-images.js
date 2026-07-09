@@ -130,18 +130,26 @@ export async function referenceTargetsForCharacter(env, bookId, analysis, charac
     bytes.push(...extBytes);
   }
 
+  // Only use an illustration plate as this character's reference when
+  // illustration_ref is explicitly set — either by the model's own match
+  // during extraction, or by the user via EpubPlatesSheet's manual
+  // assignment. There used to be a fallback here that grabbed the first few
+  // catalog plates *unconditionally* whenever the catalog was non-empty,
+  // with zero guarantee any of them actually depicted this character (could
+  // just as easily be a random background, the book's own cover, or a
+  // completely different character's plate). Beyond being speculative, it
+  // had a much sharper cost: generateImage() (freemium-image.js) treats any
+  // non-empty referenceImages/referenceImageUrls as "reference-backed
+  // generation" and takes a Gemini-image / Pollinations-i2i-only code path
+  // that never falls through to local_sd at all — so on a book with EPUB
+  // plates but no confirmed character matches (the common case today, since
+  // the "who's pictured in this plate" LLM pass is still unbuilt — see
+  // docs/TODO_ILLUSTRATIONS_PROFILES_POLISH.md item 2), every character
+  // portrait silently required cloud API keys with no local fallback,
+  // even for a fully local extraction+imaging setup.
   const illusRef = char?.illustration_ref;
   if (illusRef != null && Number.isFinite(Number(illusRef))) {
     const t = await loadIllustrationTargets(env, bookId, [Number(illusRef)], catalog, origin);
-    bytes.push(...t.bytes);
-    urls.push(...t.urls);
-  } else if (Object.keys(catalog).length) {
-    const fallbackIdx = Object.keys(catalog)
-      .map((k) => Number(k))
-      .filter((n) => Number.isFinite(n))
-      .sort((a, b) => a - b)
-      .slice(0, MAX_REFS);
-    const t = await loadIllustrationTargets(env, bookId, fallbackIdx, catalog, origin);
     bytes.push(...t.bytes);
     urls.push(...t.urls);
   }
@@ -213,6 +221,17 @@ export async function referenceTargetsForMoment(env, bookId, analysis, scene, li
 }
 
 /** Load public URLs for sprites in another art style (for Pollinations i2i). */
+// Matches a committed, live asset — excludes `.next.` (staged, awaiting
+// user review via the compare UI, never confirmed) and `.prev.` (a
+// superseded backup, kept only so a commit can be reverted). Both are named
+// media-versions.js's stagingFilename/prevFilename convention. Without this,
+// an abandoned staged-comparison job's never-promoted `.next.png` files get
+// picked up here as if they were confirmed style references — confirmed as
+// a real bug: they silently forced every character generation into
+// generateImage()'s reference-backed-only code path (no local_sd fallback)
+// on a book that had never actually confirmed ANY cross-style media.
+const LIVE_IMAGE_RE = /^(?!.*\.(next|prev)\.)(?:.*)\.(png|jpe?g|webp)$/i;
+
 export async function loadStyleReferencePublicUrls(env, bookId, sourceStyle, origin, limit = 3) {
   if (!env?.VAE_PACKS || !bookId || !sourceStyle || !origin) return [];
   const prefix = `media/${bookId}/${sourceStyle}/char_`;
@@ -221,7 +240,7 @@ export async function loadStyleReferencePublicUrls(env, bookId, sourceStyle, ori
   do {
     const listed = await env.VAE_PACKS.list({ prefix, cursor, limit: 20 });
     for (const obj of listed.objects || []) {
-      if (!/\.(png|jpe?g|webp)$/i.test(obj.key)) continue;
+      if (!LIVE_IMAGE_RE.test(obj.key)) continue;
       const rel = obj.key.replace(/^media\//, "");
       const abs = absoluteMediaUrl(origin, `/media/${rel}`);
       if (abs) urls.push(abs);
@@ -257,7 +276,7 @@ export async function loadStyleReferenceBytes(env, bookId, sourceStyle, limit = 
     do {
       const listed = await env.VAE_PACKS.list({ prefix, cursor, limit: 20 });
       for (const obj of listed.objects || []) {
-        if (!/\.(png|jpe?g|webp)$/i.test(obj.key)) continue;
+        if (!LIVE_IMAGE_RE.test(obj.key)) continue;
         const item = await env.VAE_PACKS.get(obj.key);
         if (!item) continue;
         try {

@@ -48,6 +48,17 @@ export function DisplaySettings({
           </select>
         </span>
       </label>
+      <label className="vae-sheet-field">
+        Performance mode
+        <span className="vae-select-wrap">
+          <select className="vae-select" data-testid="select-performance-mode" value={prefs.performanceMode}
+            onChange={(e) => upd("performanceMode", KEYS.performanceMode, e.target.value)}>
+            <option value="subtle">Subtle</option>
+            <option value="balanced">Balanced</option>
+            <option value="full">Full Drama</option>
+          </select>
+        </span>
+      </label>
       <label className="vae-checkbox">
         <input type="checkbox" data-testid="sprite-borders-input" checked={prefs.spriteBorders}
           onChange={(e) => upd("spriteBorders", KEYS.spriteBorders, e.target.checked)} />
@@ -59,6 +70,12 @@ export function DisplaySettings({
           onChange={(e) => upd("portraitLayout", KEYS.portraitLayout, e.target.checked)} />
         <span className="vae-checkbox-box" aria-hidden />
         Portrait stage layout
+      </label>
+      <label className="vae-checkbox">
+        <input type="checkbox" data-testid="directors-log-input" checked={prefs.directorsLog}
+          onChange={(e) => upd("directorsLog", KEYS.directorsLog, e.target.checked)} />
+        <span className="vae-checkbox-box" aria-hidden />
+        Director&rsquo;s log
       </label>
       {showFullscreen && onToggleFullscreen && (
         <button type="button" className="vae-menu-link" data-testid="toggle-fullscreen"

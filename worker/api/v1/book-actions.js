@@ -64,6 +64,88 @@ export async function onReExtractPost({
   return json({ job_id: jobId, book_id: bookId, status: "queued" });
 }
 
+/**
+ * POST /books/:id/expression-repass — manually re-run the Expression
+ * Sensitivity Plan Phase 1d/1e dialogue-tagging pass over the whole book,
+ * independent of whether the automatic per-chapter trigger fired during
+ * extraction (VAE_EXPRESSION_REPASS=true always-on, or auditExpressionFlatness
+ * auto-triggering only on chapters it flags as suspiciously flat). See
+ * docs/TODO_ILLUSTRATIONS_PROFILES_POLISH.md item 5.
+ */
+export async function onExpressionRepassPost({ request, env, bookId }) {
+  if (!edgeJobsEnabled(env)) return null;
+  if (!(await bookExists(env, bookId))) {
+    return json({ error: "no such book" }, 404);
+  }
+
+  let body = {};
+  try { body = await request.json(); } catch { /* no body — fine, defaults below */ }
+
+  const jobId = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
+  const job = {
+    job_id: jobId,
+    book_id: bookId,
+    kind: "expression-repass",
+    status: "queued",
+    progress: 0,
+    detail: "queued",
+    stage: "queued",
+  };
+  await putJob(env, "ingest", jobId, job);
+  await emitJobEvent(env, jobId, jobToEvent(job, "queued"));
+  await putBookIndex(env, bookId, { active_job_id: jobId });
+
+  await enqueueJob(env, {
+    kind: "expression-repass",
+    job_id: jobId,
+    book_id: bookId,
+    opts: { prefer_provider: body.prefer_provider || null },
+  });
+
+  return json({ job_id: jobId, book_id: bookId, status: "queued" });
+}
+
+/**
+ * POST /books/:id/illustrations/match-characters — manually run the "who's
+ * pictured in this plate" LLM pass over the whole book, matching EPUB
+ * illustration plates to known characters via their nearby text, and
+ * applying any confident match the same way a manual Character settings
+ * assignment would (sprite/cover update included). See
+ * docs/TODO_ILLUSTRATIONS_PROFILES_POLISH.md item 2.
+ */
+export async function onIllustrationCharacterMatchPost({ request, env, bookId }) {
+  if (!edgeJobsEnabled(env)) return null;
+  if (!(await bookExists(env, bookId))) {
+    return json({ error: "no such book" }, 404);
+  }
+
+  let body = {};
+  try { body = await request.json(); } catch { /* no body — fine, defaults below */ }
+
+  const jobId = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
+  const job = {
+    job_id: jobId,
+    book_id: bookId,
+    kind: "illustration-character-match",
+    status: "queued",
+    progress: 0,
+    detail: "queued",
+    stage: "queued",
+  };
+  await putJob(env, "ingest", jobId, job);
+  await emitJobEvent(env, jobId, jobToEvent(job, "queued"));
+  await putBookIndex(env, bookId, { active_job_id: jobId });
+
+  await enqueueJob(env, {
+    kind: "illustration-character-match",
+    job_id: jobId,
+    book_id: bookId,
+    opts: { prefer_provider: body.prefer_provider || null },
+  });
+
+  return json({ job_id: jobId, book_id: bookId, status: "queued" });
+}
+
 /** POST /books/:id/continue-extract — resume a stalled/partial book from its checkpoint. */
 export async function onContinueExtractPost({ request, env, bookId }) {
   if (!edgeJobsEnabled(env)) return null;
@@ -275,6 +357,56 @@ export async function onImagingUnlockPost({ env, bookId, request }) {
   }
 }
 
+/**
+ * POST /books/:id/cancel-processing — stop treating a stuck/in-flight job as
+ * active. Queues have no cancel primitive, so a running consumer invocation
+ * (e.g. mid-chapter extraction) keeps running to completion or failure on
+ * its own — this can't interrupt it. What it does do: mark the job record
+ * terminal so nothing keeps polling/waiting on it, and reset the book index
+ * out of "processing" so the UI stops showing a live progress banner tied to
+ * a job that's never coming back (e.g. after a dev server restart, or a
+ * crash loop). Lands on "partial" (resumable) if any chapters already
+ * extracted, otherwise "error" (nothing to resume from — re-upload or
+ * continue-extract needed).
+ */
+export async function onCancelProcessingPost({ env, bookId }) {
+  if (!env.VAE_JOBS) return null;
+  const raw = await env.VAE_JOBS.get(`book:${bookId}`);
+  if (!raw) return json({ error: "no such book" }, 404);
+  const meta = JSON.parse(raw);
+
+  const jobId = meta.active_job_id || meta.job_id;
+  if (jobId) {
+    const job = await getJob(env, "ingest", jobId);
+    await markJobStale(env, jobId, job, "Cancelled by user");
+  }
+
+  const chaptersReady = meta.chapters_ready || 0;
+  const totalChapters = meta.total_chapters;
+  const patch = chaptersReady > 0
+    ? {
+        status: "partial",
+        stage: "extracting",
+        active_job_id: null,
+        job_id: null,
+        imaging_locked: false,
+        detail: `Cancelled — ${chaptersReady}/${totalChapters ?? "?"} chapters ready`,
+        error: "",
+      }
+    : {
+        status: "error",
+        stage: "error",
+        active_job_id: null,
+        job_id: null,
+        imaging_locked: false,
+        detail: "Cancelled before any chapters finished — re-upload to retry",
+        error: "Cancelled before any chapters finished",
+      };
+
+  await putBookIndex(env, bookId, patch);
+  return json({ ok: true, book_id: bookId, status: patch.status });
+}
+
 /** GET /ingest/:id/events — SSE stream via JobEventHub DO. */
 export async function onJobEventsGet({ env, jobId, request }) {
   const job = await getJob(env, "ingest", jobId);
@@ -340,7 +472,7 @@ export async function onMediaRevertPost({ request, env, bookId }) {
   const meta = metaRaw ? JSON.parse(metaRaw) : {};
   const pbObj = await env.VAE_PACKS.get(`books/${bookId}.json`);
   const playback = pbObj ? await pbObj.json() : null;
-  const style = reqStyle || meta.art_style || playback?.active_style || "semi-real";
+  const style = reqStyle || meta.art_style || playback?.active_style || "anime";
 
   const { revertMediaAsset, patchPlaybackMediaUrl, cacheBustUrl } = await import(
     "../../_shared/media-versions.js"
@@ -424,6 +556,15 @@ export async function onIllustrationRefsPatch({ request, env, bookId }) {
   let playback = pbObj ? await pbObj.json() : null;
   if (playback) {
     playback = syncIllustrationRefsToPlayback(playback, patched);
+    // syncIllustrationRefsToPlayback only stashes the ref *number* on each
+    // character — it never touches the actual rendered sprite/background/
+    // cover, so a manual assignment here used to save successfully but
+    // change nothing visible in the player. applyDirectIllustrations
+    // (illustrations.js) is the same function the initial extraction runs
+    // for "direct-use" mode — reuse it here so a manual assignment takes
+    // effect immediately, exactly like an automatic one would.
+    const { applyDirectIllustrations } = await import("../../_shared/illustrations.js");
+    ({ playback } = applyDirectIllustrations(playback, patched, catalog));
     await env.VAE_PACKS.put(
       `books/${bookId}.json`,
       JSON.stringify(playback, null, 2),
@@ -439,6 +580,72 @@ export async function onIllustrationRefsPatch({ request, env, bookId }) {
         .filter((c) => c.illustration_ref != null)
         .map((c) => [c.id, c.illustration_ref]),
     ),
+  });
+}
+
+/**
+ * POST /books/:id/illustrations/backfill — re-run EPUB plate extraction for a
+ * book that already finished extracting without one (predates this pipeline,
+ * or a silent R2-write failure — extraction itself never gates on this
+ * succeeding). Re-opens the stored EPUB, re-extracts + re-persists plates to
+ * R2 (illustration_urls), and auto-sets cover_illustration_ref from the
+ * EPUB's own cover if the book doesn't already have one set. Does not
+ * attempt automatic character/scene matching for an already-compiled book —
+ * that needs a per-plate LLM "who's pictured" pass (see
+ * docs/TODO_ILLUSTRATIONS_PROFILES_POLISH.md item 2), a distinct, heavier
+ * feature. Manual plate → character/cover assignment is already available
+ * via EpubPlatesSheet.jsx / PATCH /books/:id/illustration-refs once the
+ * plates this endpoint populates are in the catalog.
+ */
+export async function onIllustrationsBackfillPost({ env, bookId }) {
+  if (!env.VAE_PACKS) return null;
+
+  const axObj = await env.VAE_PACKS.get(`books/${bookId}.analysis.json`);
+  if (!axObj) return json({ error: "no analysis for book" }, 404);
+  const analysis = await axObj.json();
+
+  const bytes = await loadStoredEpubBytes(env, bookId);
+  if (!bytes) return json({ error: "EPUB not found — re-upload the book first" }, 404);
+
+  const { extractEpubImages } = await import("../../_shared/epub-images.js");
+  const { persistEpubImages } = await import("../../_shared/reference-images.js");
+
+  const illusCap = parseInt(env.VAE_EPUB_MAX_IMAGES || "0", 10);
+  const epubExtract = extractEpubImages(bytes, { maxImages: illusCap > 0 ? illusCap : null });
+  if (!epubExtract.images.length) {
+    return json({ ok: true, plates_found: 0, detail: "no images found in this EPUB" });
+  }
+
+  const illustrationUrls = await persistEpubImages(env, bookId, epubExtract.images);
+
+  const patched = { ...analysis, illustration_urls: illustrationUrls };
+  if (patched.cover_illustration_ref == null && epubExtract.cover_index != null) {
+    patched.cover_illustration_ref = epubExtract.cover_index;
+  }
+
+  await env.VAE_PACKS.put(
+    `books/${bookId}.analysis.json`,
+    JSON.stringify(patched, null, 2),
+    { httpMetadata: { contentType: "application/json" } },
+  );
+
+  const pbObj = await env.VAE_PACKS.get(`books/${bookId}.json`);
+  if (pbObj) {
+    const { syncIllustrationRefsToPlayback } = await import("../../_shared/illustration-refs.js");
+    let playback = await pbObj.json();
+    playback.illustration_urls = illustrationUrls;
+    playback = syncIllustrationRefsToPlayback(playback, patched);
+    await env.VAE_PACKS.put(
+      `books/${bookId}.json`,
+      JSON.stringify(playback, null, 2),
+      { httpMetadata: { contentType: "application/json" } },
+    );
+  }
+
+  return json({
+    ok: true,
+    plates_found: epubExtract.images.length,
+    cover_illustration_ref: patched.cover_illustration_ref ?? null,
   });
 }
 
@@ -464,7 +671,7 @@ export async function onMediaUploadPost({ request, env, bookId }) {
   const metaRaw = env.VAE_JOBS ? await env.VAE_JOBS.get(`book:${bookId}`) : null;
   const meta = metaRaw ? JSON.parse(metaRaw) : {};
   const playback = pbObj ? await pbObj.json() : null;
-  const style = meta.art_style || playback?.active_style || playback?.art_style || "semi-real";
+  const style = meta.art_style || playback?.active_style || playback?.art_style || "anime";
 
   let ext = ".png";
   const origName = file.name || "img.png";
@@ -514,7 +721,7 @@ export async function onMediaCommitPost({ request, env, bookId }) {
   const meta = metaRaw ? JSON.parse(metaRaw) : {};
   const pbObj = await env.VAE_PACKS.get(`books/${bookId}.json`);
   const playback = pbObj ? await pbObj.json() : null;
-  const style = reqStyle || meta.art_style || playback?.active_style || "semi-real";
+  const style = reqStyle || meta.art_style || playback?.active_style || "anime";
 
   const { commitMediaAsset, patchPlaybackMediaUrl } = await import("../../_shared/media-versions.js");
   const url = await commitMediaAsset(env, bookId, style, kind, key);

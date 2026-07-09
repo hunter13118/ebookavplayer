@@ -10,16 +10,20 @@ import {
 import { onIngestPost } from "./api/v1/ingest.js";
 import {
   onReExtractPost,
+  onExpressionRepassPost,
+  onIllustrationCharacterMatchPost,
   onContinueExtractPost,
   onGenerateMediaPost,
   onGenerateMomentPost,
   onImagingUnlockPost,
+  onCancelProcessingPost,
   onJobStatusGet,
   onJobEventsGet,
   onMediaRevertPost,
   onMediaCommitPost,
   onMediaUploadPost,
   onIllustrationRefsPatch,
+  onIllustrationsBackfillPost,
   onExternalRefsGet,
   onExternalRefsPatch,
 } from "./api/v1/book-actions.js";
@@ -29,7 +33,10 @@ import { onPipelineGet, onPipelinePatch } from "./api/v1/pipeline.js";
 import { onTtsPost } from "./api/v1/tts.js";
 import { onProgressGet, onProgressPost } from "./api/v1/progress.js";
 import { onEdgeVoicesGet, onBookVoicesGet, onBookVoicesPost } from "./api/v1/voices.js";
-import { onCharacterMergePatch, onCharacterRenamePatch } from "./api/v1/characters.js";
+import {
+  onCharacterMergePatch, onCharacterRenamePatch, onCharacterTemperamentPatch,
+  onCharacterDescriptionPatch, onCharacterReferenceImageUploadPost,
+} from "./api/v1/characters.js";
 import { onQueueBatch } from "./queue/dispatch.js";
 import { json } from "./_shared/jobs-kv.js";
 import { huggingfaceAvailable } from "./_shared/freemium-image.js";
@@ -90,6 +97,20 @@ export async function handleEbookavplayerApi(request, env, ctx) {
     return onRequest({ request, env });
   }
 
+  const expressionRepass = path.match(/^\/books\/([^/]+)\/expression-repass$/);
+  if (method === "POST" && expressionRepass) {
+    const edge = await onExpressionRepassPost({ request, env, bookId: expressionRepass[1] });
+    if (edge) return edge;
+    return onRequest({ request, env });
+  }
+
+  const illustrationCharacterMatch = path.match(/^\/books\/([^/]+)\/illustrations\/match-characters$/);
+  if (method === "POST" && illustrationCharacterMatch) {
+    const edge = await onIllustrationCharacterMatchPost({ request, env, bookId: illustrationCharacterMatch[1] });
+    if (edge) return edge;
+    return onRequest({ request, env });
+  }
+
   const continueExtract = path.match(/^\/books\/([^/]+)\/continue-extract$/);
   if (method === "POST" && continueExtract) {
     const edge = await onContinueExtractPost({ request, env, bookId: continueExtract[1] });
@@ -114,6 +135,13 @@ export async function handleEbookavplayerApi(request, env, ctx) {
   const unlock = path.match(/^\/books\/([^/]+)\/imaging\/unlock$/);
   if (method === "POST" && unlock) {
     const edge = await onImagingUnlockPost({ env, bookId: unlock[1], request });
+    if (edge) return edge;
+    return onRequest({ request, env });
+  }
+
+  const cancelProcessing = path.match(/^\/books\/([^/]+)\/cancel-processing$/);
+  if (method === "POST" && cancelProcessing) {
+    const edge = await onCancelProcessingPost({ env, bookId: cancelProcessing[1] });
     if (edge) return edge;
     return onRequest({ request, env });
   }
@@ -146,6 +174,13 @@ export async function handleEbookavplayerApi(request, env, ctx) {
     return onRequest({ request, env });
   }
 
+  const illustrationsBackfill = path.match(/^\/books\/([^/]+)\/illustrations\/backfill$/);
+  if (method === "POST" && illustrationsBackfill) {
+    const edge = await onIllustrationsBackfillPost({ env, bookId: illustrationsBackfill[1] });
+    if (edge) return edge;
+    return onRequest({ request, env });
+  }
+
   const characterMerge = path.match(/^\/books\/([^/]+)\/characters\/merge$/);
   if (method === "PATCH" && characterMerge) {
     const edge = await onCharacterMergePatch({ request, env, bookId: characterMerge[1] });
@@ -156,6 +191,29 @@ export async function handleEbookavplayerApi(request, env, ctx) {
   const characterRename = path.match(/^\/books\/([^/]+)\/characters\/rename$/);
   if (method === "PATCH" && characterRename) {
     const edge = await onCharacterRenamePatch({ request, env, bookId: characterRename[1] });
+    if (edge) return edge;
+    return onRequest({ request, env });
+  }
+
+  const characterTemperament = path.match(/^\/books\/([^/]+)\/characters\/temperament$/);
+  if (method === "PATCH" && characterTemperament) {
+    const edge = await onCharacterTemperamentPatch({ request, env, bookId: characterTemperament[1] });
+    if (edge) return edge;
+    return onRequest({ request, env });
+  }
+
+  const characterDescription = path.match(/^\/books\/([^/]+)\/characters\/description$/);
+  if (method === "PATCH" && characterDescription) {
+    const edge = await onCharacterDescriptionPatch({ request, env, bookId: characterDescription[1] });
+    if (edge) return edge;
+    return onRequest({ request, env });
+  }
+
+  const characterReferenceImage = path.match(/^\/books\/([^/]+)\/characters\/([^/]+)\/reference-image$/);
+  if (method === "POST" && characterReferenceImage) {
+    const edge = await onCharacterReferenceImageUploadPost({
+      request, env, bookId: characterReferenceImage[1], charId: characterReferenceImage[2],
+    });
     if (edge) return edge;
     return onRequest({ request, env });
   }

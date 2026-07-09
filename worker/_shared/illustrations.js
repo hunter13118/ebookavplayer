@@ -30,9 +30,16 @@ export function applyDirectIllustrations(playback, analysis, illustrationUrls) {
     return { playback, counts };
   }
 
-  let coverUrl = playback.cover && String(playback.cover).startsWith("/media/")
+  // An explicit cover_illustration_ref (model-matched at extraction time, or
+  // user-assigned via the "Cover reference plate" dropdown) always wins —
+  // this used to be entirely unread here, so assigning a cover plate saved
+  // successfully but never actually changed playback.cover; the loops below
+  // only ever set a cover *opportunistically*, as a fallback reusing
+  // whichever character/scene plate happened to match first.
+  const explicitCoverUrl = catalogUrl(illustrationUrls, analysis?.cover_illustration_ref);
+  let coverUrl = explicitCoverUrl || (playback.cover && String(playback.cover).startsWith("/media/")
     ? playback.cover
-    : null;
+    : null);
 
   for (const c of analysis?.characters || []) {
     if (!c?.id) continue;
@@ -59,7 +66,7 @@ export function applyDirectIllustrations(playback, analysis, illustrationUrls) {
     if (!coverUrl) coverUrl = url;
   }
 
-  if (coverUrl && counts.characters + counts.backgrounds > 0) {
+  if (coverUrl && (explicitCoverUrl || counts.characters + counts.backgrounds > 0)) {
     playback.cover = coverUrl;
     counts.cover = 1;
   }

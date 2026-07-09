@@ -63,6 +63,18 @@ export async function handleImagingRegenMessage(message, env) {
   }
 
   try {
+    // Load the real persisted book index BEFORE the first touchBook() call —
+    // touchBook's `prev` is this function's in-memory `bookMeta`, and
+    // putBookIndex skips its own KV read whenever a `prev` hint is passed
+    // (see jobs-kv.js). Seeding bookMeta as `{}` and touching before this
+    // load fires wiped chapters_ready/total_chapters/title/cover/etc. on
+    // every imaging-regen run — confirmed against a real book where a
+    // finished 16/16-chapter extraction got reported as "chapters_ready: 0"
+    // moments later, which then made an unrelated cancel-processing call
+    // wrongly report "Cancelled before any chapters finished".
+    const bookMetaRaw = await env.VAE_JOBS.get(`book:${book_id}`);
+    bookMeta = bookMetaRaw ? JSON.parse(bookMetaRaw) : { book_id };
+
     await touchIngestJob(env, job_id, {
       status: "processing",
       stage: "imaging",
@@ -79,9 +91,7 @@ export async function handleImagingRegenMessage(message, env) {
     const pbObj = await env.VAE_PACKS.get(`books/${book_id}.json`);
     const playback = pbObj ? await pbObj.json() : null;
 
-    const bookMetaRaw = await env.VAE_JOBS.get(`book:${book_id}`);
-    bookMeta = bookMetaRaw ? JSON.parse(bookMetaRaw) : { book_id };
-    const art_style = opts.art_style || bookMeta.art_style || playback?.active_style || "semi-real";
+    const art_style = opts.art_style || bookMeta.art_style || playback?.active_style || "anime";
     const narrator_gender = bookMeta.narrator_gender || "male";
 
     const filter = imagingFilterFromOpts(opts);

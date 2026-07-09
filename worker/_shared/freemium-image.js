@@ -711,6 +711,26 @@ function orderTiersForPreference(tiers, preferProvider) {
 
 /**
  * Generate one image — Gemini → freemium → local SD (matches Python backends.generate_image).
+ *
+ * Reference-backed generation (referenceImages/referenceImageUrls set) used
+ * to be a hard-coded, separate code path here: try gemini_image (gated only
+ * on GEMINI_API_KEY being *present*, never on the pipeline config's
+ * disabled list or the user's saved tier order), then pollinations-i2i, and
+ * if both failed or were unavailable, throw — never falling through to the
+ * normal tiers loop below at all. Two real problems this caused, confirmed
+ * against a real local-only setup with GEMINI_API_KEY unset and gemini_image
+ * explicitly disabled in the saved pipeline config: (1) a user who disabled
+ * Gemini and pinned local_sd first in Settings still had every
+ * reference-backed generation attempt Gemini first — the config was simply
+ * never consulted on this path; (2) local_sd can't accept reference images
+ * at all (tryLocalSd is plain txt2img), so once no cloud provider was
+ * configured, reference-backed generation had *zero* working option and
+ * always threw, even though a perfectly good local_sd tier sat unused right
+ * below. Now: `tiers` (the resolved, disabled-filtered, preference-ordered
+ * list — the single source of truth for "what's enabled and in what order")
+ * drives both reference-capable tiers below, and any tier that can't use a
+ * reference (local_sd) still gets tried in its configured position, just
+ * without one — degrading gracefully instead of hard-failing.
  */
 export async function generateImage(prompt, {
   subjectType = "character", preferProvider, seed, env, onAttempt, onProviderWait, pollinationsAltFirst = false,
@@ -723,8 +743,9 @@ export async function generateImage(prompt, {
   const imageParam = buildPollinationsImageParam({ referenceImageUrls, referenceImages });
   const hasRefs = Boolean(referenceImages?.length || imageParam);
 
-  if (hasRefs) {
-    if (geminiImageAvailable(env)) {
+  for (const tier of tiers) {
+    if (hasRefs && tier === "gemini_image") {
+      if (!geminiImageAvailable(env)) { failures.push("gemini_image: GEMINI_API_KEY not set"); continue; }
       try {
         onAttempt?.("gemini_image");
         const result = await tryGeminiImage(prompt, env, { referenceImages });
@@ -732,11 +753,17 @@ export async function generateImage(prompt, {
       } catch (e) {
         failures.push(`gemini_image: ${String(e.message || e).slice(0, 100)}`);
       }
-    } else {
-      failures.push("gemini_image: GEMINI_API_KEY not set");
+      continue;
     }
-
-    if (stageAvailable(env, "freemium_image") && imageParam) {
+    if (hasRefs && tier === "freemium_image") {
+      if (!stageAvailable(env, "freemium_image") || !imageParam) {
+        if (!imageParam) {
+          failures.push(
+            "pollinations-i2i: set PUBLIC_MEDIA_ORIGIN to your public API base so Pollinations can fetch /media/ refs",
+          );
+        }
+        continue;
+      }
       try {
         onAttempt?.("pollinations-i2i");
         const cfg = keys(env);
@@ -751,19 +778,14 @@ export async function generateImage(prompt, {
       } catch (e) {
         failures.push(`pollinations-i2i: ${String(e.message || e).slice(0, 120)}`);
       }
-    } else if (!imageParam) {
-      failures.push(
-        "pollinations-i2i: set PUBLIC_MEDIA_ORIGIN to your public API base so Pollinations can fetch /media/ refs",
-      );
+      continue;
     }
-
-    throw new Error(
-      failures.join("; ")
-      || "Reference-backed generation failed (Gemini + Pollinations i2i)",
-    );
-  }
-
-  for (const tier of tiers) {
+    // gemini_image/freemium_image were already tried (with references) above
+    // when hasRefs — don't re-try them here unreferenced, that's a wasted
+    // duplicate call against the same provider. Only a reference-incapable
+    // tier (local_sd) should reach here while hasRefs is true, generating
+    // without the reference rather than being skipped entirely.
+    if (hasRefs && tier !== "local_sd") continue;
     if (tier === "gemini_image") {
       if (!geminiImageAvailable(env)) continue;
       try {

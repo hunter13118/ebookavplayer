@@ -137,7 +137,7 @@ export async function buildPackOnEdge({
     files[AUDIO_MANIFEST_NAME] = strToU8(JSON.stringify(audioManifest, null, 2));
   }
 
-  const packStyle = style || book.art_style || "semi-real";
+  const packStyle = style || book.art_style || "anime";
   const manifest = buildPackManifest({
     bookId,
     title: book.title,

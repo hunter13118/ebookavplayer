@@ -68,7 +68,11 @@ export function chapterRelativeIndex(chapters, lineIndex) {
 
 export function chapterLabel(ch, chapterMeta) {
   if (!ch) return "Chapter";
-  const meta = (chapterMeta || []).find((m) => m.chapter === ch.chapter);
+  // book.chapters entries (chapter-extract-pipeline.js) carry the chapter
+  // number as `.index`, not `.chapter` — matching on `.chapter` here always
+  // missed (every entry's `.chapter` is undefined), silently falling back
+  // to the generic "Chapter N" label even when a real EPUB title exists.
+  const meta = (chapterMeta || []).find((m) => m.index === ch.chapter);
   if (meta?.title) return `Ch. ${ch.chapter}: ${meta.title}`;
   return `Chapter ${ch.chapter}`;
 }

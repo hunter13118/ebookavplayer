@@ -297,6 +297,13 @@ export function extractEpubText(bytes, { maxChars } = {}) {
     chapter_count: chapters.length,
     chars: body.length,
     opf_path: opfPath,
+    // Full spine order, including front-matter/illustration-plate pages that
+    // buildChaptersFromSpine filters out of `chapters` — needed to match an
+    // illustration plate (which usually lives on its own dedicated spine
+    // page, not inside a chapter's own file) to the nearest real chapter by
+    // spine position. See matchIllustrationsToChapters in
+    // chapter-extract-pipeline.js.
+    orderedPaths,
   };
 }
 

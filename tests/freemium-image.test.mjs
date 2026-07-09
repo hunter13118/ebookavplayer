@@ -282,4 +282,75 @@ import { computeImagingProgress, waitingOnProvider } from "../worker/_shared/ima
   void result;
 }
 
+// generateImage — reference-backed generation (referenceImages set) used to
+// be a completely separate code path that only ever tried gemini_image then
+// pollinations-i2i, ignoring the pipeline config entirely and throwing hard
+// if neither worked — even when local_sd (which can't use references, but
+// can still generate) was configured and available. Regression guard:
+// confirmed against a real local-only setup (no GEMINI_API_KEY, no
+// PUBLIC_MEDIA_ORIGIN) that every reference-backed generation failed 100%
+// of the time despite local_sd being fully configured and reachable.
+{
+  const attempts = [];
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 0, 0, 0, 0]);
+  const refBytes = new Uint8Array([1, 2, 3, 4]).buffer;
+  const env = {
+    EXTRACT_SKIP_GEMINI: "true",
+    LOCAL_IMAGE_URL: "http://127.0.0.1:7860",
+    __fetch: async (url) => {
+      if (String(url).includes("7860")) {
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: (h) => (h === "content-type" ? "image/png" : null) },
+          arrayBuffer: async () => png.buffer.slice(png.byteOffset, png.byteOffset + png.byteLength),
+        };
+      }
+      throw new Error(`unexpected fetch ${url} — should have fallen through to local_sd`);
+    },
+  };
+  const result = await generateImage("portrait test", {
+    env,
+    subjectType: "character",
+    referenceImages: [refBytes],
+    onAttempt: (p) => attempts.push(p),
+  });
+  assert.equal(result.provider, "local_sd", "falls through to local_sd, unreferenced, instead of hard-failing");
+}
+
+// generateImage — reference-backed generation still respects a saved
+// pipeline order that puts local_sd *first*, ahead of gemini_image. Before
+// the fix, local_sd was structurally unreachable on this path no matter
+// what the pipeline config said — this proves it's now actually consulted.
+{
+  const attempts = [];
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 0, 0, 0, 0]);
+  const refBytes = new Uint8Array([1, 2, 3, 4]).buffer;
+  const env = {
+    EXTRACT_SKIP_GEMINI: "true",
+    LOCAL_IMAGE_URL: "http://127.0.0.1:7860",
+    GEMINI_API_KEY: "fake_key_should_never_be_used",
+    __fetch: async (url) => {
+      if (String(url).includes("7860")) {
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: (h) => (h === "content-type" ? "image/png" : null) },
+          arrayBuffer: async () => png.buffer.slice(png.byteOffset, png.byteOffset + png.byteLength),
+        };
+      }
+      throw new Error(`unexpected fetch ${url} — local_sd is pinned first, gemini_image should not be tried`);
+    },
+  };
+  const result = await generateImage("portrait test", {
+    env,
+    subjectType: "character",
+    preferProvider: "local_sd",
+    referenceImages: [refBytes],
+    onAttempt: (p) => attempts.push(p),
+  });
+  assert.equal(result.provider, "local_sd");
+  assert.deepEqual(attempts, ["local_sd"], "pinning local_sd first is respected even for reference-backed generation");
+}
+
 console.log("freemium-image.test.mjs — all passed");
