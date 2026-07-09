@@ -6,6 +6,7 @@ import {
   fetchCatalogMerged,
   importOfflinePackFiles,
   coverFromPackRecord,
+  needsOfflineCache,
   TIER_AUDIOBOOK,
   TIER_VISUAL,
 } from "./bookSource.js";
@@ -184,5 +185,32 @@ describe("bookSource", () => {
     const stored = await getInstalledPack(again.pack_id);
     expect(stored.book.title).toBe("Pack Test Book");
     expect(stored.blob_paths.length).toBeGreaterThan(0);
+  });
+
+  describe("needsOfflineCache", () => {
+    it("a still-processing book never needs a cache build, even with no offline_pack yet", () => {
+      expect(needsOfflineCache({ status: "processing", offline_pack: null })).toBe(false);
+    });
+
+    it("a partial (paused, not actively running) book still gets cached normally", () => {
+      expect(needsOfflineCache({ status: "partial", offline_pack: null })).toBe(true);
+    });
+
+    it("a ready book with no offline pack yet needs one", () => {
+      expect(needsOfflineCache({ status: "ready", offline_pack: null })).toBe(true);
+    });
+
+    it("already has an offline pack -> no build needed regardless of status", () => {
+      expect(needsOfflineCache({ status: "ready", offline_pack: { pack_id: "x" } })).toBe(false);
+      expect(needsOfflineCache({ status: "processing", offline_pack: { pack_id: "x" } })).toBe(false);
+    });
+
+    it("not from a cloud connection (server_available: false) -> no build needed", () => {
+      expect(needsOfflineCache({ status: "ready", offline_pack: null, server_available: false })).toBe(false);
+    });
+
+    it("e2eNoCache flag suppresses caching regardless of status", () => {
+      expect(needsOfflineCache({ status: "ready", offline_pack: null }, { e2eNoCache: true })).toBe(false);
+    });
   });
 });

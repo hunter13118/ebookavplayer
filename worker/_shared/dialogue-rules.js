@@ -87,6 +87,9 @@ Additional rules:
   someone else in the same beat or the text is unmistakably narrator prose.
 - importance: 'primary' = recurring/named POV or major; 'secondary' = named but
   minor; 'background' = unnamed/crowd. Be conservative with 'primary'.
+- temperament (per character, optional): a one/two-word baseline emotional
+  register if it's clear early on — stoic, excitable, dry/sarcastic, warm,
+  volatile, etc. Leave blank rather than guessing.
 - Segment scenes on location change, time skip, or POV shift.
 - NARRATOR/POV IDENTITY: the narrating voice is not always the same character.
   If the text is first-person ("I", "my") and the "I" is a named character
@@ -113,7 +116,44 @@ Additional rules:
   "Castle Gate at Dusk", "Rooftop at Sunset", "Market Square in the Rain".
   Derive from location + time-of-day/mood in background_desc. Keep under ~6 words.
   Put the formal chapter name only in the chapter field, never in scene.title.
-- expression: normal|whisper|yell|sad|angry — match delivery when emotional.
+- SCENE_CONTINUES (chunk-boundary cutoffs, NOT real scene ends): the text you're given
+  is one arbitrary slice of a longer chapter — it can end mid-conversation or
+  mid-action for reasons that have nothing to do with the story (e.g. it just ran
+  out of characters). Set "scene_continues": true on the LAST scene in your output
+  ONLY when the excerpt visibly cuts off like that — the scene clearly isn't over,
+  there would be more of it if the excerpt kept going. Leave it false/omitted for
+  every other scene, including the last one, whenever the scene actually concludes
+  within this excerpt (location change, time skip, POV shift, or the chapter just
+  ends). Don't use it defensively "just in case" — only when the cutoff is obvious.
+  If an "OPEN SCENE FROM PREVIOUS CHUNK" note appears below, the previous excerpt
+  ended mid-scene: continue that exact scene id as the FIRST scene in your output
+  (same id, same location/characters) instead of starting a new one for the same
+  moment, and only flag scene_continues again if it's STILL not resolved by the
+  time your own excerpt ends.
+- EXPRESSION (apply to every dialogue/thought/delivery line — be decisive, not
+  cautious): default to a SPECIFIC emotional read. "normal" is reserved for
+  genuinely flat, matter-of-fact lines (plain exposition, routine logistics) —
+  NOT the safe default when unsure. If dialogue carries ANY charge (a
+  question, a tease, mild surprise, affection, irritation), tag it as such
+  rather than falling back to normal.
+  Canonical buckets (primary vocabulary — freeform still allowed for flavor
+  but MUST map conceptually onto one of these): yell, angry, whisper, sad,
+  scared, surprised, happy, excited, embarrassed, smug, tender, nervous,
+  sarcastic, determined, desperate, normal.
+  Signals that should almost always produce a non-normal tag:
+    - Exclamation points, "?!", ALL CAPS words → yell/angry/excited/scared
+      depending on content.
+    - A delivery verb already present (sang, shouted, whispered, sobbed,
+      hissed, teased, snapped, growled...) → derive the bucket directly from
+      the verb — do not separately re-guess and default to normal.
+    - Endearments, compliments, physical affection described in the beat →
+      tender/happy.
+    - Self-deprecation, apology, hedging ("I guess", "maybe", trailing off) →
+      nervous/embarrassed, not normal.
+    - Direct insults, commands, clipped short sentences in a conflict beat →
+      angry.
 - environment: open|indoor|hall|cave — acoustic space; default from scene location.
-- intensity: 0.0–1.0 (0.5 subtle, 1.0 full).
+- intensity: 0.0–1.0. Independent of the expression bucket — a "sad" line can
+  be a quiet ache (0.3) or a full breakdown (0.9). Use the full range; do not
+  cluster everything at 0.5 (0.5 subtle, 1.0 full).
 `;

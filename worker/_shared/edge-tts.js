@@ -36,12 +36,12 @@ function concatChunks(chunks) {
   return out;
 }
 
-function buildSsml(text, voice, { rate = "+0%", pitch = "+0Hz" } = {}) {
+function buildSsml(text, voice, { rate = "+0%", pitch = "+0Hz", volume = "+0%" } = {}) {
   const lang = String(voice).split("-").slice(0, 2).join("-") || "en-US";
   return (
     `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='${lang}'>` +
     `<voice name='${escapeXml(voice)}'>` +
-    `<prosody rate='${rate}' pitch='${pitch}'>${escapeXml(text)}</prosody>` +
+    `<prosody rate='${rate}' pitch='${pitch}' volume='${volume}'>${escapeXml(text)}</prosody>` +
     `</voice></speak>`
   );
 }
@@ -62,6 +62,7 @@ export async function synthesizeEdgeMp3(text, voice = "en-US-AndrewMultilingualN
 
   const rate = opts.rate || "+0%";
   const pitch = opts.pitch || "+0Hz";
+  const volume = opts.volume || "+0%";
   const connectionId = crypto.randomUUID().replace(/-/g, "");
   const requestId = crypto.randomUUID().replace(/-/g, "");
   const gec = await computeSecMsGec();
@@ -91,7 +92,7 @@ export async function synthesizeEdgeMp3(text, voice = "en-US-AndrewMultilingualN
 
   ws.accept();
 
-  const ssml = buildSsml(t, voice, { rate, pitch });
+  const ssml = buildSsml(t, voice, { rate, pitch, volume });
   ws.send(
     "Content-Type:application/json; charset=utf-8\r\n" +
     "Path:speech.config\r\n\r\n" +

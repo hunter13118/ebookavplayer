@@ -20,7 +20,7 @@ import { startHealthPolling } from "./backends/health.js";
 
 import {
   fetchBook, fetchCatalogMerged, fetchLocalCatalog, mergeCatalog, ensureBookCached, exportBookPackFile,
-  pickPackSaveHandle,
+  pickPackSaveHandle, needsOfflineCache,
 } from "./offline/bookSource.js";
 import { shouldRecommendDownload, skipDownloadRecommend } from "./offline/downloadRecommend.js";
 
@@ -128,7 +128,7 @@ export default function App() {
       const e2eNoCache = typeof localStorage !== "undefined"
         && localStorage.getItem("vae-e2e") === "1"
         && localStorage.getItem("vae-e2e-cache") !== "1";
-      const needsCache = fromCloud && !entry.offline_pack && !e2eNoCache;
+      const needsCache = needsOfflineCache(entry, { e2eNoCache });
       let cached = Boolean(entry.offline_pack);
 
       if (needsCache) {

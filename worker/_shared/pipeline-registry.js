@@ -67,6 +67,17 @@ const STAGE_META = {
     defaultModel: "gpt-oss:20b",
     note: "Local dev only — MoE (~20B total/~3.6B active params/token). Close second on solo speed to ollama-30b (~44 tok/s solo with OLLAMA_FLASH_ATTENTION=1), but by far the most concurrency-tolerant local model measured (~30 tok/s aggregate at 8-way concurrency vs. every other model losing 40-90% of its solo throughput). Prefer this one over ollama-30b if VAE_EXTRACT_CONCURRENCY > 1. Needs `ollama serve` at OLLAMA_BASE_URL. See docs/LOCAL_LLM_EXTRACTION.md.",
   },
+  "mlx-30b": {
+    label: "MLX Qwen3 30B-A3B (local, experimental — best measured for concurrency)",
+    icon: "🍎",
+    tier: "local",
+    lane: "extract",
+    requires: [],
+    optionalEnv: ["MLX_BASE_URL"],
+    modelEnv: "MLX_MODEL_30B",
+    defaultModel: "mlx-community/Qwen3-30B-A3B-4bit",
+    note: "Apple Silicon only — separate `mlx_lm.server` process (own Python venv, not `ollama serve`), gated behind MLX_BASE_URL exactly like OLLAMA_BASE_URL gates the ollama-* stages, additive/never replacing them. Loses badly on solo speed vs. ollama-30b+flash-attention (18.6 vs. 52.6 tok/s) but is the single best local combination measured for VAE_EXTRACT_CONCURRENCY > 1 (39.1 tok/s aggregate at 8-way concurrency, beating every Ollama config tested). Only worth enabling if you've deliberately raised VAE_EXTRACT_CONCURRENCY above 1. See docs/LOCAL_LLM_EXTRACTION.md.",
+  },
   cerebras: {
     label: "Cerebras",
     icon: "⚡",
@@ -177,7 +188,11 @@ const GEMINI_IMAGE_MODELS = [
 function laneDefault(lane) {
   const map = {
     extract: {
-      order: ["ollama-30b", "ollama-20b", "ollama-7b", "ollama-14b", "gemini", "cerebras", "groq", "mistral", "openrouter", "cloudflare"],
+      order: ["ollama-30b", "ollama-20b", "ollama-7b", "ollama-14b", "mlx-30b", "gemini", "cerebras", "groq", "mistral", "openrouter", "cloudflare"],
+      // mlx-30b is NOT listed here — it's disabled purely via the
+      // MLX_BASE_URL gate below (same pattern as ollama-20b/30b/7b), so it
+      // actually turns on once that env var is set. ollama-14b stays
+      // default-disabled regardless (benchmarked strictly worse — see docs).
       disabled: ["ollama-14b"],
     },
     image: { order: ["gemini_image", "freemium_image", "local_sd"], disabled: [] },
@@ -204,6 +219,12 @@ export function defaultConfig(env = {}) {
   // Ollama only makes sense when a local dev server is configured — never in production.
   if (!String(env.OLLAMA_BASE_URL || "").trim()) {
     cfg.extract.disabled = [...new Set([...(cfg.extract.disabled || []), "ollama-20b", "ollama-30b", "ollama-7b", "ollama-14b"])];
+  }
+  // MLX is an additive, Apple-Silicon-only local backend — same hard gate as
+  // Ollama above, never enabled in production and never by default even
+  // locally (opt-in only once MLX_BASE_URL is set — see docs/LOCAL_LLM_EXTRACTION.md).
+  if (!String(env.MLX_BASE_URL || "").trim()) {
+    cfg.extract.disabled = [...new Set([...(cfg.extract.disabled || []), "mlx-30b"])];
   }
   return cfg;
 }
@@ -352,6 +373,7 @@ export async function publicView(env) {
     presets: LOCAL_EXTRACT_PRESETS,
     active: activeLocalExtractPreset(cfg),
     ollamaConfigured: Boolean(String(env.OLLAMA_BASE_URL || "").trim()),
+    mlxConfigured: Boolean(String(env.MLX_BASE_URL || "").trim()),
   };
   return {
     lanes, config: cfg, source: persisted ? "edge-kv" : "edge-defaults", cost_guide, local_extract_guide,

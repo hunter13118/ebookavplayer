@@ -19,6 +19,7 @@ export const SCHEMA_HINT = {
     importance: "primary|secondary|background",
     description: "string — detailed visual appearance for image generation",
     illustration_ref: "optional int — index into attached EPUB illustration plates",
+    temperament: "stoic|excitable|dry/sarcastic|warm|volatile or blank if unclear",
   }],
   scenes: [{
     id: "scene-0001",
@@ -27,11 +28,12 @@ export const SCHEMA_HINT = {
     location: "string",
     background_desc: "string",
     present_character_ids: ["slug"],
+    scene_continues: "true ONLY on the LAST scene of your output, and ONLY if the excerpt cuts off mid-scene (chunk boundary, not a real scene end) — omit or false otherwise, see rules",
     lines: [{
       character_id: "slug or narrator",
       text: "verbatim",
       kind: "dialogue|narration|thought|delivery",
-      expression: "normal|whisper|yell|sad|angry",
+      expression: "yell|angry|whisper|sad|scared|surprised|happy|excited|embarrassed|smug|tender|nervous|sarcastic|determined|desperate|normal",
       environment: "open|indoor|hall|cave",
       intensity: 0.5,
       line_weight: "normal|minor",

@@ -28,13 +28,21 @@ class AnalysisCharacter(BaseModel):
     description: str = ""         # visual description for image gen
     appearance_changes: list[str] = []  # notable look changes warranting new art
     illustration_ref: Optional[int] = None  # index into EPUB extracted images
+    # Expression Sensitivity Plan Phase 1f: a baseline emotional register
+    # (stoic|excitable|dry/sarcastic|warm|volatile, freeform ok) so two
+    # characters saying similarly mild lines don't get identically flat
+    # expression tags — fed into the Phase 1d focused re-pass as context.
+    # Inferred by the mega-pass, or left blank and user-editable later.
+    temperament: str = ""
 
 
 class AnalysisLine(BaseModel):
     character_id: str = Field(..., description="'narrator' for narration")
     text: str
     kind: Literal["dialogue", "narration", "thought", "delivery"] = "dialogue"
-    expression: str = "normal"       # whisper|yell|sad|angry|normal (loose ok)
+    expression: str = "normal"       # yell|angry|whisper|sad|scared|surprised|happy|excited|
+                                      # embarrassed|smug|tender|nervous|sarcastic|determined|
+                                      # desperate|normal (canonical bucket vocab; loose ok)
     environment: str = "open"        # open|indoor|hall|cave
     intensity: float = 1.0           # 0..1
     illustration_ref: Optional[int] = None  # flash EPUB insert at this line

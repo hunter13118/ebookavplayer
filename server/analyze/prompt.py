@@ -32,6 +32,7 @@ SCHEMA_HINT = {
         "description": "concise visual description for image generation",
         "appearance_changes": ["notable look change warranting new art"],
         "illustration_ref": 0,
+        "temperament": "stoic|excitable|dry/sarcastic|warm|volatile or blank if unclear",
     }],
     "scenes": [{
         "id": "scene-0001",
@@ -47,7 +48,7 @@ SCHEMA_HINT = {
             "character_id": "slug or 'narrator'",
             "text": "the spoken/narrated text, verbatim",
             "kind": "dialogue|narration|thought|delivery",
-            "expression": "normal|whisper|yell|sad|angry",
+            "expression": "yell|angry|whisper|sad|scared|surprised|happy|excited|embarrassed|smug|tender|nervous|sarcastic|determined|desperate|normal",
             "environment": "open|indoor|hall|cave",
             "intensity": 0.0,
             "illustration_ref": 0,
@@ -84,12 +85,30 @@ Additional rules:
   point at the earlier scene id instead of re-describing (saves image gen).
 - appearance_changes: list only changes that should trigger NEW character art
   (injury, aging, costume change); otherwise leave empty to reuse art.
+- temperament (per character, optional): a one/two-word baseline emotional
+  register if the text makes it clear early on — stoic, excitable,
+  dry/sarcastic, warm, volatile, etc. Leave blank rather than guessing. This
+  is what lets a blunt character's "normal" line read flatter than an
+  excitable character's "normal" line, instead of amplifying both equally.
 - description/background_desc: 1-2 vivid sentences, concrete and visual. If
   reference images are attached, keep palette/style consistent with them.
-- expression (per line): how the line is delivered for TTS — normal, whisper,
-  yell, sad, or angry. Use whisper for hushed/secret speech; yell for shouting;
-  sad/angry when clearly emotional. Default normal when delivery is neutral.
-  Match expression to the character's visible face when dialogue is emotional.
+- expression (per line, apply to every dialogue/thought/delivery line — be
+  decisive, not cautious): default to a SPECIFIC emotional read. "normal" is
+  reserved for genuinely flat, matter-of-fact lines (plain exposition, routine
+  logistics) — NOT the safe default when unsure. If dialogue carries ANY
+  charge (a question, a tease, mild surprise, affection, irritation), tag it
+  as such rather than falling back to normal.
+  Canonical buckets (primary vocabulary — freeform still allowed for flavor
+  but MUST map conceptually onto one of these): yell, angry, whisper, sad,
+  scared, surprised, happy, excited, embarrassed, smug, tender, nervous,
+  sarcastic, determined, desperate, normal.
+  Signals that should almost always produce a non-normal tag: exclamation
+  points/"?!"/ALL CAPS → yell/angry/excited/scared; a delivery verb already
+  present (sang, shouted, whispered, sobbed, hissed, teased, snapped,
+  growled...) → derive the bucket directly from the verb; endearments/
+  compliments/physical affection → tender/happy; self-deprecation, apology,
+  hedging ("I guess", trailing off) → nervous/embarrassed; direct insults,
+  commands, clipped sentences in a conflict beat → angry.
 - visual_moment (per line, boolean): true on standout visual beats — dramatic
   poses, fan-service moments, splash-worthy reactions — when a full-screen
   insert would enhance the scene (omit illustration_ref if no EPUB image fits).

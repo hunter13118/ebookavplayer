@@ -38,6 +38,22 @@ export const LOCAL_EXTRACT_PRESETS = [
     ],
   },
   {
+    id: "local_mlx_concurrent",
+    label: "Best for concurrent chapters (MLX, experimental)",
+    stageId: "mlx-30b",
+    effectiveness: "~18.6 tok/s solo, ~39.1 tok/s aggregate at 8-way concurrency — beats every Ollama config tested for concurrent extraction",
+    summary:
+      "qwen3:30b-a3b served through Apple's MLX runtime (mlx_lm.server) instead of Ollama. Much slower solo than the Fastest preset, so only worth it once VAE_EXTRACT_CONCURRENCY is deliberately raised above 1 — Apple Silicon only, requires a separate `mlx-lm` Python venv running alongside (not instead of) Ollama.",
+    recommendedEnv: [
+      { key: "MLX_BASE_URL", value: "http://localhost:8081" },
+      {
+        key: "VAE_EXTRACT_CONCURRENCY",
+        value: "4",
+        note: "the whole point of this preset — at concurrency=1 the Fastest (Ollama) preset is faster",
+      },
+    ],
+  },
+  {
     id: "local_lightweight",
     label: "Lightweight — smallest download",
     stageId: "ollama-7b",

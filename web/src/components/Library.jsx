@@ -4,7 +4,9 @@ import AddBookSheet from "./AddBookSheet.jsx";
 import BannerStack from "./BannerStack.jsx";
 import CollapsibleSection from "./CollapsibleSection.jsx";
 import { bannersFromCatalog } from "../banners.js";
-import { fetchCatalog, backendConfigured, subscribeJobEvents, jobEventToStatus } from "../api.js";
+import {
+  fetchCatalog, backendConfigured, subscribeJobEvents, jobEventToStatus, cancelProcessing,
+} from "../api.js";
 import {
   fetchCatalogMerged, importOfflinePackFiles, scanLinkedPackFolder, getLinkedFolderInfo,
   ensureBookCached, exportBookPackFile, removeLocalPack,
@@ -307,6 +309,10 @@ export default function Library({
         for (const id of ids) await removeLocalPack(id);
         await refreshCatalog();
         setBulkMsg(`Offloaded ${ids.length} to cloud-only (local copy removed).`);
+      } else if (action === "cancel") {
+        for (const id of ids) await cancelProcessing(id);
+        await refreshCatalog();
+        setBulkMsg(`Cancelled processing for ${ids.length} book(s).`);
       }
       exitSelectMode(false);
     } catch (e) {
@@ -340,6 +346,15 @@ export default function Library({
   }
 
   const banners = bannersFromCatalog(items);
+  // Not just status === "processing": an offline-pack merge (bookSource.js's
+  // mergeCatalog) overwrites status to "ready" for any book with a locally
+  // cached copy, even while the cloud side is still mid-extraction.
+  // active_job_id survives that merge untouched and (unlike job_id, which is
+  // set once at job creation and never cleared) is nulled out on completion
+  // by the pipeline — so it's the reliable "still actually active" tell.
+  const selectedProcessingCount = items.filter(
+    (b) => selected.has(b.book_id) && (b.status === "processing" || b.active_job_id),
+  ).length;
 
   return (
     <div
@@ -398,6 +413,18 @@ export default function Library({
           <button type="button" className="vae-btn vae-btn-sm vae-btn-muted" disabled={bulkBusy || !selected.size}
             data-testid="bulk-offload" onClick={() => runBulk("offload")}>
             Offload
+          </button>
+          <button type="button" className="vae-btn vae-btn-sm vae-btn-muted"
+            disabled={bulkBusy || !selectedProcessingCount}
+            data-testid="bulk-cancel-processing"
+            title={selectedProcessingCount
+              ? "Stop treating stuck/in-progress extraction as active — resumable if any chapters finished"
+              : "Select a book that's currently processing to cancel it"}
+            onClick={() => {
+              if (!confirm(`Cancel processing for ${selectedProcessingCount} book(s)? Any chapters already extracted are kept — you can resume later.`)) return;
+              runBulk("cancel");
+            }}>
+            Cancel processing{selectedProcessingCount ? ` (${selectedProcessingCount})` : ""}
           </button>
           <button type="button" className="vae-btn vae-btn-sm vae-btn-muted" disabled={bulkBusy || !selected.size}
             data-testid="bulk-remove" onClick={() => runBulk("remove")}>

@@ -1,3 +1,5 @@
+import { normalizeExpressionBucket } from "./expressionBucket.js";
+
 /** Format delivery-tag lines for display (sang → ♪, yelled → emphasis). */
 const VERB_EMOJI = {
   sang: "♪",
@@ -25,7 +27,12 @@ export function formatDeliveryText(line) {
 
 export function dialogueBoxClass(line, baseStyle) {
   if (!line) return baseStyle;
-  if (line.kind === "delivery" || line.line_weight === "minor") return `${baseStyle} delivery`;
-  if (line.kind === "narration") return `${baseStyle} narration`;
-  return baseStyle;
+  // Expression Sensitivity Plan Phase 3c: yell/whisper (the two the plan
+  // calls out) get distinct text treatment — bigger/spaced-out vs. smaller/
+  // fainter — same normalizer as the sprite CSS so freeform tags still land.
+  const bucket = normalizeExpressionBucket(line.expression);
+  const exprCls = bucket === "yell" || bucket === "whisper" ? ` expr-${bucket}` : "";
+  if (line.kind === "delivery" || line.line_weight === "minor") return `${baseStyle} delivery${exprCls}`;
+  if (line.kind === "narration") return `${baseStyle} narration${exprCls}`;
+  return `${baseStyle}${exprCls}`;
 }

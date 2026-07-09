@@ -48,6 +48,10 @@ export async function onIngestPost({ request, env, ctx }) {
   const narratorGender = form.get("narrator_gender") || "male";
   const dryRun = form.get("dry_run") === "true";
   const generateArt = form.get("generate_art") !== "false";
+  // Expression Sensitivity Plan Phase 3d: opt-in, off by default — multiplies
+  // image-gen cost by however many expression buckets are covered per
+  // primary character. See docs/EXPRESSION_SENSITIVITY_PLAN.md.
+  const generateExpressiveSprites = form.get("generate_expressive_sprites") === "true";
   const byoMode = form.get("byo_mode") === "true";
   const illustrationMode = String(form.get("illustration_mode") || env.ILLUSTRATION_MODE || "auto");
   let preferProvider = form.get("prefer_provider") || null;
@@ -117,6 +121,7 @@ export async function onIngestPost({ request, env, ctx }) {
     narrator_gender: narratorGender,
     dry_run: dryRun,
     generate_art: generateArt,
+    generate_expressive_sprites: generateExpressiveSprites,
     byo_mode: byoMode,
     illustration_mode: illustrationMode,
     prefer_provider: preferProvider,

@@ -50,7 +50,17 @@ File refs:
 [scripts/sync-dev-vars.mjs](scripts/sync-dev-vars.mjs) — **edit `.env`, not
 `worker/.dev.vars` directly**, or your edits get overwritten on next `npm run dev:worker`.
 
-## 3. Run locally (two terminals)
+## 3. Run locally
+
+One command, both services:
+```bash
+npm run start:local
+# Checks Ollama reachability, then starts worker + web together, prefixed
+# logs from both. Ctrl+C kills the whole tree (including wrangler's own
+# workerd runtime child) — see scripts/start-local.mjs.
+```
+
+Or two terminals, if you want to restart one side independently:
 
 Terminal 1 — Worker API at :8600 ([worker/wrangler.toml:12](worker/wrangler.toml#L12)):
 ```bash
@@ -121,10 +131,15 @@ protagonist" that's really "Eizo"):
   persisted so future chapters land on the same canonical ID.
 - **API:** [worker/api/v1/characters.js](worker/api/v1/characters.js) —
   `PATCH /books/:id/characters/merge {from, to}`,
-  `PATCH /books/:id/characters/rename {id, name}`
+  `PATCH /books/:id/characters/rename {id, name}`,
+  `PATCH /books/:id/characters/temperament {id, temperament}`
 - **Logic:** [worker/_shared/character-merge.js](worker/_shared/character-merge.js)
   (merges across analysis.json + playback.json); alias applied at extraction
   time via [chapter-extract-pipeline.js:99-101](worker/_shared/chapter-extract-pipeline.js#L99)
+- **Temperament** (docs/EXPRESSION_SENSITIVITY_PLAN.md Phase 1f): a baseline
+  emotional register (stoic, excitable, dry/sarcastic, warm, volatile — free
+  text) fed into the expression re-pass as context, not a display field —
+  same tab, per-character.
 
 ## Tweaking parallel chapter extraction
 
@@ -157,6 +172,8 @@ your own hardware first.
 | `web/src/timing/whisperxAlignerClient` calls fail | The local align bridge isn't running — see [scripts/local-align-server/server.py](scripts/local-align-server/server.py) (Python, separate from the worker) |
 | `.env` edits don't take effect in `dev:worker` | You're editing `worker/.dev.vars` directly — edit root `.env` instead, `sync-dev-vars.mjs` regenerates it |
 | Character merge doesn't persist | Confirm the KV binding in [worker/wrangler.toml:31](worker/wrangler.toml#L31) is configured |
+| A book is stuck showing "Processing" with no progress (e.g. after a dev server restart or crash mid-extraction) | Library → **⋯** → select the book → **Cancel processing**. Can't interrupt an already-running queue consumer invocation (no cancel primitive), but it marks the dead job terminal and resets the book to "partial" (resumable, if any chapters finished) or "error" — see `onCancelProcessingPost` in [worker/api/v1/book-actions.js](worker/api/v1/book-actions.js) |
+| Opening a book that's *actively* extracting (`status: "processing"`) shows a "Caching…" spinner that never resolves | Fixed 2026-07-08 — `openBook` in `web/src/App.jsx` used to always try to build a fresh offline pack first, which queues behind the still-running extraction job (same shared-queue issue as the row above) with no way to finish. Now skipped entirely for a still-processing book — reads directly from the live connection instead, no offline pack needed. See `needsOfflineCache` in [web/src/offline/bookSource.js](web/src/offline/bookSource.js) |
 | Graphify bootstrap fails | Install Ollama locally, or use `--backend web` (needs an API key) |
 | Local Ollama extraction feels slow with `VAE_EXTRACT_CONCURRENCY` > 1 | Expected on Apple Silicon per the benchmark above — lower it to 1, don't raise it |
 
@@ -249,7 +266,7 @@ pointers:
 ## Next steps
 
 1. **First time:** `npm install` (root + `web/`), `npm run test:character-merge`,
-   then `npm run dev:worker` + `cd web && npm run dev`.
+   then `npm run start:local`.
 2. **Writing code:** edit, save, hot-reload in browser or watch test output.
 3. **Before committing:** run the relevant `test:*` targets above plus
    `cd web && npm run build` to catch compile errors.

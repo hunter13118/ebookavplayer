@@ -7,6 +7,7 @@
 import assert from "node:assert";
 import {
   mergeCharacterInAnalysis, mergeCharacterInPlayback, renameCharacterInAnalysis, renameCharacterInPlayback,
+  setCharacterTemperamentInAnalysis, setCharacterTemperamentInPlayback,
   applyCharacterAliases,
 } from "../worker/_shared/character-merge.js";
 
@@ -81,6 +82,24 @@ import {
   const analysis = { characters: [{ id: "eizo", name: "Eizo" }] };
   const out = renameCharacterInAnalysis(analysis, "eizo", "Eizo Kagari");
   assert.equal(out.characters[0].name, "Eizo Kagari");
+}
+
+// --- temperament (Expression Sensitivity Plan Phase 1f): set in place, unknown ids are a no-op ---
+{
+  const playback = { characters: { eizo: { name: "Eizo", sprite: "sprite:x", voice: "v" } } };
+  const out = setCharacterTemperamentInPlayback(playback, "eizo", "dry/sarcastic");
+  assert.equal(out.characters.eizo.temperament, "dry/sarcastic");
+  assert.equal(out.characters.eizo.name, "Eizo", "other fields untouched");
+  const noop = setCharacterTemperamentInPlayback(playback, "nobody", "warm");
+  assert.strictEqual(noop, playback, "unknown id returns the input unchanged");
+}
+
+{
+  const analysis = { characters: [{ id: "eizo", name: "Eizo" }] };
+  const out = setCharacterTemperamentInAnalysis(analysis, "eizo", "stoic");
+  assert.equal(out.characters[0].temperament, "stoic");
+  const noop = setCharacterTemperamentInAnalysis(analysis, "nobody", "warm");
+  assert.strictEqual(noop, analysis, "unknown id returns the input unchanged");
 }
 
 // --- applyCharacterAliases: a future chapter re-introducing the placeholder id lands on the canonical one ---

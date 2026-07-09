@@ -1,5 +1,6 @@
 import { json } from "../../_shared/jobs-kv.js";
 import { synthesizeEdgeMp3 } from "../../_shared/edge-tts.js";
+import { applyExpressionProsody } from "../../_shared/expression-prosody.js";
 
 /** POST /tts — Edge neural voices (no Fly/Python backend required). */
 export async function onTtsPost({ request }) {
@@ -14,9 +15,16 @@ export async function onTtsPost({ request }) {
   if (!text) return new Response(null, { status: 204 });
 
   const voice = body.voice || "en-US-AndrewMultilingualNeural";
-  const rate = body.rate || "+0%";
-  const pitch = body.pitch || "+0Hz";
-  const volume = body.volume || "+0%";
+  // Expression Sensitivity Plan Phase 2: the client already sends
+  // expression/intensity on every request (web/src/audio/playSpeech.js) —
+  // this was previously ignored entirely, so delivery was flat regardless of
+  // tag. Apply it additively on top of the per-character base prosody.
+  const { pitch, rate, volume } = applyExpressionProsody(
+    { pitch: body.pitch || "+0Hz", rate: body.rate || "+0%", volume: body.volume || "+0%" },
+    body.expression,
+    body.intensity,
+    body.performance_mode,
+  );
 
   try {
     const audio = await synthesizeEdgeMp3(text, voice, { rate, pitch, volume });

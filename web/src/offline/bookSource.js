@@ -136,12 +136,37 @@ export async function mergeCatalog(serverList) {
       if (!e.cover && prev.cover) merged.cover = prev.cover;
       if (!e.title && prev.title) merged.title = prev.title;
       if (!e.author && prev.author) merged.author = prev.author;
+      // bookFromLocalPack() hardcodes status/stage/progress to "this cached
+      // copy is ready to play offline" — true about the pack, not about the
+      // book's actual server-side extraction state. Without this, any book
+      // with an offline copy permanently masks a "partial"/"processing"
+      // server status behind "ready", hiding e.g. the Continue-extraction
+      // affordance even right after cancelling a stuck job.
+      if (prev.status) merged.status = prev.status;
+      if (prev.stage) merged.stage = prev.stage;
+      if (typeof prev.progress === "number") merged.progress = prev.progress;
       byId.set(e.book_id, merged);
     } else {
       byId.set(e.book_id, { ...e, server_available: false });
     }
   }
   return [...byId.values()].sort((a, b) => (a.title || "").localeCompare(b.title || ""));
+}
+
+/**
+ * Whether opening this catalog entry should trigger an offline-pack build
+ * first (App.jsx's openBook). A book still actively extracting (status
+ * "processing") never should — it'd just be a snapshot of an incomplete
+ * book, and in local dev, ingest/continue-extract and pack-build share one
+ * physical queue (see docs/LOCAL_LLM_EXTRACTION.md's Troubleshooting
+ * section), so the cache-build request would sit queued behind the
+ * still-running extraction job with no way to ever finish — reading
+ * directly from the live connection works fine without one.
+ */
+export function needsOfflineCache(entry, { e2eNoCache = false } = {}) {
+  const fromCloud = entry?.server_available !== false;
+  const stillExtracting = entry?.status === "processing";
+  return Boolean(fromCloud && !entry?.offline_pack && !e2eNoCache && !stillExtracting);
 }
 
 function bookFromLocalPack(local) {

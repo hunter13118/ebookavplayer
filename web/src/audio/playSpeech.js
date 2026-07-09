@@ -2,6 +2,7 @@
 // Falls back to offline pack audio when an audiobook-tier pack is active.
 import { apiUrl } from "../api.js";
 import { lineWithVoice } from "./voiceOverrides.js";
+import { getPrefs } from "./voicePrefs.js";
 import { lineGapMs, estimateDurationSec } from "./timing.js";
 import { getOfflineAudioBlob } from "../offline/packBridge.js";
 import {
@@ -68,6 +69,7 @@ async function fetchTtsBlob(line, voiceOverrides) {
         expression: line.expression || undefined,
         environment: line.environment || undefined,
         intensity: line.intensity != null ? line.intensity : undefined,
+        performance_mode: getPrefs().performanceMode,
       }),
       signal: fetchTimeout(20000),
     });

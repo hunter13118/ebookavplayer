@@ -1,6 +1,7 @@
 /** Per-line moment illustrations (full-frame inserts) — edge port of server/images/moment_inserts.py */
 
 import { freemiumExtract } from "./freemium-extract.js";
+import { normalizeExpressionBucket } from "./expression-bucket.js";
 
 const EXPRESSION_PROMPTS = {
   sad: "sad wistful expression, downturned eyes, soft melancholy",
@@ -9,20 +10,19 @@ const EXPRESSION_PROMPTS = {
   yell: "shouting intense expression, open mouth, emphatic",
   happy: "bright happy smile, lively eyes",
   surprised: "surprised wide eyes, startled expression",
+  scared: "fearful wide-eyed expression, tense shoulders, recoiling",
+  excited: "exhilarated grin, bright energetic eyes",
+  embarrassed: "flustered blushing expression, averted gaze",
+  smug: "smug half-smile, confident raised eyebrow",
+  tender: "soft affectionate expression, warm gentle eyes",
+  nervous: "anxious fidgety expression, uncertain eyes",
+  sarcastic: "dry deadpan expression, one eyebrow raised",
+  determined: "resolute focused expression, set jaw",
+  desperate: "desperate pleading expression, strained eyes",
 };
 
-function normalizeExpression(expr) {
-  const s = String(expr || "normal").trim().toLowerCase();
-  if (!s || s === "normal") return "normal";
-  return s;
-}
-
 export function lineExpression(line) {
-  const raw = line?.expression;
-  if (raw && String(raw).trim().toLowerCase() !== "normal") {
-    return normalizeExpression(raw);
-  }
-  return "normal";
+  return normalizeExpressionBucket(line?.expression);
 }
 
 export function expressionPromptSuffix(expression) {

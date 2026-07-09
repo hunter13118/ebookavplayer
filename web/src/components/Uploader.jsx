@@ -25,6 +25,7 @@ export default function Uploader({ onStarted, compact = false }) {
   const [dryRun, setDryRun] = useState(false);
   const [useGenAi, setUseGenAi] = useState(true);
   const [byoMode, setByoMode] = useState(false);
+  const [expressiveSprites, setExpressiveSprites] = useState(false);
   const [artStyle, setArtStyle] = useState(getPrefs().artStyle || "anime");
   const [preferProvider, setPreferProvider] = useState("auto");
   const [connectionId, setConnectionId] = useState(SERVER_ID);
@@ -40,11 +41,13 @@ export default function Uploader({ onStarted, compact = false }) {
     if (!file) return;
     setBusy(true); setErr("");
     try {
+      const genAi = useGenAi && !dryRun && !byoMode;
       const res = await ingestBook(file, {
         artStyle,
         dryRun,
-        generateArt: useGenAi && !dryRun && !byoMode,
+        generateArt: genAi,
         byoMode: byoMode && !dryRun,
+        generateExpressiveSprites: expressiveSprites && genAi,
         preferProvider,
         connection,
       });
@@ -94,6 +97,14 @@ export default function Uploader({ onStarted, compact = false }) {
           onChange={(e) => setUseGenAi(e.target.checked)} />
         <span className="vae-checkbox-box" aria-hidden />
         Generate art with AI (Gemini, then local SD when on your network)
+      </label>
+
+      <label className="vae-upload-dry vae-checkbox" data-testid="expressive-sprites-toggle">
+        <input type="checkbox" checked={expressiveSprites} disabled={!useGenAi || dryRun || byoMode}
+          data-testid="expressive-sprites-input"
+          onChange={(e) => setExpressiveSprites(e.target.checked)} />
+        <span className="vae-checkbox-box" aria-hidden />
+        Expressive character art (slower, more images — alt-expression sprites for main characters)
       </label>
 
       <label className="vae-upload-dry vae-checkbox" data-testid="byo-mode-toggle">

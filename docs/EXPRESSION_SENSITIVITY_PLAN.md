@@ -1,7 +1,11 @@
 # Expression Sensitivity Plan — "Make It a Performance"
 
-**Status:** proposal, not yet implemented. Sketched on one machine, meant to be picked
-up and built on another.
+**Status:** fully implemented — Phases 0, 1a-1f, 2, 3a-3d, and Phase 4
+(performance-mode dial, tension state machine, director's log overlay,
+interrupted-dialogue continuity) are all landed (see file references inline
+below). The cost-gated items (1d/1e's LLM re-pass, 3d's alt-sprite
+generation) ship off-by-default and opt-in, exactly as designed — nothing
+here changes recurring cost unless explicitly enabled.
 
 **Goal:** right now `expression` is real (schema → extraction → compile → sprite CSS →
 image prompts) but under-triggers, and even when it fires, over half of what the model

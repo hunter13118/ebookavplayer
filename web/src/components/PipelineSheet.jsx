@@ -121,9 +121,19 @@ function CostGuidePanel({ guide, onApply, busy }) {
   );
 }
 
+// Which env var this preset's leading stage needs to actually be usable —
+// derived from the stageId prefix rather than a duplicated per-preset field,
+// since every local stage is either an ollama-* or an mlx-* stage today.
+function presetConfigured(p, ollamaConfigured, mlxConfigured) {
+  if (p.stageId.startsWith("mlx-")) return mlxConfigured;
+  if (p.stageId.startsWith("ollama-")) return ollamaConfigured;
+  return true;
+}
+
 function LocalExtractPresetPanel({ guide, onApply, busy }) {
   if (!guide?.presets?.length) return null;
-  const { presets, active, ollamaConfigured } = guide;
+  const { presets, active, ollamaConfigured, mlxConfigured } = guide;
+  const hasMlxPreset = presets.some((p) => p.stageId.startsWith("mlx-"));
 
   return (
     <aside className="vae-local-presets" data-testid="local-extract-presets">
@@ -134,6 +144,12 @@ function LocalExtractPresetPanel({ guide, onApply, busy }) {
         <p className="vae-pipeline-cost-summary">
           Set <code>OLLAMA_BASE_URL</code> (see docs/LOCAL_LLM_EXTRACTION.md) to
           enable local extraction and use these presets.
+        </p>
+      )}
+      {hasMlxPreset && !mlxConfigured && (
+        <p className="vae-pipeline-cost-summary">
+          Set <code>MLX_BASE_URL</code> (see docs/LOCAL_LLM_EXTRACTION.md) to enable the
+          MLX preset below — Apple Silicon only, separate <code>mlx-lm</code> Python venv.
         </p>
       )}
       <ul className="vae-local-preset-list">
@@ -157,7 +173,7 @@ function LocalExtractPresetPanel({ guide, onApply, busy }) {
               <button
                 type="button"
                 className="vae-pipeline-apply-btn"
-                disabled={busy || !ollamaConfigured}
+                disabled={busy || !presetConfigured(p, ollamaConfigured, mlxConfigured)}
                 onClick={() => onApply(p.id)}
               >
                 Use this

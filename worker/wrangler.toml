@@ -44,6 +44,26 @@ queue = "vae-jobs"
 max_batch_size = 1
 max_batch_timeout = 30
 
+# Separate physical queue for parallel per-chapter imaging (see
+# chapter-extract-pipeline.js's onChapterComplete and
+# worker/queue/chapter-imaging-consumer.js) — deliberately NOT sharing
+# "vae-jobs" above. Cloudflare Queues runs each named queue's consumer
+# independently, so art generation for an earlier chapter can proceed while
+# a still-running continue-extract job keeps extracting later chapters on
+# "vae-jobs", instead of queuing behind it the way pack-build does today.
+# max_batch_size stays 1: a chapter's own pack file has no concurrent writer
+# once written, but keeping this queue's consumer strictly one-at-a-time
+# avoids ever needing to think about two chapter-imaging messages for the
+# same book racing each other.
+[[queues.producers]]
+binding = "VAE_IMAGING_QUEUE"
+queue = "vae-imaging"
+
+[[queues.consumers]]
+queue = "vae-imaging"
+max_batch_size = 1
+max_batch_timeout = 30
+
 [[durable_objects.bindings]]
 name = "JOB_EVENTS"
 class_name = "JobEventHub"

@@ -1,5 +1,6 @@
 // Game-style dialogue with typewriter reveal synced to the spoken line.
 import { dialogueBoxClass, formatDeliveryText } from "../dialogueFormat.js";
+import { normalizeExpressionBucket } from "../expressionBucket.js";
 
 export default function DialogueBox({ line, speakerName, revealed, style, onAdvance }) {
   if (!line) return null;
@@ -15,7 +16,9 @@ export default function DialogueBox({ line, speakerName, revealed, style, onAdva
   const done = revealed >= rawLen;
 
   if (style === "subtitle") {
-    const subCls = `vae-subtitle${isNarr ? " narration" : ""}${isDelivery ? " delivery" : ""}`;
+    const bucket = normalizeExpressionBucket(line.expression);
+    const exprCls = bucket === "yell" || bucket === "whisper" ? ` expr-${bucket}` : "";
+    const subCls = `vae-subtitle${isNarr ? " narration" : ""}${isDelivery ? " delivery" : ""}${exprCls}`;
     return (
       <div className={subCls} data-testid="dialogue" data-style="subtitle"
         data-kind={line.kind} onClick={onAdvance}>
