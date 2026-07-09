@@ -65,6 +65,17 @@ body: {"character_description": str, "reference_image_b64": str,
        "expressions"?: [str, ...], "model"?: str, "ip_adapter_scale"?: float,
        "width"?: int, "height"?: int}
 -> {"variants": {expression: base64 PNG, ...}, "elapsed_sec": float, "model": str}
+
+POST /crop_faces
+body: {"image_b64": str, "max_faces"?: int}
+-> {"count": int, "crops": [base64 PNG, ...]}
+(wraps detect_and_crop_faces.py's crop_faces_from_bytes — used by
+worker/queue/illustration-character-match-consumer.js's
+cropAndStoreReference to turn a matched EPUB plate into a tight
+head+upper-body reference crop per character, stored to
+media/{bookId}/character-refs/{charId}/ and fed back into generation via
+tryLocalSd's reference_image_b64. Best-effort: 0 detected faces just returns
+an empty crops list, not an error.)
 ```
 
 `/generate_batch` is a **real** batched diffusion call — one `pipe()`
@@ -316,13 +327,13 @@ curl -s -o scripts/local-image-server/models/lbpcascade_animeface.xml \
   https://raw.githubusercontent.com/nagadomi/lbpcascade_animeface/master/lbpcascade_animeface.xml
 
 python3 scripts/local-image-server/server.py
-# Exposes /health, /models, /generate, /generate_batch, /generate_expression_set on :7860
+# Exposes /health, /models, /generate, /generate_batch, /generate_expression_set, /crop_faces on :7860
 ```
 
 Set in root `.env`:
 ```bash
 LOCAL_IMAGE_URL=http://127.0.0.1:7860
-LOCAL_IMAGE_MODEL=sdxl-turbo   # or animagine-xl / sd15-anime-lcm
+LOCAL_IMAGE_MODEL=animagine-xl   # sdxl-turbo has no IP-Adapter profile — needed for character-reference/crop matching
 ```
 
 First use of each model downloads its weights on demand (no pre-fetch step):

@@ -520,19 +520,45 @@ async function tryHuggingface(prompt, seed, cfg, fetchFn = fetch) {
   throw new Error(failures[0] || "huggingface: request failed");
 }
 
-async function tryLocalSd(prompt, env, fetchFn = fetch) {
+/**
+ * `model` (from LOCAL_IMAGE_MODEL) is sent explicitly on every request
+ * rather than relying on the server's own startup-time default — the
+ * server lazy-loads whatever model id it's given per-request (already
+ * cached after first use, see docs/LOCAL_IMAGE_GEN.md), so this works
+ * without needing to restart the Python process to change models.
+ *
+ * `referenceImages[0]` (when present) is sent as IP-Adapter conditioning —
+ * only `animagine-xl`/`sd15-anime-lcm` support this (`sdxl-turbo` doesn't,
+ * see docs/LOCAL_IMAGE_GEN.md); the server itself 400s if the active model
+ * has no ip_adapter_repo configured and a reference was sent, so this
+ * doesn't need to duplicate that capability check here.
+ */
+async function tryLocalSd(prompt, env, fetchFn = fetch, { referenceImages = null, ipAdapterScale = null } = {}) {
   const base = String(env.LOCAL_IMAGE_URL || "").trim().replace(/\/$/, "");
   if (!base) throw new Error("local_sd: LOCAL_IMAGE_URL not set");
+
+  const body = { prompt: String(prompt).slice(0, 1800) };
+  const model = String(env.LOCAL_IMAGE_MODEL || "").trim();
+  if (model) body.model = model;
+  const refBytes = referenceImages?.[0];
+  if (refBytes) {
+    body.reference_image_b64 = arrayBufferToBase64(refBytes);
+    if (ipAdapterScale != null) body.ip_adapter_scale = ipAdapterScale;
+  }
+
   const res = await fetchTimeout(`${base}/generate`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ prompt: String(prompt).slice(0, 1800) }),
+    body: JSON.stringify(body),
   }, 120_000, fetchFn);
-  if (!res.ok) throw new Error(`local_sd: HTTP ${res.status}`);
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`local_sd: HTTP ${res.status}${detail ? ` — ${detail.slice(0, 200)}` : ""}`);
+  }
   const ct = res.headers.get("content-type") || "image/png";
   return {
     provider: "local_sd",
-    model: "local",
+    model: model || "local",
     bytes: new Uint8Array(await res.arrayBuffer()),
     contentType: ct.split(";")[0],
   };
@@ -812,7 +838,16 @@ export async function generateImage(prompt, {
       if (!stageAvailable(env, "local_sd")) continue;
       try {
         onAttempt?.("local_sd");
-        const result = await tryLocalSd(prompt, env, env.__fetch || fetch);
+        // hasRefs's referenceImages/referenceImageUrls are ArrayBuffers/URLs
+        // meant for Gemini/Pollinations — local_sd only accepts an inline
+        // reference (no URL-fetch capability of its own), so only the
+        // ArrayBuffer form is usable here. A URL-only reference (e.g. from
+        // uploadCharacterReferenceImage) silently generates unreferenced
+        // rather than erroring — still strictly better than the old
+        // behavior of skipping local_sd whenever any reference existed.
+        const result = await tryLocalSd(prompt, env, env.__fetch || fetch, {
+          referenceImages: hasRefs ? referenceImages : null,
+        });
         return postProcess(result, subjectType, env);
       } catch (e) {
         failures.push(`local_sd: ${String(e.message || e).slice(0, 100)}`);

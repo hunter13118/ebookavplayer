@@ -284,6 +284,11 @@ class BatchGenerateRequest(BaseModel):
     model: str | None = None
 
 
+class CropFacesRequest(BaseModel):
+    image_b64: str  # the raw scene/plate to crop (e.g. an EPUB illustration)
+    max_faces: int | None = None  # cap the number of crops returned, left-to-right
+
+
 class ExpressionSetRequest(BaseModel):
     character_description: str  # e.g. "Elara: red-haired blacksmith adventurer, dark leather armor"
     reference_image_b64: str  # ideally the baseline portrait, not the raw EPUB source — see docs
@@ -386,6 +391,32 @@ def generate_batch(req: BatchGenerateRequest):
         image.save(buf, format="PNG")
         encoded.append(base64.b64encode(buf.getvalue()).decode())
     return {"images": encoded, "count": len(encoded), "elapsed_sec": elapsed, "model": profile.id}
+
+
+@app.post("/crop_faces")
+def crop_faces(req: CropFacesRequest):
+    """Detect each anime-style character face in a scene/plate and crop each
+    to a head+upper-body reference (better IP-Adapter signal than the whole
+    scene — see docs/LOCAL_IMAGE_GEN.md's v1→v2→v3 results). Exposes
+    detect_and_crop_faces.py's logic over HTTP so the Worker (no local
+    image-processing capability of its own) can call it — that script was
+    previously CLI-only."""
+    from detect_and_crop_faces import crop_faces_from_bytes
+
+    try:
+        image_bytes = base64.b64decode(req.image_b64)
+    except Exception as e:
+        raise HTTPException(400, f"invalid image_b64: {e}")
+
+    try:
+        crops = crop_faces_from_bytes(image_bytes, max_faces=req.max_faces)
+    except Exception as e:
+        raise HTTPException(400, f"face detection failed: {e}")
+
+    return {
+        "count": len(crops),
+        "crops": [base64.b64encode(c).decode() for c in crops],
+    }
 
 
 @app.post("/generate_expression_set")

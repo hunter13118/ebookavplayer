@@ -122,6 +122,25 @@ export async function referenceTargetsForCharacter(env, bookId, analysis, charac
   const { loadExternalRefs, externalRefUrlsForCharacter, fetchExternalRefBytes } = await import(
     "./external-refs.js"
   );
+  // character.reference_images (worker/_shared/character-merge.js's
+  // addCharacterReferenceImageIn{Analysis,Playback}) is the highest-priority
+  // source: it's the cleanest possible signal — either a face+upper-body
+  // crop from the illustration-character-match pass (see
+  // illustration-character-match-consumer.js), or a picture the user
+  // deliberately uploaded specifically as this character's reference. Both
+  // are strictly better than a whole multi-character plate or an unrelated
+  // external URL. This field previously wasn't read here at all — it was
+  // stored (visible in Character settings) but never actually reached
+  // generateImage().
+  if (char?.reference_images?.length) {
+    for (const url of char.reference_images.slice(0, MAX_REFS)) {
+      const b = await loadMediaBytes(env, url);
+      if (b) bytes.push(b);
+      const abs = absoluteMediaUrl(origin, url);
+      if (abs) urls.push(abs);
+    }
+  }
+
   const extRefs = await loadExternalRefs(env, bookId);
   const extUrls = externalRefUrlsForCharacter(extRefs, characterId);
   if (extUrls.length) {

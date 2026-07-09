@@ -353,4 +353,60 @@ import { computeImagingProgress, waitingOnProvider } from "../worker/_shared/ima
   assert.deepEqual(attempts, ["local_sd"], "pinning local_sd first is respected even for reference-backed generation");
 }
 
+// generateImage — local_sd now actually sends reference_image_b64/model,
+// previously it only ever sent {prompt} even when a reference and/or a
+// configured LOCAL_IMAGE_MODEL were available. Confirms the request body
+// local-image-server/server.py's /generate actually expects for IP-Adapter
+// conditioning (see docs/LOCAL_IMAGE_GEN.md).
+{
+  let sentBody = null;
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 0, 0, 0, 0]);
+  const refBytes = new Uint8Array([1, 2, 3, 4]).buffer;
+  const env = {
+    EXTRACT_SKIP_GEMINI: "true",
+    LOCAL_IMAGE_URL: "http://127.0.0.1:7860",
+    LOCAL_IMAGE_MODEL: "animagine-xl",
+    __fetch: async (url, opts) => {
+      sentBody = JSON.parse(opts.body);
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: (h) => (h === "content-type" ? "image/png" : null) },
+        arrayBuffer: async () => png.buffer.slice(png.byteOffset, png.byteOffset + png.byteLength),
+      };
+    },
+  };
+  await generateImage("portrait test", {
+    env,
+    subjectType: "character",
+    preferProvider: "local_sd",
+    referenceImages: [refBytes],
+  });
+  assert.equal(sentBody.model, "animagine-xl", "LOCAL_IMAGE_MODEL sent explicitly per-request");
+  assert.equal(typeof sentBody.reference_image_b64, "string", "reference image sent as base64");
+  assert.ok(sentBody.reference_image_b64.length > 0);
+}
+
+// ...and when there's no reference or configured model, the request body
+// stays minimal (no regression for the plain-background-generation case).
+{
+  let sentBody = null;
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 0, 0, 0, 0]);
+  const env = {
+    EXTRACT_SKIP_GEMINI: "true",
+    LOCAL_IMAGE_URL: "http://127.0.0.1:7860",
+    __fetch: async (url, opts) => {
+      sentBody = JSON.parse(opts.body);
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: (h) => (h === "content-type" ? "image/png" : null) },
+        arrayBuffer: async () => png.buffer.slice(png.byteOffset, png.byteOffset + png.byteLength),
+      };
+    },
+  };
+  await generateImage("background test", { env, subjectType: "background", preferProvider: "local_sd" });
+  assert.deepEqual(Object.keys(sentBody), ["prompt"]);
+}
+
 console.log("freemium-image.test.mjs — all passed");

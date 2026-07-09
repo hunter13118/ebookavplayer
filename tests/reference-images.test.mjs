@@ -95,4 +95,31 @@ import { momentDescription } from "../worker/_shared/moment-inserts.js";
   assert.equal(bytes.length, 1, "confirmed illustration_ref still resolves a reference");
 }
 
+// character.reference_images (uploaded refs / cropped matches) is the
+// highest-priority source — previously stored on the character (visible in
+// Character settings) but never actually read by referenceTargetsForCharacter
+// at all, so it never reached generateImage().
+{
+  const store = {
+    "media/book_a/character-refs/kuro/123.png": new Uint8Array([9, 9, 9, 9]).buffer,
+  };
+  const env = {
+    VAE_PACKS: {
+      get: async (key) => (store[key] ? { arrayBuffer: async () => store[key] } : null),
+      put: async () => {},
+    },
+  };
+  const analysis = {
+    illustration_urls: { 0: "/media/book_a/illustrations/img_000.png" },
+    characters: [{
+      id: "kuro", name: "Kuro", illustration_ref: 0,
+      reference_images: ["/media/book_a/character-refs/kuro/123.png"],
+    }],
+  };
+  const { bytes } = await referenceTargetsForCharacter(env, "book_a", analysis, "kuro", "anime");
+  assert.equal(bytes.length, 1, "reference_images resolves even with illustration_ref also set");
+  assert.deepEqual(new Uint8Array(bytes[0]), new Uint8Array([9, 9, 9, 9]),
+    "reference_images wins over illustration_ref — pushed first in priority order");
+}
+
 console.log("reference-images.test.mjs: ok");

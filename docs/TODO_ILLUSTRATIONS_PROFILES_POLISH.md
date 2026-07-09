@@ -135,23 +135,37 @@ false-positive). A confirmed match applies immediately via the same
 `applyDirectIllustrations` path a manual assignment uses — sprite/cover
 update included, verified live.
 
-**Cropping — NOT DONE, genuine infrastructure gap:** there is no image
-manipulation capability anywhere in this codebase — no canvas/sharp
-equivalent, no WASM image library, no Cloudflare Images binding configured.
-Doing this for real needs one of:
-- A vision-capable model call that returns a face bounding box, plus an
-  actual pixel-cropping step to apply it (Workers doesn't have a native
-  crop primitive; would need a WASM image library like `photon-rs`, or an
-  external image-processing service/binding).
-- Cloudflare Images (if enabled on the account) can crop via URL transform
-  params without needing an in-Worker image library at all — the more
-  realistic first cut if this is prioritized, since it sidesteps the "no
-  image lib" gap entirely.
-Until one of these lands, a matched plate is used **whole** as the
-character's reference (not face-cropped) — better than nothing, and already
-wired into `referenceTargetsForCharacterWithStylePool` via the confirmed
-`illustration_ref`, but not the tight, face-only reference originally asked
-for.
+**Cropping — DONE.** Corrected an earlier claim in this doc that no image
+manipulation capability existed in the codebase — it did: a local Stable
+Diffusion server (`scripts/local-image-server/server.py`,
+[docs/LOCAL_IMAGE_GEN.md](LOCAL_IMAGE_GEN.md)) already had a working
+anime-face detector (`detect_and_crop_faces.py`, `lbpcascade_animeface`) and
+IP-Adapter reference-image support, just not wired into this flow. Wired up:
+- `LOCAL_IMAGE_MODEL=animagine-xl` (`.env`/`.env.example`) — the profile
+  with IP-Adapter support; `sdxl-turbo` doesn't have one.
+- `POST /crop_faces` on the local-image-server — takes `image_b64`, returns
+  base64 PNG crops via `crop_faces_from_bytes` (new function alongside the
+  existing file-path-based `detect_faces`).
+- `cropAndStoreReference` in
+  `worker/queue/illustration-character-match-consumer.js` — after a plate is
+  matched to a character, POSTs the raw plate bytes to `/crop_faces`, stores
+  the first crop to `media/{bookId}/character-refs/{charId}/` in R2, and
+  patches it onto `character.reference_images` (the same field
+  `CharacterManager`'s upload UI writes to). Best-effort: no
+  `LOCAL_IMAGE_URL`, an endpoint error, or zero detected faces in the plate
+  all skip cleanly rather than failing the match job — the whole-plate
+  `illustration_ref` (already applied) is a fine fallback on its own.
+- `tryLocalSd` (`worker/_shared/freemium-image.js`) now sends
+  `reference_image_b64`/`ip_adapter_scale` when references are available, so
+  a cropped reference actually reaches generation instead of just sitting in
+  storage.
+- Verified: `/crop_faces` tested directly against real Volume 6 plates
+  (correctly finds faces in some, correctly finds none in plates that are
+  full-scene shots without a clear face — expected Haar/LBP-cascade
+  behavior, not a bug). The crop→R2-store→`reference_images`-patch chain is
+  covered by `tests/illustration-character-crop.test.mjs` with a mocked
+  `/crop_faces` response, independent of any one book's plates happening to
+  have a detectable face.
 
 ## 3. Character profile viewer/editor UI — DONE (description + uploaded references)
 

@@ -20,19 +20,51 @@ import sys
 from pathlib import Path
 
 import cv2
+import numpy as np
 
 CASCADE_PATH = Path(__file__).parent / "models" / "lbpcascade_animeface.xml"
 
 
-def detect_faces(image_path: str):
-    img = cv2.imread(image_path)
+def _detect_faces_in_array(img):
+    """Shared detection core — takes an already-decoded BGR array (cv2.imread
+    or cv2.imdecode both produce this shape), so callers can go file-path or
+    in-memory bytes (see detect_faces / detect_faces_from_bytes below)."""
     if img is None:
-        raise ValueError(f"could not read image: {image_path}")
+        raise ValueError("could not decode image")
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     gray = cv2.equalizeHist(gray)
     cascade = cv2.CascadeClassifier(str(CASCADE_PATH))
     faces = cascade.detectMultiScale(gray, scaleFactor=1.05, minNeighbors=4, minSize=(48, 48))
     return img, faces
+
+
+def detect_faces(image_path: str):
+    return _detect_faces_in_array(cv2.imread(image_path))
+
+
+def detect_faces_from_bytes(image_bytes: bytes):
+    """In-memory variant for server.py's /crop_faces endpoint — no temp file
+    needed, an EPUB-extracted plate never touches disk."""
+    arr = np.frombuffer(image_bytes, dtype=np.uint8)
+    return _detect_faces_in_array(cv2.imdecode(arr, cv2.IMREAD_COLOR))
+
+
+def crop_faces_from_bytes(image_bytes: bytes, *, max_faces: int | None = None):
+    """Detect + crop every face in an image, left-to-right — returns a list
+    of PNG-encoded bytes, one per detected character. Used by both the CLI
+    (main, below) and server.py's /crop_faces HTTP endpoint."""
+    img, faces = detect_faces_from_bytes(image_bytes)
+    faces = sorted(faces, key=lambda f: f[0])
+    if max_faces is not None:
+        faces = faces[:max_faces]
+    crops = []
+    for box in faces:
+        crop = crop_upper_body(img, box)
+        ok, encoded = cv2.imencode(".png", crop)
+        if not ok:
+            continue
+        crops.append(encoded.tobytes())
+    return crops
 
 
 def crop_upper_body(img, face_box, *, body_height_mult: float = 4.0, width_mult: float = 2.2):
