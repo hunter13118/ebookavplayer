@@ -20,6 +20,7 @@ import { getActiveConnection } from "../backends/connections.js";
 import BannerStack from "./BannerStack.jsx";
 import ArtStylePicker from "./ArtStylePicker.jsx";
 import ProviderSelect from "./ProviderSelect.jsx";
+import ExpressionRegenControl, { canRegenExpression } from "./ExpressionRegenControl.jsx";
 
 
 
@@ -699,12 +700,20 @@ export default function ReplaceArtSheet({ book, open, onClose, onStarted, onFail
 
                   const isOn = multi ? selected.has(item.key) : uploadKey === item.key;
                   const filled = filledByKey[item.key];
+                  // Same "importance: primary" + already-committed-portrait
+                  // gate as CharacterRosterSheet — this tile-shaped item
+                  // carries the same fields (importance, preview=sprite) so
+                  // no extra lookup into book.characters is needed.
+                  const regenChar = item.kind === "characters"
+                    && canRegenExpression({ id: item.id, importance: item.importance, sprite: item.preview })
+                    ? { id: item.id, importance: item.importance, sprite: item.preview }
+                    : null;
 
-                  return (
+                  const tile = (
 
                     <button
 
-                      key={item.key}
+                      key={regenChar ? undefined : item.key}
 
                       type="button"
 
@@ -736,6 +745,24 @@ export default function ReplaceArtSheet({ book, open, onClose, onStarted, onFail
 
                     </button>
 
+                  );
+
+                  if (!regenChar) return tile;
+
+                  // Regenerating one expression is an immediate, independent
+                  // action — separate from this grid's multi-select +
+                  // "Replace" submit flow, same as CharacterRosterSheet. A
+                  // <select>/<button> can't nest inside the tile's own
+                  // <button>, hence the wrapper instead of appending to it.
+                  return (
+                    <div key={item.key} className="vae-art-tile-wrap">
+                      {tile}
+                      <ExpressionRegenControl
+                        bookId={book?.book_id}
+                        character={regenChar}
+                        onRegenerated={onUploaded}
+                      />
+                    </div>
                   );
 
                 })}

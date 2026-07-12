@@ -397,6 +397,56 @@ generation. The warmth was never actually at risk on the Python side; the
 bug above was purely about the JS orchestration never reaching the
 generation code path in staged/compare mode.
 
+### Known failure mode: "cancel processing" left a bulk regen looking permanently stuck (2026-07-12)
+
+Two compounding bugs, confirmed live against a real 16/16-chapter book
+whose bulk character regen the user cancelled:
+
+1. **`onCancelProcessingPost` assumed every cancelled job was
+   extraction-phase.** It always stamped `stage: "extracting"` (or
+   `"error"` with 0 chapters) regardless of what was actually running —
+   cancelling a stuck `imaging-regen` job on a fully-extracted book left it
+   reporting "needs extraction" instead of going back to `ready`. Fixed by
+   branching on the job's `kind` (`POST_EXTRACTION_JOB_KINDS` in
+   `book-actions.js`: `imaging-regen`, `expression-sprites`,
+   `expression-repass`, `illustration-character-match`,
+   `moment-generate`) — but the job record is frequently already gone by
+   the time cancel runs (see #2), so `chapters_ready >= total_chapters` is
+   used as an equally reliable, race-proof fallback signal: a book with
+   every chapter already extracted couldn't have been running an
+   extraction-phase job in the first place.
+2. **Cloudflare Queues has no cancel primitive**, so a running consumer
+   invocation (mid bulk-regen, generating character N of many) keeps
+   running to completion on its own — "cancel" only ever marked the KV job
+   record terminal, which does nothing to the actual in-flight loop still
+   generating characters N+1, N+2, etc. Worse: `imaging-lock.js`'s passive
+   staleness reconciliation (runs on every `GET /books` poll) can itself
+   clear `active_job_id` and stale-mark the job in the background, so by
+   the time a user's cancel click lands, the book record may have nothing
+   left pointing at the job at all — a real, confirmed-live race, which is
+   also why fix #1 needed the chapters-ready fallback rather than trusting
+   the job lookup alone.
+
+   Fixed with an explicit `cancelled: true` marker
+   (`markJobStale`'s new option, `imaging-lock.js`) plus two check points:
+   - `dispatch.js` checks it before routing ANY queued message to its
+     consumer — a message still purely queued (never started) when
+     cancelled now no-ops instead of doing the work anyway.
+   - `runEdgeImaging` / `generateExpressionSpritesForCharacter`
+     (`edge-imaging.js`) take an optional `checkCancelled` callback, polled
+     between characters/backgrounds/expression buckets — wired from
+     `imaging-regen-consumer.js` and `expression-sprites-consumer.js` via
+     `isJobCancelled(env, job_id)`. A cancelled job stops picking up NEW
+     items instead of grinding through its entire remaining plan; whatever
+     item was already mid-generation still finishes (an in-flight
+     `fetch`/generation call can't be aborted either), and everything
+     generated before the cancel is kept, not thrown away.
+
+   This is as close to "clear the queue" as a queue-based architecture
+   without a true kill switch gets — genuinely instant cancellation would
+   need a different execution model (e.g. Durable Object-driven polling
+   instead of Queues), out of scope here.
+
 ### Manual override: force a reference the auto-guard rejected
 
 `_looks_like_grid` (the vision-model classifier) is a heuristic, not

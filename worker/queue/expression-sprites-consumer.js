@@ -3,6 +3,7 @@ import { createPhaseLogger, PHASE } from "../_shared/phase-debug.js";
 import { generateExpressionSpritesForCharacter } from "../_shared/edge-imaging.js";
 import { r2MediaKey } from "../_shared/freemium-image.js";
 import { normalizeExpressionBucket } from "../_shared/expression-bucket.js";
+import { isJobCancelled } from "../_shared/imaging-lock.js";
 
 /**
  * Generate (or regenerate) alt-expression portrait sprites for ONE primary
@@ -43,7 +44,7 @@ export async function handleExpressionSpritesMessage(message, env) {
 
     dbg.log(PHASE.P3_IMAGES, "expression sprite generation start", { character_id, art_style, buckets });
 
-    const { sprites, ok, fail } = await generateExpressionSpritesForCharacter({
+    const { sprites, ok, fail, cancelled } = await generateExpressionSpritesForCharacter({
       env,
       book_id,
       art_style,
@@ -54,6 +55,7 @@ export async function handleExpressionSpritesMessage(message, env) {
       onProgress: ({ id }) => {
         touchIngestJob(env, job_id, { detail: `Generating ${id}` }, { dbg }).catch(() => {});
       },
+      checkCancelled: () => isJobCancelled(env, job_id),
     });
 
     if (Object.keys(sprites).length) {
@@ -76,7 +78,9 @@ export async function handleExpressionSpritesMessage(message, env) {
       status: "done",
       stage: "done",
       progress: 1,
-      detail: `Expression art ready · ${ok} ok${fail ? `, ${fail} failed` : ""}`,
+      detail: cancelled
+        ? `Expression art cancelled · ${ok} ok before stopping`
+        : `Expression art ready · ${ok} ok${fail ? `, ${fail} failed` : ""}`,
       book_id,
     });
     message.ack();

@@ -5,6 +5,7 @@ import { createKvReporter } from "../_shared/job-kv-throttle.js";
 import { runEdgeImaging } from "../_shared/edge-imaging.js";
 import { createPhaseLogger, PHASE } from "../_shared/phase-debug.js";
 import { countImagingSteps } from "../_shared/ingest-progress.js";
+import { isJobCancelled } from "../_shared/imaging-lock.js";
 
 function existingMediaFromPlayback(playback) {
   const characters = {};
@@ -135,6 +136,11 @@ export async function handleImagingRegenMessage(message, env) {
       generateExpressiveSprites: opts.generate_expressive_sprites !== false,
       compare,
       stageUntilConfirm,
+      // Polled between characters/backgrounds — lets "cancel processing"
+      // actually stop a long bulk regen from picking up more items instead
+      // of grinding through the whole plan (Cloudflare Queues can't kill
+      // this invocation from outside once it's running).
+      checkCancelled: () => isJobCancelled(env, job_id),
       onComparison: async (row) => {
         comparisons.push(row);
         await reportJob({ comparisons: [...comparisons] }, { eventType: "comparison", force: true });
@@ -185,7 +191,7 @@ export async function handleImagingRegenMessage(message, env) {
     // The old guard checked only `ok === 0` and threw the misleading
     // "set GEMINI_API_KEY" error in exactly that case. Mirror
     // chapter-extract-pipeline.js's guard, which already requires stock === 0.
-    if ((img.stats?.ok ?? 0) === 0 && (img.stats?.stock ?? 0) === 0 && imgPlan.total > 0) {
+    if (!img.stats?.cancelled && (img.stats?.ok ?? 0) === 0 && (img.stats?.stock ?? 0) === 0 && imgPlan.total > 0) {
       throw new Error(
         `All ${imgPlan.total} image(s) failed to generate — set GEMINI_API_KEY (wrangler secret) or freemium image keys`,
       );
@@ -245,9 +251,11 @@ export async function handleImagingRegenMessage(message, env) {
       progress: 1,
       step_index: imgPlan.total,
       step_total: imgPlan.total,
-      detail: stageUntilConfirm
-        ? `Art regen complete · review ${comparisons.length} image(s)`
-        : `Art regen complete · ${img.stats?.ok ?? 0} ok`,
+      detail: img.stats?.cancelled
+        ? `Art regen cancelled · ${img.stats?.ok ?? 0} ok before stopping`
+        : stageUntilConfirm
+          ? `Art regen complete · review ${comparisons.length} image(s)`
+          : `Art regen complete · ${img.stats?.ok ?? 0} ok`,
       book_id,
       imaging: img.stats,
       comparisons,

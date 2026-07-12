@@ -118,7 +118,14 @@ function staleLockPatch(meta, job, reason) {
   };
 }
 
-export async function markJobStale(env, jobId, job, reason) {
+/**
+ * @param {{ cancelled?: boolean }} opts `cancelled: true` (set by
+ * onCancelProcessingPost) is a distinct, explicit marker from generic
+ * staleness — consumers poll it (see edge-imaging.js's `checkCancelled`) to
+ * stop picking up new work mid-run, since Cloudflare Queues has no way to
+ * actually kill an in-flight consumer invocation from outside.
+ */
+export async function markJobStale(env, jobId, job, reason, { cancelled = false } = {}) {
   if (!jobId || !env?.VAE_JOBS) return;
   const next = {
     ...(job || {}),
@@ -126,9 +133,18 @@ export async function markJobStale(env, jobId, job, reason) {
     stage: "error",
     detail: reason,
     error: reason,
+    cancelled,
     updated_at: Date.now(),
   };
   await putJob(env, "ingest", jobId, next);
+}
+
+/** Cheap poll target for a long-running consumer to check mid-run — see
+ * markJobStale's `cancelled` option. */
+export async function isJobCancelled(env, jobId) {
+  if (!jobId || !env?.VAE_JOBS) return false;
+  const job = await getJob(env, "ingest", jobId);
+  return Boolean(job?.cancelled);
 }
 
 /**

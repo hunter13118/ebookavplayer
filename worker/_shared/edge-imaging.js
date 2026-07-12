@@ -133,13 +133,16 @@ export async function generateExpressionSpritesForCharacter({
   env, book_id, art_style, character, baseImageBytes, preferProvider = "local_sd",
   expressiveBuckets = DEFAULT_EXPRESSIVE_BUCKETS, bust = Date.now(), dbg,
   onProgress = null, onProviderAttempt = null, onProviderWait = null, onImageFailure = null,
+  checkCancelled = null,
 }) {
   const desc = characterGenDescription(character);
   const isHumanoid = character.is_humanoid !== false;
   const sprites = {};
   let ok = 0;
   let fail = 0;
+  let cancelled = false;
   for (const bucket of expressiveBuckets) {
+    if (checkCancelled && await checkCancelled()) { cancelled = true; break; }
     onProgress?.({ kind: "expression_sprite", id: `${character.id}:${bucket}` });
     const exprDesc = `${desc}. ${expressionPromptSuffix(bucket)}`;
     const exprPrompt = composeImagePrompt(exprDesc, {
@@ -179,7 +182,7 @@ export async function generateExpressionSpritesForCharacter({
       onImageFailure?.({ kind: "expression_sprite", id: `${character.id}:${bucket}`, error: errText });
     }
   }
-  return { sprites, ok, fail };
+  return { sprites, ok, fail, cancelled };
 }
 
 /** Phase 3 — freemium sprites + backgrounds → R2 + updated playback JSON. */
@@ -205,10 +208,20 @@ export async function runEdgeImaging({
   onImageFailure = null,
   generateExpressiveSprites = false,
   expressiveBuckets = DEFAULT_EXPRESSIVE_BUCKETS,
+  // Cloudflare Queues has no true cancel primitive — a running consumer
+  // invocation can't be killed from outside. This is the actual mechanism
+  // "cancel processing" relies on for a long bulk regen: an async
+  // `() => Promise<boolean>` polled between items (cheap KV read), so a
+  // job marked cancelled mid-run stops picking up NEW characters/
+  // backgrounds instead of grinding through the entire remaining plan.
+  // Whatever generation was already in flight for the current item still
+  // completes (can't abort a live fetch either), it just doesn't start another.
+  checkCancelled = null,
 }) {
   const styleKey = artStyleKey(art_style);
   const maxChars = optionalLimit(env, "VAE_IMAGING_MAX_CHARS");
   const maxBgs = optionalLimit(env, "VAE_IMAGING_MAX_BGS");
+  let cancelled = false;
 
   const media = {
     characters: { ...(existingMedia?.characters || {}) },
@@ -317,6 +330,7 @@ export async function runEdgeImaging({
   }
 
   for (let ci = 0; ci < chars.length; ci++) {
+    if (checkCancelled && await checkCancelled()) { cancelled = true; break; }
     const c = chars[ci];
     onProgress?.({ kind: "character", index: ci + 1, total: chars.length, id: c.id });
     const desc = characterGenDescription(c);
@@ -398,6 +412,7 @@ export async function runEdgeImaging({
   const scenes = analysis.scenes || [];
   let bgGenerated = 0;
   for (let si = 0; si < scenes.length; si++) {
+    if (checkCancelled && await checkCancelled()) { cancelled = true; break; }
     const scene = scenes[si];
     // Ignores scene.id (was `scene.id || fallback`) for the same reason
     // compile-playback.js does — the model frequently reproduces the schema
@@ -473,8 +488,8 @@ export async function runEdgeImaging({
     media,
   });
 
-  dbg?.log("P3_IMAGES", "imaging complete", { ok, fail, stock, pin: imagePin });
-  return { playback, media, stats: { ok, fail, stock, pin: imagePin } };
+  dbg?.log("P3_IMAGES", cancelled ? "imaging cancelled mid-run" : "imaging complete", { ok, fail, stock, pin: imagePin });
+  return { playback, media, stats: { ok, fail, stock, pin: imagePin, cancelled } };
 }
 
 export function compilePlaybackWithMedia(analysis, opts) {

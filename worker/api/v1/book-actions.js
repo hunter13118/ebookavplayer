@@ -441,17 +441,42 @@ export async function onImagingUnlockPost({ env, bookId, request }) {
   }
 }
 
+// Kinds that only ever run AFTER a book is fully extracted — cancelling one
+// of these should land the book back on "ready", never "extracting"/
+// "partial" (the book's text is untouched; only art/expression generation
+// was interrupted). Anything else (ingest/continue-extract/re-extract) is
+// an extraction-phase job, where the chapters-ready-based branch below
+// still applies.
+const POST_EXTRACTION_JOB_KINDS = new Set([
+  "imaging-regen", "expression-sprites", "expression-repass",
+  "illustration-character-match", "moment-generate",
+]);
+
 /**
  * POST /books/:id/cancel-processing — stop treating a stuck/in-flight job as
  * active. Queues have no cancel primitive, so a running consumer invocation
- * (e.g. mid-chapter extraction) keeps running to completion or failure on
- * its own — this can't interrupt it. What it does do: mark the job record
- * terminal so nothing keeps polling/waiting on it, and reset the book index
- * out of "processing" so the UI stops showing a live progress banner tied to
- * a job that's never coming back (e.g. after a dev server restart, or a
- * crash loop). Lands on "partial" (resumable) if any chapters already
- * extracted, otherwise "error" (nothing to resume from — re-upload or
- * continue-extract needed).
+ * (e.g. mid-chapter extraction, or a bulk art regen already generating an
+ * image) can't be killed from outside — it keeps running to completion or
+ * failure on its own. What this DOES do, to get as close to "stop the
+ * queue" as a queue-based architecture allows:
+ * 1. Marks the job record `cancelled: true` (markJobStale's new option) —
+ *    a running consumer polls this between items (edge-imaging.js's
+ *    `checkCancelled`, wired from imaging-regen-consumer.js /
+ *    expression-sprites-consumer.js) and stops picking up NEW work rather
+ *    than grinding through everything left in its plan. The current item
+ *    still finishes (can't abort a live generation call either).
+ * 2. dispatch.js checks this same flag before routing ANY queued message
+ *    to its consumer — a message that was still purely queued (never
+ *    started) when cancelled now no-ops instead of running at all.
+ * 3. Resets the book index out of "processing" so the UI stops showing a
+ *    live progress banner tied to a job that's never coming back. Which
+ *    reset depends on the cancelled job's `kind` (see
+ *    POST_EXTRACTION_JOB_KINDS above) — this used to always assume an
+ *    extraction-phase job and stamp `stage: "extracting"` even when
+ *    cancelling a fully-extracted book's stuck art regen, which wrongly
+ *    told the UI the book needed re-extraction. Confirmed live: cancelling
+ *    a 16/16-chapter book's imaging-regen left it reporting
+ *    `stage: "extracting"` instead of going back to `ready`.
  */
 export async function onCancelProcessingPost({ env, bookId }) {
   if (!env.VAE_JOBS) return null;
@@ -460,32 +485,56 @@ export async function onCancelProcessingPost({ env, bookId }) {
   const meta = JSON.parse(raw);
 
   const jobId = meta.active_job_id || meta.job_id;
+  let job = null;
   if (jobId) {
-    const job = await getJob(env, "ingest", jobId);
-    await markJobStale(env, jobId, job, "Cancelled by user");
+    job = await getJob(env, "ingest", jobId);
+    await markJobStale(env, jobId, job, "Cancelled by user", { cancelled: true });
   }
 
   const chaptersReady = meta.chapters_ready || 0;
   const totalChapters = meta.total_chapters;
-  const patch = chaptersReady > 0
+  // Prefer the job's own kind when it's still around, but don't depend on
+  // it — imaging-lock.js's passive staleness reconciliation (it runs on
+  // every GET /books poll) can clear active_job_id/mark the job record
+  // stale on its own, in the background, before the user's cancel click
+  // even lands. When that race happens `job` here is null/already-stale
+  // and the kind check alone would silently fall through to the
+  // extraction-phase branch below. A book with every chapter already
+  // extracted couldn't have been running an extraction-phase job in the
+  // first place, so that's an equally reliable (and race-proof) signal.
+  const fullyExtracted = totalChapters != null && chaptersReady >= totalChapters;
+  const isPostExtraction = (job?.kind && POST_EXTRACTION_JOB_KINDS.has(job.kind)) || fullyExtracted;
+
+  const patch = isPostExtraction
     ? {
-        status: "partial",
-        stage: "extracting",
+        status: "ready",
+        stage: "done",
+        progress: 1,
         active_job_id: null,
         job_id: null,
         imaging_locked: false,
-        detail: `Cancelled — ${chaptersReady}/${totalChapters ?? "?"} chapters ready`,
+        detail: "Cancelled — art generation stopped",
         error: "",
       }
-    : {
-        status: "error",
-        stage: "error",
-        active_job_id: null,
-        job_id: null,
-        imaging_locked: false,
-        detail: "Cancelled before any chapters finished — re-upload to retry",
-        error: "Cancelled before any chapters finished",
-      };
+    : chaptersReady > 0
+      ? {
+          status: "partial",
+          stage: "extracting",
+          active_job_id: null,
+          job_id: null,
+          imaging_locked: false,
+          detail: `Cancelled — ${chaptersReady}/${totalChapters ?? "?"} chapters ready`,
+          error: "",
+        }
+      : {
+          status: "error",
+          stage: "error",
+          active_job_id: null,
+          job_id: null,
+          imaging_locked: false,
+          detail: "Cancelled before any chapters finished — re-upload to retry",
+          error: "Cancelled before any chapters finished",
+        };
 
   await putBookIndex(env, bookId, patch);
   return json({ ok: true, book_id: bookId, status: patch.status });

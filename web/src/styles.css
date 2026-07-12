@@ -424,6 +424,14 @@ body { margin: 0; background: var(--bg); color: var(--text);
 .vae-art-tile.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .vae-art-tile.focused { outline: 2px dashed var(--accent); outline-offset: 2px; }
 .vae-art-tile.filled { border-color: rgba(80, 200, 120, .55); }
+/* Character tile + its "Regenerate expression" control, stacked in the same
+   narrow grid cell (.vae-art-group-grid columns are 96-140px — too narrow
+   for the roster sheet's wider side-by-side layout). */
+.vae-art-tile-wrap { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.vae-art-tile-wrap .vae-roster-regen { margin-top: 0; border-top: none; padding-top: 0; }
+.vae-art-tile-wrap .vae-roster-expr-toggle { font-size: .66rem; padding: 2px 0; white-space: normal; }
+.vae-art-tile-wrap .vae-roster-regen-body { flex-direction: column; align-items: stretch; gap: 4px; }
+.vae-art-tile-wrap .vae-roster-regen-select { width: 100%; }
 .vae-art-check { position: absolute; top: 4px; right: 4px; z-index: 2;
   width: 18px; height: 18px; border-radius: 50%; background: rgba(40, 160, 90, .92);
   color: #fff; font-size: .7rem; font-weight: 700; display: flex; align-items: center;

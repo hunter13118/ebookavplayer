@@ -1,6 +1,7 @@
 import { handleIngestMessage } from "./ingest-consumer.js";
 
 import { emitJobEvent } from "../_shared/job-events.js";
+import { isJobCancelled } from "../_shared/imaging-lock.js";
 
 
 
@@ -35,6 +36,21 @@ export async function onQueueBatch(batch, env) {
     const kind = message.body?.kind || "pack-build";
 
     try {
+
+      // Cancel-processing marks a job's KV record `cancelled: true`
+      // (imaging-lock.js's markJobStale) but can't remove an already-
+      // enqueued message — Cloudflare Queues has no delete-by-filter
+      // primitive. This is the other half of that mechanism: a message
+      // that was still purely queued (never entered its consumer) when
+      // the user cancelled now no-ops here instead of doing the work
+      // anyway. A message whose consumer already started running before
+      // the cancel still relies on that consumer's own mid-run
+      // checkCancelled polling (edge-imaging.js) to stop early.
+      const jobId = message.body?.job_id;
+      if (jobId && await isJobCancelled(env, jobId)) {
+        message.ack();
+        continue;
+      }
 
       if (kind === "ingest" || kind === "continue-extract") {
 

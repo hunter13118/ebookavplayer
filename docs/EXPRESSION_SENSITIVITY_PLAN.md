@@ -107,6 +107,27 @@ sprites again unless staging was bypassed — see above). Added:
   `happy`/`surprised` kept their original timestamps untouched, confirming
   the single-bucket scoping actually scopes.
 
+**Update (2026-07-12, later still) — same control, also in "Replace art":**
+the per-expression regen control only lived in `CharacterRosterSheet.jsx`
+(the read-focused browse sheet). User asked for it in "the regenerate art
+section too" — `ReplaceArtSheet.jsx`, the main art-picker/regen sheet
+reached via `PlayerMenu.jsx`'s "Replace art…". Extracted the control out of
+`CharacterRosterSheet.jsx` into its own file,
+`web/src/components/ExpressionRegenControl.jsx` (exports the component plus
+`REGENERATABLE_BUCKETS`/`bucketLabel`/`canRegenExpression`), and both sheets
+now import it — no duplicated logic. In `ReplaceArtSheet.jsx`, each
+`kind: "characters"` tile that passes `canRegenExpression` (primary +
+already has a base portrait) gets wrapped in a `.vae-art-tile-wrap` div
+containing the existing tile button plus the control stacked below it
+(nested `<select>`/`<button>` can't live inside the tile's own `<button>`,
+hence the wrapper instead of appending to it). Added
+`.vae-art-tile-wrap`-scoped CSS overrides so the select/button stack
+vertically rather than side-by-side — the art picker's grid columns are
+96-140px, too narrow for the roster sheet's wider layout. Verified live:
+"Regenerate expression" appears under Anne/Diana/Emperor's tiles (primary)
+but not Boris's (secondary), and expanding it renders a working
+select+button inside the narrow tile column.
+
 **Goal:** right now `expression` is real (schema → extraction → compile → sprite CSS →
 image prompts) but under-triggers, and even when it fires, over half of what the model
 actually says is thrown away downstream. Target vibe: **highly expressive, almost

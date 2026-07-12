@@ -92,6 +92,76 @@ async function bodyOf(res) {
   assert.match(book.error, /before any chapters finished/);
 }
 
+// Cancelling a stuck POST-extraction job (imaging-regen, expression-sprites,
+// etc.) on an already-fully-extracted book must NOT stamp
+// stage: "extracting" — the book's text is untouched, only art/expression
+// generation was interrupted. Confirmed live bug: this used to always
+// assume an extraction-phase job regardless of what was actually running,
+// leaving a 16/16-chapter book reporting "needs extraction" after a
+// cancelled bulk art regen.
+{
+  const { env, kv } = makeEnv({
+    "book:vol6-art": JSON.stringify({
+      book_id: "vol6-art",
+      title: "Vol 6",
+      status: "processing",
+      stage: "imaging",
+      active_job_id: "job3",
+      job_id: null,
+      chapters_ready: 16,
+      total_chapters: 16,
+      imaging_locked: true,
+    }),
+    "ingest:job3": JSON.stringify({ job_id: "job3", kind: "imaging-regen", status: "processing" }),
+  });
+  const res = await onCancelProcessingPost({ env, bookId: "vol6-art" });
+  assert.equal(res.status, 200);
+  const body = await bodyOf(res);
+  assert.equal(body.status, "ready");
+
+  const job = JSON.parse(kv["ingest:job3"]);
+  assert.equal(job.status, "error");
+  assert.equal(job.cancelled, true);
+
+  const book = JSON.parse(kv["book:vol6-art"]);
+  assert.equal(book.status, "ready");
+  assert.equal(book.stage, "done");
+  assert.equal(book.progress, 1);
+  assert.equal(book.imaging_locked, false);
+  assert.equal(book.active_job_id, null);
+}
+
+// Same scenario, but the job record already got cleared/stale-marked by
+// imaging-lock.js's own passive reconciliation (runs on every GET /books
+// poll) before this cancel click landed — a real, confirmed-live race:
+// active_job_id was already null and the job's `kind` is unknowable, so
+// the kind-based check alone can't tell this was a post-extraction job.
+// chapters_ready >= total_chapters must be enough on its own to still land
+// on "ready" instead of falling through to "partial".
+{
+  const { env, kv } = makeEnv({
+    "book:vol6-race": JSON.stringify({
+      book_id: "vol6-race",
+      title: "Vol 6",
+      status: "processing",
+      stage: "imaging",
+      active_job_id: null,
+      job_id: null,
+      chapters_ready: 16,
+      total_chapters: 16,
+      imaging_locked: false,
+    }),
+  });
+  const res = await onCancelProcessingPost({ env, bookId: "vol6-race" });
+  assert.equal(res.status, 200);
+  const body = await bodyOf(res);
+  assert.equal(body.status, "ready");
+
+  const book = JSON.parse(kv["book:vol6-race"]);
+  assert.equal(book.status, "ready");
+  assert.equal(book.stage, "done");
+}
+
 // No active_job_id/job_id at all (edge case) -> still resets book index,
 // doesn't throw trying to mark a nonexistent job stale.
 {
