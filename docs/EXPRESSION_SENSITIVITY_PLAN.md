@@ -128,6 +128,52 @@ vertically rather than side-by-side — the art picker's grid columns are
 but not Boris's (secondary), and expanding it renders a working
 select+button inside the narrow tile column.
 
+**Update (2026-07-12, final pass) — "regenerate all" + opt a character in:**
+two asks: (1) redoing one bucket at a time is tedious when a whole set
+looks bad — need a "regenerate all 4" action too; (2) expression art was
+opt-out by importance only (`primary` characters get it, everyone else
+never can) — needed a way to explicitly opt a secondary/background
+character in.
+- **Opt-in flag.** New `wants_expressions` boolean on a character, same
+  shape/pattern as the existing `is_humanoid` flag —
+  `setCharacterWantsExpressionsInAnalysis`/`InPlayback`
+  (`character-merge.js`), `PATCH /books/:id/characters/wants-expressions`
+  (`onCharacterWantsExpressionsPatch`, `characters.js`). Every eligibility
+  check that used to read `importance === "primary"` directly now goes
+  through one shared function, `wantsExpressionSprites(character)`
+  (`edge-imaging.js`: `importance === "primary" || wants_expressions`) —
+  `runEdgeImaging`'s inline generation gate, `onExpressionSpriteRegenPost`'s
+  validation, and `onMediaCommitPost`'s auto-backfill trigger all import
+  it, so the three call sites can't quietly drift apart on who qualifies
+  again (they already had once, see the "staged/compare regens" update
+  above). Mirrored (not imported — separate bundle) on the web side as
+  `wantsExpressionSprites` in `ExpressionRegenControl.jsx`.
+- **Regenerate all.** `onExpressionSpriteRegenPost` now accepts
+  `{ bucket: "all" }` (or omits `bucket` entirely — "all" is the default)
+  to regenerate every bucket in `DEFAULT_EXPRESSIVE_BUCKETS`, not just one;
+  `expression-sprites-consumer.js` already forwarded a `buckets` array
+  through to `generateExpressionSpritesForCharacter` unchanged, so this was
+  purely an API-surface change, no new generation-loop logic.
+- **UI.** `ExpressionRegenControl.jsx` now renders one of three states per
+  character: not opted in → just a "Generate expression art for this
+  character" checkbox; opted in but no base portrait yet → a hint, no
+  controls; opted in with a portrait → the existing per-bucket
+  select+Regenerate, plus a new "Regenerate all" button alongside it, plus
+  (for a non-primary character) a checked "Expression art enabled"
+  checkbox to opt back out. Both `CharacterRosterSheet.jsx` and
+  `ReplaceArtSheet.jsx` now render the control unconditionally for every
+  character (it used to be gated by `canRegenExpression` at the call site,
+  which is now the control's own internal branching) — a secondary
+  character shows the opt-in checkbox instead of just not rendering
+  anything, so there's a visible affordance instead of the feature being
+  undiscoverable.
+- Verified end-to-end live: opted Eizo (secondary, already had a base
+  portrait) in via the checkbox, hit "Regenerate all", watched the job
+  progress through `eizo:happy` → `angry` → `sad` → `surprised` and finish
+  with `Expression art ready · 4 ok` — roster now shows "Expressions (4)"
+  and "Expression art enabled" (checked) for a character that could never
+  have gotten expression art before this change.
+
 **Goal:** right now `expression` is real (schema → extraction → compile → sprite CSS →
 image prompts) but under-triggers, and even when it fires, over half of what the model
 actually says is thrown away downstream. Target vibe: **highly expressive, almost

@@ -20,7 +20,7 @@ import { getActiveConnection } from "../backends/connections.js";
 import BannerStack from "./BannerStack.jsx";
 import ArtStylePicker from "./ArtStylePicker.jsx";
 import ProviderSelect from "./ProviderSelect.jsx";
-import ExpressionRegenControl, { canRegenExpression } from "./ExpressionRegenControl.jsx";
+import ExpressionRegenControl from "./ExpressionRegenControl.jsx";
 
 
 
@@ -700,13 +700,16 @@ export default function ReplaceArtSheet({ book, open, onClose, onStarted, onFail
 
                   const isOn = multi ? selected.has(item.key) : uploadKey === item.key;
                   const filled = filledByKey[item.key];
-                  // Same "importance: primary" + already-committed-portrait
-                  // gate as CharacterRosterSheet — this tile-shaped item
-                  // carries the same fields (importance, preview=sprite) so
-                  // no extra lookup into book.characters is needed.
+                  // ExpressionRegenControl self-gates on eligibility (shows
+                  // an opt-in checkbox for a secondary character instead of
+                  // the regen controls) — this tile-shaped item carries the
+                  // same fields (importance, preview=sprite, wantsExpressions)
+                  // so no extra lookup into book.characters is needed.
                   const regenChar = item.kind === "characters"
-                    && canRegenExpression({ id: item.id, importance: item.importance, sprite: item.preview })
-                    ? { id: item.id, importance: item.importance, sprite: item.preview }
+                    ? {
+                        id: item.id, importance: item.importance, sprite: item.preview,
+                        wants_expressions: item.wantsExpressions,
+                      }
                     : null;
 
                   const tile = (

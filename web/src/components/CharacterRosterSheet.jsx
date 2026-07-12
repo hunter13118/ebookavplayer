@@ -7,7 +7,7 @@
 import { useMemo, useState } from "react";
 import { CharacterThumb, ImageLightbox } from "./CharacterManager.jsx";
 import { mediaImageSrc } from "../media.js";
-import ExpressionRegenControl, { bucketLabel, canRegenExpression } from "./ExpressionRegenControl.jsx";
+import ExpressionRegenControl, { bucketLabel } from "./ExpressionRegenControl.jsx";
 
 function ExpressionThumb({ url, label, onOpen }) {
   const [broken, setBroken] = useState(false);
@@ -43,7 +43,6 @@ function CharacterRosterRow({ bookId, character, onRegenerated }) {
   const [preview, setPreview] = useState(null);
 
   const buckets = Object.entries(character.expressionSprites || {}).filter(([, url]) => url);
-  const canRegen = canRegenExpression(character);
 
   return (
     <div className="vae-roster-row" data-testid={`roster-row-${character.id}`}>
@@ -82,9 +81,7 @@ function CharacterRosterRow({ bookId, character, onRegenerated }) {
           </p>
         )
       )}
-      {canRegen && (
-        <ExpressionRegenControl bookId={bookId} character={character} onRegenerated={onRegenerated} />
-      )}
+      <ExpressionRegenControl bookId={bookId} character={character} onRegenerated={onRegenerated} />
       {preview && (
         <ImageLightbox
           url={preview.url}
@@ -107,6 +104,7 @@ export default function CharacterRosterSheet({ book, open, onClose, onRefresh })
         importance: c.importance,
         sprite: c.sprite,
         expressionSprites: c.expressionSprites,
+        wants_expressions: c.wants_expressions,
       }))
       .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
   }, [book]);

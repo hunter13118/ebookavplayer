@@ -36,7 +36,7 @@ import { onProgressGet, onProgressPost } from "./api/v1/progress.js";
 import { onEdgeVoicesGet, onBookVoicesGet, onBookVoicesPost } from "./api/v1/voices.js";
 import {
   onCharacterMergePatch, onCharacterRenamePatch, onCharacterTemperamentPatch,
-  onCharacterDescriptionPatch, onCharacterIsHumanoidPatch, onCharacterReferenceImageUploadPost,
+  onCharacterDescriptionPatch, onCharacterIsHumanoidPatch, onCharacterWantsExpressionsPatch, onCharacterReferenceImageUploadPost,
   onCharacterReferenceImageDelete, onCharacterReferenceImageAssignPost, onCharacterCropsGet,
 } from "./api/v1/characters.js";
 import { onQueueBatch } from "./queue/dispatch.js";
@@ -223,6 +223,13 @@ export async function handleEbookavplayerApi(request, env, ctx) {
   const characterIsHumanoid = path.match(/^\/books\/([^/]+)\/characters\/is-humanoid$/);
   if (method === "PATCH" && characterIsHumanoid) {
     const edge = await onCharacterIsHumanoidPatch({ request, env, bookId: characterIsHumanoid[1] });
+    if (edge) return edge;
+    return onRequest({ request, env });
+  }
+
+  const characterWantsExpressions = path.match(/^\/books\/([^/]+)\/characters\/wants-expressions$/);
+  if (method === "PATCH" && characterWantsExpressions) {
+    const edge = await onCharacterWantsExpressionsPatch({ request, env, bookId: characterWantsExpressions[1] });
     if (edge) return edge;
     return onRequest({ request, env });
   }

@@ -21,6 +21,16 @@ import { getChapterPack } from "./book-checkpoint.js";
 // "Open questions" note — expand once cost/quality is confirmed acceptable.
 export const DEFAULT_EXPRESSIVE_BUCKETS = ["happy", "angry", "sad", "surprised"];
 
+/** Expression sprites are opt-out by importance ("primary" only, cost
+ * control) — `wants_expressions: true` (character-merge.js's
+ * setCharacterWantsExpressionsIn*) opts a secondary/background character in
+ * anyway. Single source of truth for this check — used by the main imaging
+ * loop below and by book-actions.js's regen/backfill endpoints, so the two
+ * paths can't quietly drift apart on who's eligible. */
+export function wantsExpressionSprites(character) {
+  return character?.importance === "primary" || Boolean(character?.wants_expressions);
+}
+
 function characterGenDescription(c) {
   const parts = [c.description, c.name, c.id].filter(Boolean);
   let desc = String(parts[0] || c.id).trim();
@@ -387,7 +397,7 @@ export async function runEdgeImaging({
       // `stored.promoted` (not staged for compare) — see
       // onMediaCommitPost/expression-sprites-consumer.js for the backfill
       // path that covers a character confirmed later out of compare mode.
-      if (generateExpressiveSprites && c.importance === "primary" && stored.promoted) {
+      if (generateExpressiveSprites && wantsExpressionSprites(c) && stored.promoted) {
         const { sprites: exprSprites, ok: exprOk, fail: exprFail } = await generateExpressionSpritesForCharacter({
           env, book_id, art_style, character: { ...c, id: c.id }, baseImageBytes: img.bytes,
           preferProvider: imagePin, expressiveBuckets, bust, dbg,

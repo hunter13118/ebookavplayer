@@ -8,8 +8,10 @@ import assert from "node:assert";
 import {
   mergeCharacterInAnalysis, mergeCharacterInPlayback, renameCharacterInAnalysis, renameCharacterInPlayback,
   setCharacterTemperamentInAnalysis, setCharacterTemperamentInPlayback,
+  setCharacterWantsExpressionsInAnalysis, setCharacterWantsExpressionsInPlayback,
   applyCharacterAliases,
 } from "../worker/_shared/character-merge.js";
+import { wantsExpressionSprites } from "../worker/_shared/edge-imaging.js";
 
 // --- mergeCharacterInAnalysis: characters + scene refs remapped, target wins on identity ---
 {
@@ -144,6 +146,32 @@ import {
   const out = applyCharacterAliases(chapterAnalysis, { "unnamed-male-protagonist": "eizo", "the-swordsman": "eizo" });
   assert.equal(out.characters.length, 1);
   assert.equal(out.characters[0].id, "eizo");
+}
+
+// --- setCharacterWantsExpressionsIn*: opts a secondary character in, wantsExpressionSprites reflects it ---
+{
+  const analysis = { characters: [{ id: "eizo", name: "Eizo", importance: "secondary" }] };
+  const playback = { characters: { eizo: { name: "Eizo", importance: "secondary" } } };
+
+  assert.equal(wantsExpressionSprites(analysis.characters[0]), false);
+
+  const nextAnalysis = setCharacterWantsExpressionsInAnalysis(analysis, "eizo", true);
+  const nextPlayback = setCharacterWantsExpressionsInPlayback(playback, "eizo", true);
+  assert.equal(nextAnalysis.characters[0].wants_expressions, true);
+  assert.equal(nextPlayback.characters.eizo.wants_expressions, true);
+  assert.equal(wantsExpressionSprites(nextAnalysis.characters[0]), true);
+
+  // Unknown id -> passthrough unchanged, no crash.
+  const unchanged = setCharacterWantsExpressionsInAnalysis(analysis, "nobody", true);
+  assert.equal(unchanged, analysis);
+}
+
+// --- wantsExpressionSprites: primary is eligible regardless of the opt-in flag ---
+{
+  assert.equal(wantsExpressionSprites({ importance: "primary" }), true);
+  assert.equal(wantsExpressionSprites({ importance: "secondary" }), false);
+  assert.equal(wantsExpressionSprites({ importance: "secondary", wants_expressions: true }), true);
+  assert.equal(wantsExpressionSprites(null), false);
 }
 
 console.log("character-merge: all assertions passed");

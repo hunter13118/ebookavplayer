@@ -5,7 +5,7 @@ import { multiplexJobEventStream } from "../../_shared/job-sse-stream.js";
 import { ensureImagingLockFresh, markJobStale } from "../../_shared/imaging-lock.js";
 import { loadStoredEpubBytes } from "../../_shared/book-extract-pipeline.js";
 import { getCheckpoint } from "../../_shared/book-checkpoint.js";
-import { DEFAULT_EXPRESSIVE_BUCKETS } from "../../_shared/edge-imaging.js";
+import { DEFAULT_EXPRESSIVE_BUCKETS, wantsExpressionSprites } from "../../_shared/edge-imaging.js";
 
 function edgeJobsEnabled(env) {
   return Boolean(env.VAE_PACKS && env.VAE_JOBS && env.VAE_JOBS_QUEUE);
@@ -107,12 +107,15 @@ export async function onExpressionRepassPost({ request, env, bookId }) {
 }
 
 /**
- * POST /books/:id/characters/:characterId/expressions/regen — regenerate ONE
- * alt-expression bucket for a primary character (e.g. redo a bad "angry"
- * result) without touching the base portrait or the other buckets. There's
- * no bulk "redo all expressions" endpoint by design — same 4-bucket
- * cost-gate as the automatic path (see edge-imaging.js's
- * generateExpressionSpritesForCharacter / DEFAULT_EXPRESSIVE_BUCKETS).
+ * POST /books/:id/characters/:characterId/expressions/regen — regenerate
+ * expression art for a character eligible per `wantsExpressionSprites`
+ * (primary importance, or opted in via `wants_expressions` — see
+ * onCharacterWantsExpressionsPatch in characters.js). Pass `{ bucket:
+ * "angry" }` to redo just that one variant without touching the base
+ * portrait or the other buckets, or `{ bucket: "all" }` (or omit `bucket`
+ * entirely) to regenerate every bucket in DEFAULT_EXPRESSIVE_BUCKETS —
+ * same cost-gate either way (edge-imaging.js's
+ * generateExpressionSpritesForCharacter).
  */
 export async function onExpressionSpriteRegenPost({ request, env, bookId, characterId }) {
   if (!edgeJobsEnabled(env)) return null;
@@ -121,18 +124,23 @@ export async function onExpressionSpriteRegenPost({ request, env, bookId, charac
   }
 
   let body = {};
-  try { body = await request.json(); } catch { /* no body — fine, validated below */ }
-  const bucket = body.bucket;
-  if (!bucket || !DEFAULT_EXPRESSIVE_BUCKETS.includes(bucket)) {
-    return json({ error: `bucket required — one of ${DEFAULT_EXPRESSIVE_BUCKETS.join(", ")}` }, 400);
+  try { body = await request.json(); } catch { /* no body — fine, "all" is the default */ }
+  const bucketReq = body.bucket || "all";
+  const buckets = bucketReq === "all" ? DEFAULT_EXPRESSIVE_BUCKETS : [bucketReq];
+  const unknown = buckets.filter((b) => !DEFAULT_EXPRESSIVE_BUCKETS.includes(b));
+  if (unknown.length) {
+    return json({ error: `unknown bucket(s) ${unknown.join(", ")} — one of "all", ${DEFAULT_EXPRESSIVE_BUCKETS.join(", ")}` }, 400);
   }
 
   const pbObj = await env.VAE_PACKS.get(`books/${bookId}.json`);
   const playback = pbObj ? await pbObj.json() : null;
   const character = playback?.characters?.[characterId];
   if (!character) return json({ error: "no such character" }, 404);
-  if (character.importance !== "primary") {
-    return json({ error: "expression art is only generated for primary characters" }, 400);
+  if (!wantsExpressionSprites(character)) {
+    return json({
+      error: "this character isn't opted in to expression art — mark it \"wants expressions\" first"
+        + " (or it's primary already and something else is blocking generation)",
+    }, 400);
   }
   if (!character.sprite) {
     return json({ error: "character has no base portrait yet — generate/confirm one first" }, 400);
@@ -149,7 +157,7 @@ export async function onExpressionSpriteRegenPost({ request, env, bookId, charac
     kind: "expression-sprites",
     status: "queued",
     progress: 0,
-    detail: `queued · ${characterId}:${bucket}`,
+    detail: `queued · ${characterId}:${bucketReq}`,
     stage: "queued",
   };
   await putJob(env, "ingest", jobId, job);
@@ -160,11 +168,11 @@ export async function onExpressionSpriteRegenPost({ request, env, bookId, charac
     book_id: bookId,
     character_id: characterId,
     art_style: style,
-    buckets: [bucket],
+    buckets,
   });
 
   return json({
-    job_id: jobId, book_id: bookId, character_id: characterId, bucket, status: "queued",
+    job_id: jobId, book_id: bookId, character_id: characterId, bucket: bucketReq, status: "queued",
   });
 }
 
@@ -888,7 +896,7 @@ export async function onMediaCommitPost({ request, env, bookId }) {
     const character = playback?.characters?.[key];
     const hasExpressions = character?.expressionSprites
       && Object.keys(character.expressionSprites).length > 0;
-    if (character?.importance === "primary" && !hasExpressions) {
+    if (wantsExpressionSprites(character) && !hasExpressions) {
       expressionSpritesJobId = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
       const job = {
         job_id: expressionSpritesJobId,

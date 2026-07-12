@@ -25,6 +25,7 @@ export function listArtMediaItems(book) {
         label: c.name || id,
         preview: c.sprite || null,
         importance: c.importance || "secondary",
+        wantsExpressions: Boolean(c.wants_expressions),
         // Chapter the character was first introduced in (stamped by
         // compileChapterPlayback). Legacy books compiled before that existed
         // won't have this — they all fall back to chapter 0, grouped together.

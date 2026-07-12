@@ -4,6 +4,7 @@ import {
   setCharacterTemperamentInAnalysis, setCharacterTemperamentInPlayback,
   setCharacterDescriptionInAnalysis, setCharacterDescriptionInPlayback,
   setCharacterIsHumanoidInAnalysis, setCharacterIsHumanoidInPlayback,
+  setCharacterWantsExpressionsInAnalysis, setCharacterWantsExpressionsInPlayback,
   addCharacterReferenceImageInAnalysis, addCharacterReferenceImageInPlayback,
   removeCharacterReferenceImageInAnalysis, removeCharacterReferenceImageInPlayback,
 } from "../../_shared/character-merge.js";
@@ -144,6 +145,32 @@ export async function onCharacterIsHumanoidPatch({ request, env, bookId }) {
 
   const analysis = pair.analysis ? setCharacterIsHumanoidInAnalysis(pair.analysis, id, isHumanoid) : null;
   const playback = pair.playback ? setCharacterIsHumanoidInPlayback(pair.playback, id, isHumanoid) : null;
+
+  await savePair(env, bookId, { analysis, playback });
+
+  return json({ ok: true, characters: playback?.characters || null });
+}
+
+/** PATCH /books/:id/characters/wants-expressions — opt a secondary/
+ * background character IN to expression-sprite generation (default gate is
+ * importance === "primary" only, cost control). Checked alongside that
+ * importance check everywhere expression-sprite eligibility is gated, never
+ * in place of it — see setCharacterWantsExpressionsInAnalysis/InPlayback. */
+export async function onCharacterWantsExpressionsPatch({ request, env, bookId }) {
+  if (!env.VAE_PACKS) return null;
+
+  let body = {};
+  try { body = await request.json(); } catch { /* empty */ }
+  const { id, wants_expressions: wantsExpressions } = body;
+  if (!id || typeof wantsExpressions !== "boolean") {
+    return json({ error: "expected { id, wants_expressions: boolean }" }, 400);
+  }
+
+  const pair = await loadPair(env, bookId);
+  if (!pair) return json({ error: "no such book" }, 404);
+
+  const analysis = pair.analysis ? setCharacterWantsExpressionsInAnalysis(pair.analysis, id, wantsExpressions) : null;
+  const playback = pair.playback ? setCharacterWantsExpressionsInPlayback(pair.playback, id, wantsExpressions) : null;
 
   await savePair(env, bookId, { analysis, playback });
 

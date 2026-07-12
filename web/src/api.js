@@ -595,6 +595,17 @@ export async function setCharacterIsHumanoid(bookId, { id, is_humanoid }) {
   return res.json();
 }
 
+export async function setCharacterWantsExpressions(bookId, { id, wants_expressions }) {
+  const res = await fetch(apiUrl(`/books/${encodeURIComponent(bookId)}/characters/wants-expressions`), {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id, wants_expressions }),
+    signal: AbortSignal.timeout(12000),
+  });
+  if (!res.ok) throw new Error(`character wants-expressions: HTTP ${res.status}`);
+  return res.json();
+}
+
 export async function uploadCharacterReferenceImage(bookId, charId, file) {
   const form = new FormData();
   form.append("file", file);

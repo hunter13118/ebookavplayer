@@ -138,6 +138,32 @@ export function setCharacterIsHumanoidInPlayback(playback, id, isHumanoid) {
   };
 }
 
+/** Expression sprites are opt-out by importance ("primary" only, cost
+ * control — see edge-imaging.js/docs/EXPRESSION_SENSITIVITY_PLAN.md 3d).
+ * `wants_expressions: true` opts a secondary/background character in
+ * anyway — same shape/pattern as is_humanoid above. Checked alongside
+ * `importance === "primary"` everywhere expression-sprite eligibility is
+ * gated (edge-imaging.js, onExpressionSpriteRegenPost, canRegenExpression
+ * on the web side), never in place of it. */
+export function setCharacterWantsExpressionsInAnalysis(analysis, id, wantsExpressions) {
+  if (!(analysis.characters || []).some((c) => c.id === id)) return analysis;
+  return {
+    ...analysis,
+    characters: analysis.characters.map((c) => (c.id === id ? { ...c, wants_expressions: wantsExpressions } : c)),
+  };
+}
+
+export function setCharacterWantsExpressionsInPlayback(playback, id, wantsExpressions) {
+  if (!playback.characters?.[id]) return playback;
+  return {
+    ...playback,
+    characters: {
+      ...playback.characters,
+      [id]: { ...playback.characters[id], wants_expressions: wantsExpressions },
+    },
+  };
+}
+
 const MAX_REFERENCE_IMAGES = 8;
 
 /** User-uploaded reference pictures of their own choosing, shown in the
