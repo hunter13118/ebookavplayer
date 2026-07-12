@@ -78,6 +78,35 @@ behavior (staging-by-default is intentional, for review):
   `CharacterRosterSheet.jsx` shows all 4 expression thumbnails instead of
   "No expression art yet."
 
+**Update (2026-07-12, later still) — regenerate ONE expression bucket:**
+there was previously no way to redo a single bad expression variant without
+regenerating the whole character (which would also silently skip expression
+sprites again unless staging was bypassed — see above). Added:
+- `POST /books/:id/characters/:characterId/expressions/regen` (body:
+  `{ bucket }`, one of `DEFAULT_EXPRESSIVE_BUCKETS`) — `onExpressionSpriteRegenPost`
+  in `book-actions.js`. Validates the character exists, is `importance:
+  "primary"`, and already has a base portrait, then enqueues the same
+  `kind: "expression-sprites"` job with a `buckets: [bucket]` override.
+- `expression-sprites-consumer.js` now reads `message.body.buckets` and
+  passes it through to `generateExpressionSpritesForCharacter`'s
+  `expressiveBuckets` param when present, instead of always regenerating
+  all 4 — so a single-bucket request only touches that one, leaving the
+  other 3 untouched.
+- UI: `CharacterRosterSheet.jsx` gained a second collapsible per primary
+  character, "▸ Regenerate expression" — separate from the read-only
+  "▸ Expressions" browse section above it (only rendered when
+  `importance === "primary"` and a base sprite exists). Expanding it shows
+  a bucket `<select>` (mirrors `REGENERATABLE_BUCKETS`, which must stay in
+  sync with `DEFAULT_EXPRESSIVE_BUCKETS`) and a "Regenerate" button;
+  progress is tracked via `subscribeJobEvents`/`jobEventToStatus` (the same
+  generic job-SSE primitives every other regen action uses), and
+  `Player.jsx` passes `onRefresh={refreshBook}` so the new thumbnail shows
+  up automatically once the job reports `done` — no manual reload needed.
+- Verified end-to-end live: regenerated `angry` then `sad` for a character
+  that already had all 4 buckets — both got fresh cache-busted URLs while
+  `happy`/`surprised` kept their original timestamps untouched, confirming
+  the single-bucket scoping actually scopes.
+
 **Goal:** right now `expression` is real (schema → extraction → compile → sprite CSS →
 image prompts) but under-triggers, and even when it fires, over half of what the model
 actually says is thrown away downstream. Target vibe: **highly expressive, almost

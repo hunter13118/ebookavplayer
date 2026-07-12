@@ -232,6 +232,12 @@ body { margin: 0; background: var(--bg); color: var(--text);
   border: 1px solid var(--box-border); background: var(--bg); }
 .vae-expr-thumb-fallback { display: flex; align-items: center; justify-content: center; font-weight: 700; }
 .vae-expr-thumb-label { font-size: .68rem; color: var(--muted); }
+.vae-roster-regen { margin-top: 6px; border-top: 1px solid var(--box-border); padding-top: 6px; }
+.vae-roster-regen-body { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; }
+.vae-roster-regen-select { background: var(--bg); color: var(--text); border: 1px solid var(--box-border);
+  border-radius: 6px; padding: 4px 8px; font-size: .78rem; }
+.vae-roster-regen-status { flex-basis: 100%; margin: 2px 0 0; }
+.vae-roster-regen-error { color: var(--danger, #e05555); }
 
 /* ---------- Dialogue: smooth (modern FF-ish) ---------- */
 .vae-dialogue { position: absolute; left: 4%; right: 4%; bottom: 4%; z-index: 4;

@@ -1329,6 +1329,7 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
         book={bk}
         open={charactersOpen}
         onClose={() => setCharactersOpen(false)}
+        onRefresh={() => refreshBook().catch(() => {})}
       />
 
       <TtsErrorModal open={Boolean(ttsError)} onAcknowledge={acknowledgeTtsError} />

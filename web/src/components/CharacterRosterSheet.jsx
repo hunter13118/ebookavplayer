@@ -4,9 +4,15 @@
  * (the heavier rename/merge/description/reference-picture EDITING sheet,
  * reached from the settings menu) — this is a lighter browse view, opened
  * from its own toolbar button next to "Illustrations". */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CharacterThumb, ImageLightbox } from "./CharacterManager.jsx";
 import { mediaImageSrc } from "../media.js";
+import { regenExpressionSprite, subscribeJobEvents, jobEventToStatus } from "../api.js";
+
+// Mirrors worker/_shared/edge-imaging.js's DEFAULT_EXPRESSIVE_BUCKETS — the
+// only buckets ever generated (cost control: 4, not the full 16-bucket
+// vocabulary). Keep these two lists in sync if that ever changes.
+const REGENERATABLE_BUCKETS = ["happy", "angry", "sad", "surprised"];
 
 const BUCKET_LABELS = {
   happy: "Happy",
@@ -59,11 +65,109 @@ function ExpressionThumb({ url, label, onOpen }) {
   );
 }
 
-function CharacterRosterRow({ character }) {
+/** Collapsible "redo one expression" control — separate from the read-only
+ * "Expressions" browse section above it. Only meaningful for primary
+ * characters (the only ones expression art ever generates for) with a base
+ * portrait already committed. There's no "regenerate all" here by design —
+ * pick one bucket at a time, same cost-gate as everywhere else in this
+ * feature. */
+function ExpressionRegenSection({ bookId, character, onRegenerated }) {
+  const [expanded, setExpanded] = useState(false);
+  const [bucket, setBucket] = useState(REGENERATABLE_BUCKETS[0]);
+  const [state, setState] = useState({ phase: "idle", detail: "" }); // idle | queued | working | done | error
+  const unsubRef = useRef(null);
+
+  useEffect(() => () => unsubRef.current?.(), []);
+
+  async function startRegen() {
+    unsubRef.current?.();
+    setState({ phase: "queued", detail: "" });
+    try {
+      const { job_id } = await regenExpressionSprite(bookId, character.id, bucket);
+      unsubRef.current = subscribeJobEvents(job_id, {
+        onEvent: (ev) => {
+          const st = jobEventToStatus(ev);
+          if (st.status === "error") {
+            setState({ phase: "error", detail: st.detail || st.error || "Regen failed." });
+            unsubRef.current?.();
+            unsubRef.current = null;
+            return;
+          }
+          if (st.status === "done") {
+            setState({ phase: "done", detail: "" });
+            unsubRef.current?.();
+            unsubRef.current = null;
+            onRegenerated?.();
+            return;
+          }
+          setState({ phase: "working", detail: st.detail || "" });
+        },
+      });
+    } catch (e) {
+      setState({ phase: "error", detail: e.message || "Could not start regen." });
+    }
+  }
+
+  const busy = state.phase === "queued" || state.phase === "working";
+
+  return (
+    <div className="vae-roster-regen">
+      <button
+        type="button"
+        className="vae-roster-expr-toggle"
+        onClick={() => setExpanded((v) => !v)}
+        data-testid={`roster-regen-toggle-${character.id}`}
+        aria-expanded={expanded}
+      >
+        {expanded ? "▾" : "▸"} Regenerate expression
+      </button>
+      {expanded && (
+        <div className="vae-roster-regen-body" data-testid={`roster-regen-body-${character.id}`}>
+          <select
+            className="vae-roster-regen-select"
+            value={bucket}
+            onChange={(e) => setBucket(e.target.value)}
+            disabled={busy}
+            data-testid={`roster-regen-select-${character.id}`}
+          >
+            {REGENERATABLE_BUCKETS.map((b) => (
+              <option key={b} value={b}>{bucketLabel(b)}</option>
+            ))}
+          </select>
+          <button
+            type="button"
+            className="vae-btn-xs"
+            onClick={startRegen}
+            disabled={busy}
+            data-testid={`roster-regen-btn-${character.id}`}
+          >
+            {busy ? "Generating…" : "Regenerate"}
+          </button>
+          {state.phase === "working" && state.detail && (
+            <p className="vae-sheet-hint vae-roster-regen-status">{state.detail}</p>
+          )}
+          {state.phase === "done" && (
+            <p className="vae-sheet-hint vae-roster-regen-status">
+              {bucketLabel(bucket)} regenerated.
+            </p>
+          )}
+          {state.phase === "error" && (
+            <p className="vae-sheet-hint vae-roster-regen-status vae-roster-regen-error">
+              {state.detail}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CharacterRosterRow({ bookId, character, onRegenerated }) {
   const [expanded, setExpanded] = useState(false);
   const [preview, setPreview] = useState(null);
 
   const buckets = Object.entries(character.expressionSprites || {}).filter(([, url]) => url);
+  const canRegen = character.importance === "primary" && Boolean(character.sprite);
 
   return (
     <div className="vae-roster-row" data-testid={`roster-row-${character.id}`}>
@@ -102,6 +206,9 @@ function CharacterRosterRow({ character }) {
           </p>
         )
       )}
+      {canRegen && (
+        <ExpressionRegenSection bookId={bookId} character={character} onRegenerated={onRegenerated} />
+      )}
       {preview && (
         <ImageLightbox
           url={preview.url}
@@ -113,7 +220,7 @@ function CharacterRosterRow({ character }) {
   );
 }
 
-export default function CharacterRosterSheet({ book, open, onClose }) {
+export default function CharacterRosterSheet({ book, open, onClose, onRefresh }) {
   const characters = useMemo(() => {
     const map = book?.characters || {};
     return Object.entries(map)
@@ -145,7 +252,14 @@ export default function CharacterRosterSheet({ book, open, onClose }) {
           <p className="vae-sheet-hint">No characters extracted yet.</p>
         ) : (
           <div className="vae-roster-list">
-            {characters.map((c) => <CharacterRosterRow key={c.id} character={c} />)}
+            {characters.map((c) => (
+              <CharacterRosterRow
+                key={c.id}
+                bookId={book?.book_id}
+                character={c}
+                onRegenerated={onRefresh}
+              />
+            ))}
           </div>
         )}
       </div>

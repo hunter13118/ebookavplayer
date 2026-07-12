@@ -5,17 +5,22 @@ import { r2MediaKey } from "../_shared/freemium-image.js";
 import { normalizeExpressionBucket } from "../_shared/expression-bucket.js";
 
 /**
- * Backfill alt-expression portrait sprites for ONE primary character whose
- * base portrait was just confirmed out of compare/staging mode. See
- * onMediaCommitPost in book-actions.js: a staged (compare-mode) regen skips
- * runEdgeImaging's inline expression-sprite generation (it requires the
- * base sprite to be `promoted`, i.e. not staged), so this is the only later
- * point that knows the sprite is now live and can generate the missing
- * variants. Independent of the main imaging lock — this is a best-effort
+ * Generate (or regenerate) alt-expression portrait sprites for ONE primary
+ * character. Two callers:
+ * - onMediaCommitPost's backfill (no `buckets` in the message): a staged
+ *   (compare-mode) regen skips runEdgeImaging's inline expression-sprite
+ *   generation (it requires the base sprite to be `promoted`, i.e. not
+ *   staged), so this is the only later point that knows the sprite is now
+ *   live and can generate the missing variants — defaults to all of
+ *   DEFAULT_EXPRESSIVE_BUCKETS.
+ * - onExpressionSpriteRegenPost (`buckets: [oneBucket]`): an explicit
+ *   "redo just this one expression" request — there's no bulk "redo all"
+ *   equivalent by design, same cost-gate as the rest of this feature.
+ * Independent of the main imaging lock either way — this is a best-effort
  * enhancement, not required for the book to be playable.
  */
 export async function handleExpressionSpritesMessage(message, env) {
-  const { job_id, book_id, character_id, art_style } = message.body;
+  const { job_id, book_id, character_id, art_style, buckets } = message.body;
   const dbg = createPhaseLogger(env, "expression-sprites", job_id);
 
   try {
@@ -36,7 +41,7 @@ export async function handleExpressionSpritesMessage(message, env) {
     if (!baseObj) throw new Error(`no live sprite for ${character_id} — commit the base portrait first`);
     const baseImageBytes = new Uint8Array(await baseObj.arrayBuffer());
 
-    dbg.log(PHASE.P3_IMAGES, "expression sprite backfill start", { character_id, art_style });
+    dbg.log(PHASE.P3_IMAGES, "expression sprite generation start", { character_id, art_style, buckets });
 
     const { sprites, ok, fail } = await generateExpressionSpritesForCharacter({
       env,
@@ -45,6 +50,7 @@ export async function handleExpressionSpritesMessage(message, env) {
       character: { ...character, id: character_id },
       baseImageBytes,
       dbg,
+      ...(Array.isArray(buckets) && buckets.length ? { expressiveBuckets: buckets } : {}),
       onProgress: ({ id }) => {
         touchIngestJob(env, job_id, { detail: `Generating ${id}` }, { dbg }).catch(() => {});
       },

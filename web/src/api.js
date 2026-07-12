@@ -359,6 +359,29 @@ export async function runExpressionRepass(bookId, { preferProvider, connection }
   return res.json();
 }
 
+export async function regenExpressionSprite(bookId, characterId, bucket, { connection } = {}) {
+  const res = await fetch(
+    apiUrl(`/books/${encodeURIComponent(bookId)}/characters/${encodeURIComponent(characterId)}/expressions/regen`, connection),
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ bucket }),
+      signal: AbortSignal.timeout(8000),
+    },
+  );
+  if (!res.ok) {
+    let detail = "";
+    try {
+      const err = await res.json();
+      detail = err?.error || "";
+    } catch { /* empty */ }
+    throw new Error(detail || `expressions/regen: HTTP ${res.status}`);
+  }
+  const data = await res.json();
+  if (!data?.job_id) throw new Error("expressions/regen: no job id in response");
+  return data;
+}
+
 export async function replaceMedia(bookId, opts = {}) {
   const { connection, ...body } = opts;
   async function post() {

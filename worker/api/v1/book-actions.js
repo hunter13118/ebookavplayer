@@ -5,6 +5,7 @@ import { multiplexJobEventStream } from "../../_shared/job-sse-stream.js";
 import { ensureImagingLockFresh, markJobStale } from "../../_shared/imaging-lock.js";
 import { loadStoredEpubBytes } from "../../_shared/book-extract-pipeline.js";
 import { getCheckpoint } from "../../_shared/book-checkpoint.js";
+import { DEFAULT_EXPRESSIVE_BUCKETS } from "../../_shared/edge-imaging.js";
 
 function edgeJobsEnabled(env) {
   return Boolean(env.VAE_PACKS && env.VAE_JOBS && env.VAE_JOBS_QUEUE);
@@ -103,6 +104,68 @@ export async function onExpressionRepassPost({ request, env, bookId }) {
   });
 
   return json({ job_id: jobId, book_id: bookId, status: "queued" });
+}
+
+/**
+ * POST /books/:id/characters/:characterId/expressions/regen — regenerate ONE
+ * alt-expression bucket for a primary character (e.g. redo a bad "angry"
+ * result) without touching the base portrait or the other buckets. There's
+ * no bulk "redo all expressions" endpoint by design — same 4-bucket
+ * cost-gate as the automatic path (see edge-imaging.js's
+ * generateExpressionSpritesForCharacter / DEFAULT_EXPRESSIVE_BUCKETS).
+ */
+export async function onExpressionSpriteRegenPost({ request, env, bookId, characterId }) {
+  if (!edgeJobsEnabled(env)) return null;
+  if (!(await bookExists(env, bookId))) {
+    return json({ error: "no such book" }, 404);
+  }
+
+  let body = {};
+  try { body = await request.json(); } catch { /* no body — fine, validated below */ }
+  const bucket = body.bucket;
+  if (!bucket || !DEFAULT_EXPRESSIVE_BUCKETS.includes(bucket)) {
+    return json({ error: `bucket required — one of ${DEFAULT_EXPRESSIVE_BUCKETS.join(", ")}` }, 400);
+  }
+
+  const pbObj = await env.VAE_PACKS.get(`books/${bookId}.json`);
+  const playback = pbObj ? await pbObj.json() : null;
+  const character = playback?.characters?.[characterId];
+  if (!character) return json({ error: "no such character" }, 404);
+  if (character.importance !== "primary") {
+    return json({ error: "expression art is only generated for primary characters" }, 400);
+  }
+  if (!character.sprite) {
+    return json({ error: "character has no base portrait yet — generate/confirm one first" }, 400);
+  }
+
+  const metaRaw = await env.VAE_JOBS.get(`book:${bookId}`);
+  const meta = metaRaw ? JSON.parse(metaRaw) : {};
+  const style = meta.art_style || playback?.active_style || "anime";
+
+  const jobId = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
+  const job = {
+    job_id: jobId,
+    book_id: bookId,
+    kind: "expression-sprites",
+    status: "queued",
+    progress: 0,
+    detail: `queued · ${characterId}:${bucket}`,
+    stage: "queued",
+  };
+  await putJob(env, "ingest", jobId, job);
+  await emitJobEvent(env, jobId, jobToEvent(job, "queued"));
+  await enqueueJob(env, {
+    kind: "expression-sprites",
+    job_id: jobId,
+    book_id: bookId,
+    character_id: characterId,
+    art_style: style,
+    buckets: [bucket],
+  });
+
+  return json({
+    job_id: jobId, book_id: bookId, character_id: characterId, bucket, status: "queued",
+  });
 }
 
 /**

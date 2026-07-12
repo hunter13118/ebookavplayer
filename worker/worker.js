@@ -11,6 +11,7 @@ import { onIngestPost } from "./api/v1/ingest.js";
 import {
   onReExtractPost,
   onExpressionRepassPost,
+  onExpressionSpriteRegenPost,
   onIllustrationCharacterMatchPost,
   onContinueExtractPost,
   onGenerateMediaPost,
@@ -101,6 +102,15 @@ export async function handleEbookavplayerApi(request, env, ctx) {
   const expressionRepass = path.match(/^\/books\/([^/]+)\/expression-repass$/);
   if (method === "POST" && expressionRepass) {
     const edge = await onExpressionRepassPost({ request, env, bookId: expressionRepass[1] });
+    if (edge) return edge;
+    return onRequest({ request, env });
+  }
+
+  const expressionSpriteRegen = path.match(/^\/books\/([^/]+)\/characters\/([^/]+)\/expressions\/regen$/);
+  if (method === "POST" && expressionSpriteRegen) {
+    const edge = await onExpressionSpriteRegenPost({
+      request, env, bookId: expressionSpriteRegen[1], characterId: expressionSpriteRegen[2],
+    });
     if (edge) return edge;
     return onRequest({ request, env });
   }
