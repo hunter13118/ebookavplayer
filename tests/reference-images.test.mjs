@@ -122,4 +122,54 @@ import { momentDescription } from "../worker/_shared/moment-inserts.js";
     "reference_images wins over illustration_ref — pushed first in priority order");
 }
 
+// Regression: the character's current LIVE SPRITE must never displace an
+// already-resolved explicit reference_images crop. tryLocalSd (freemium-image.js)
+// only ever sends referenceImages[0] as IP-Adapter conditioning, so whichever
+// source lands at bytes[0] is the ONLY one that matters. The live-sprite
+// fallback used to `unshift` unconditionally, so a character with a clean,
+// user-assigned reference crop still got conditioned on their own broken
+// "character sheet" grid sprite (confirmed live: "Rike"), because the grid
+// sprite silently displaced the real reference at bytes[0].
+{
+  const refBytes = new Uint8Array([9, 9, 9, 9]).buffer;
+  const liveSpriteBytes = new Uint8Array([1, 1, 1, 1]).buffer; // stands in for a broken grid
+  const store = {
+    "media/book_a/character-refs/rike/123.png": refBytes,
+    "media/book_a/anime/char_rike.png": liveSpriteBytes,
+  };
+  const env = {
+    VAE_PACKS: {
+      get: async (key) => (store[key] ? { arrayBuffer: async () => store[key] } : null),
+      put: async () => {},
+    },
+  };
+  const analysis = {
+    characters: [{
+      id: "rike", name: "Rike",
+      reference_images: ["/media/book_a/character-refs/rike/123.png"],
+    }],
+  };
+  const { bytes } = await referenceTargetsForCharacter(env, "book_a", analysis, "rike", "anime");
+  assert.equal(bytes.length, 1, "live sprite must not be appended when an explicit reference already resolved");
+  assert.deepEqual(new Uint8Array(bytes[0]), new Uint8Array([9, 9, 9, 9]),
+    "explicit reference_images crop stays at bytes[0] — the live sprite must not displace it");
+}
+
+// ...but the live sprite fallback still fires when nothing else resolved —
+// that's the one case it's actually meant for.
+{
+  const liveSpriteBytes = new Uint8Array([1, 1, 1, 1]).buffer;
+  const store = { "media/book_a/anime/char_rike.png": liveSpriteBytes };
+  const env = {
+    VAE_PACKS: {
+      get: async (key) => (store[key] ? { arrayBuffer: async () => store[key] } : null),
+      put: async () => {},
+    },
+  };
+  const analysis = { characters: [{ id: "rike", name: "Rike" }] }; // no reference_images
+  const { bytes } = await referenceTargetsForCharacter(env, "book_a", analysis, "rike", "anime");
+  assert.equal(bytes.length, 1, "live sprite still used as a fallback when nothing else resolved");
+  assert.deepEqual(new Uint8Array(bytes[0]), new Uint8Array([1, 1, 1, 1]));
+}
+
 console.log("reference-images.test.mjs: ok");

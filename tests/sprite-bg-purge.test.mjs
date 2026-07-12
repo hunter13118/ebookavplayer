@@ -10,6 +10,7 @@ import {
   maybePurgeSpriteBackground,
   purgeSpriteBackground,
 } from "../worker/_shared/sprite-bg-purge.js";
+import { ensureCharacterSpriteTransparency } from "../worker/_shared/freemium-image.js";
 
 function rgbaImage(w, h, fillRgb, alpha = 255) {
   const data = new Uint8Array(w * h * 4);
@@ -125,5 +126,44 @@ function readRgba(bytes) {
 }
 
 assert.equal(imageNeedsBackgroundPurge(jpegBytes(rgbaImage(8, 8, [255, 255, 255])), "image/jpeg"), true);
+
+// ensureCharacterSpriteTransparency — regression for a no-op "forced" retry.
+// It used to retry purgeSpriteBackground with the EXACT SAME options as the
+// first pass, so a border with no single dominant color (edge_dominance
+// below minEdgeDominance — e.g. a noisy/textured backdrop, confirmed live on
+// local_sd/animagine-xl) failed identically on both passes and silently gave
+// up, leaving the sprite un-purged. Build a border that jitters around gray
+// 128 (spread across several quantize(16) buckets, so no bucket reaches the
+// strict 0.35 dominance the first pass requires) but stays within the
+// loosened retry's wider tolerance (40) — the fix's retry should still
+// succeed where the identical-options retry would not have.
+{
+  const w = 40, h = 40;
+  const img = rgbaImage(w, h, [128, 128, 128]);
+  for (let x = 0; x < w; x++) {
+    for (let y = 0; y < h; y++) {
+      const onBorder = x < 2 || y < 2 || x >= w - 2 || y >= h - 2;
+      if (!onBorder) continue;
+      const jitter = ((x * 7 + y * 13) % 61) - 30; // spread ±30 around 128
+      const v = Math.max(0, Math.min(255, 128 + jitter));
+      putRgb(img, x, y, [v, v, v]);
+    }
+  }
+  for (let x = 15; x < 25; x++) {
+    for (let y = 15; y < 25; y++) putRgb(img, x, y, [220, 30, 30]); // clearly distinct "subject"
+  }
+
+  const { dominance } = detectEdgeBackgroundColor(img.data, img.width, img.height, { border: 2, quantizeStep: 16 });
+  assert.ok(dominance < 0.35, `test setup: expected noisy border below strict dominance, got ${dominance}`);
+
+  const result = { bytes: pngBytes(img), contentType: "image/png", provider: "local_sd" };
+  const out = ensureCharacterSpriteTransparency(result, {});
+  assert.equal(out.background_purged, true, "loosened retry succeeds where an identical-options retry would not");
+  const outRgba = readRgba(out.bytes);
+  // border pixel now transparent
+  assert.equal(outRgba.data[(1 * outRgba.width + 1) * 4 + 3], 0);
+  // subject block still opaque
+  assert.equal(outRgba.data[(20 * outRgba.width + 20) * 4 + 3], 255);
+}
 
 console.log("sprite-bg-purge.test.mjs: all assertions passed");

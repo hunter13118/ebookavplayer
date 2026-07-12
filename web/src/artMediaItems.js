@@ -140,8 +140,10 @@ export function resolveReplaceArtStyle(book) {
 }
 
 /** Map UI selection keys → generate-media request body. `styleOverride` (from
- * the art-style picker) takes precedence over the book's stored style. */
-export function selectionToGenerateBody(selectedKeys, items, book, { styleOverride } = {}) {
+ * the art-style picker) takes precedence over the book's stored style.
+ * `forceReference` is the manual override for local_sd's broken-grid
+ * reference-rejection guard — see ReplaceArtSheet.jsx's checkbox. */
+export function selectionToGenerateBody(selectedKeys, items, book, { styleOverride, forceReference } = {}) {
   const keys = new Set(selectedKeys);
   const picked = items.filter((it) => keys.has(it.key));
   if (!picked.length) throw new Error("Select at least one image to replace.");
@@ -182,6 +184,7 @@ export function selectionToGenerateBody(selectedKeys, items, book, { styleOverri
     ignore_pins: true,
     compare: true,
     diversify: true,
+    force_reference: Boolean(forceReference && characterIds.length),
     ...base,
   };
 }

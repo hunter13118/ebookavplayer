@@ -4,8 +4,79 @@
 (performance-mode dial, tension state machine, director's log overlay,
 interrupted-dialogue continuity) are all landed (see file references inline
 below). The cost-gated items (1d/1e's LLM re-pass, 3d's alt-sprite
-generation) ship off-by-default and opt-in, exactly as designed — nothing
-here changes recurring cost unless explicitly enabled.
+generation) ship opt-in, exactly as designed.
+
+**Update (2026-07-12):** 3d's alt-sprite generation (`generateExpressiveSprites`)
+flipped from off-by-default to **on-by-default** at upload
+(`web/src/components/Uploader.jsx`'s checkbox) — still gated to
+primary-importance characters only (real cost control: 4 extra ~90-150s
+local generations per primary character), but no longer requires the user to
+know to check a box for it to show up at all. Also fixed a real bug: regen
+(`worker/queue/imaging-regen-consumer.js`'s `handleImagingRegenMessage`)
+never passed `generateExpressiveSprites` to `runEdgeImaging` at all, so it
+silently defaulted to `false` on every regen regardless of the original
+upload setting — expression sprites could never be (re)generated outside the
+initial ingest. Now defaults to `true` on regen too, overridable via
+`opts.generate_expressive_sprites: false`.
+
+Also added a way to actually SEE the generated expression sprites, which
+nothing in the UI rendered before: a new "Characters" toolbar button
+(`web/src/components/Player.jsx`, next to "Illustrations") opens
+`CharacterRosterSheet.jsx` — a read-focused browse view (distinct from
+`EpubPlatesSheet`/`CharacterManager.jsx`'s heavier rename/merge/description
+editing sheet, still reached from the settings menu). Lists every character
+with a collapsible "Expressions" section reading `character.expressionSprites`
+(`{bucket: url}`, populated by the fix above), thumbnail previews, and
+click-to-enlarge via the same `ImageLightbox` already used for character
+reference-picture previews.
+
+**Update (2026-07-12, later same day) — the regen-default fix above still
+left every primary character with no expression art, root-caused live:**
+`runEdgeImaging`'s expression-sprite block requires `stored.promoted`
+(`edge-imaging.js`), but `imaging-regen-consumer.js` defaults `compare` to
+**`true`** (`opts.compare !== false`) — every regen through the UI's normal
+review flow stages the base portrait for confirm rather than promoting it
+immediately, so `stored.promoted` is always `false` at generation time and
+the expression-sprite block is silently skipped, regardless of
+`generateExpressiveSprites`. Confirming the staged portrait afterward
+(`onMediaCommitPost`) doesn't help either — the check only ever ran once,
+inline, during the original generation call. Net effect: confirmed live
+against a real book, NONE of its primary characters (including ones imaged
+after 3d shipped) had any `expressionSprites` — the default staged/compare
+workflow made this a near-100%-miss path, not an edge case.
+
+Fixed with a backfill trigger rather than changing the default imaging
+behavior (staging-by-default is intentional, for review):
+- `generateExpressionSpritesForCharacter()` extracted out of
+  `edge-imaging.js`'s inline loop into a standalone exported function (same
+  logic, now shared) — takes a character + base-image bytes and returns the
+  generated `{bucket: url}` map.
+- `onMediaCommitPost` (`worker/api/v1/book-actions.js`) — the "keep new"
+  confirm action — now checks, right after a `kind: "characters"` commit:
+  is this character `importance === "primary"` and still missing
+  `expressionSprites`? If so it enqueues a new `kind: "expression-sprites"`
+  job and returns its id as `expression_sprites_job_id` in the response.
+- New consumer `worker/queue/expression-sprites-consumer.js` loads the
+  now-live committed portrait from R2 as the reference, generates the 4
+  buckets via the shared function, and patches both
+  `character.expressionSprites` and any already-compiled scene lines'
+  `sprite_url` for that character.
+- **Model warmth:** the shared function pins `preferProvider` to
+  `local_sd` by default (rather than re-running the full
+  Gemini→freemium→local_sd cascade per bucket) — `orderTiersForPreference`
+  (`freemium-image.js`) then tries `local_sd` first for all 4 calls, no
+  retries/timeouts against unrelated providers in between. Separately
+  confirmed the Python image server itself never needed a "keep warm" fix:
+  `_PIPES` (`scripts/local-image-server/server.py`) caches the loaded
+  pipeline for the life of the process with no idle-unload logic, and
+  `/health`'s `ready` stayed `true` throughout a full 4-bucket generation.
+- **Caveat:** this only fires on the staged/compare path (the default). A
+  regen explicitly run with `compare: false` still generates expression
+  sprites inline as before — untouched.
+- Verified end-to-end live: staged regen of a primary character → commit →
+  `expression_sprites_job_id` returned → job reaches `status: "done"` →
+  `CharacterRosterSheet.jsx` shows all 4 expression thumbnails instead of
+  "No expression art yet."
 
 **Goal:** right now `expression` is real (schema → extraction → compile → sprite CSS →
 image prompts) but under-triggers, and even when it fires, over half of what the model
@@ -384,6 +455,18 @@ Plan:
 4. Fallback stays exactly as today (CSS filter treatment from 3a) for
    secondary/background characters or when no alt-sprite exists for that bucket — so
    this degrades gracefully rather than being all-or-nothing.
+
+**Status:** implemented, plus a same-day backfill fix for the staged/compare
+regen path — see the "Update (2026-07-12, later same day)" note above. Net
+behavior today: triggering a regen on primary characters does NOT
+auto-generate their expression art hands-off — the default compare/staging
+workflow still requires confirming ("Keep new") each character's base
+portrait in the UI first, same as always. What changed is that confirming
+now transparently kicks off expression-sprite generation in the background
+for any primary character that doesn't have it yet, instead of that
+character being permanently stuck with none. A regen explicitly passing
+`compare: false` skips staging entirely and still generates expression art
+inline, no confirm step needed.
 
 ---
 

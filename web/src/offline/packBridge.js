@@ -1,5 +1,5 @@
 /** Active offline pack context + URL/audio resolution for playback. */
-import { getInstalledPack, getInstalledPackForBook, getBlob } from "./packStore.js";
+import { getInstalledPack, getInstalledPackForBook, getBlob, putBlob } from "./packStore.js";
 import { TIER_AUDIOBOOK } from "./packFormat.js";
 
 let activePackId = null;
@@ -30,6 +30,21 @@ export function clearMediaUrlCache(packId = activePackId) {
   }
   for (const k of [...serverUrlCache.keys()]) {
     if (!packId || k.startsWith(`${packId}::`)) serverUrlCache.delete(k);
+  }
+}
+
+/** Drop just the in-memory blob-url cache entries for one asset, rather than
+ * the whole pack's (see clearMediaUrlCache) — used by patchOfflineMediaAsset
+ * so patching one regenerated sprite doesn't force every other cached
+ * image/audio blob url in the pack to be recreated on next render too. */
+function clearMediaUrlCacheForPath(packId, base, packPath) {
+  const serverKey = `${packId}::${base}`;
+  serverUrlCache.delete(serverKey);
+  const blobKey = `${packId}::${packPath}`;
+  const url = mediaUrlCache.get(blobKey);
+  if (url) {
+    URL.revokeObjectURL(url);
+    mediaUrlCache.delete(blobKey);
   }
 }
 
@@ -71,6 +86,41 @@ export async function resolveOfflineMediaUrl(serverUrl) {
   mediaUrlCache.set(cacheKey, url);
   serverUrlCache.set(`${activePackId}::${base}`, url);
   return url;
+}
+
+/**
+ * Refresh ONE offline-cached asset in place after a regen commits/reverts,
+ * instead of requiring a full pack re-download. A regen only ever changes
+ * bytes at an existing media path (character sprite, background, cover) —
+ * the pack's media_index already maps that server path to a storage key
+ * from the original install, so there's no manifest work to do, just:
+ * fetch the new bytes, overwrite the stored blob at the SAME storage key,
+ * and drop the in-memory blob-url cache entry for that one path so the
+ * next render re-derives a fresh blob url instead of reusing the stale one.
+ *
+ * Root cause this fixes: media.js/packBridge strip the `?v=` cache-bust
+ * query before resolving against the offline pack (media_index is keyed by
+ * bare path — see server/pack/build.py's collect_media_urls), so an
+ * installed book kept serving the pre-regen blob forever; the live `?v=`
+ * URL updating correctly server-side never had any effect on offline
+ * playback. No-ops (cheaply) for a book with no installed pack, or for a
+ * path that was never part of the pack to begin with — same as
+ * resolveOfflineMediaUrl's own miss behavior, since a full pack rebuild is
+ * still the right tool for "add a wholly new asset to an existing pack".
+ */
+export async function patchOfflineMediaAsset(bookId, serverUrl) {
+  if (!serverUrl) return false;
+  const pack = await getInstalledPackForBook(bookId);
+  if (!pack?.media_index) return false;
+  const base = serverUrl.split("?", 1)[0];
+  const packPath = pack.media_index[base];
+  if (!packPath) return false;
+  const res = await fetch(serverUrl);
+  if (!res.ok) return false;
+  const blob = await res.blob();
+  await putBlob(pack.pack_id, packPath, blob);
+  clearMediaUrlCacheForPath(pack.pack_id, base, packPath);
+  return true;
 }
 
 const audioByLine = new Map();

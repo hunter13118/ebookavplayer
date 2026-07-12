@@ -126,6 +126,18 @@ export async function onQueueBatch(batch, env) {
 
       }
 
+      if (kind === "expression-sprites") {
+
+        await emitStarted(env, message);
+
+        const { handleExpressionSpritesMessage } = await import("./expression-sprites-consumer.js");
+
+        await handleExpressionSpritesMessage(message, env);
+
+        continue;
+
+      }
+
       console.error("unknown queue kind", kind);
 
       message.retry();

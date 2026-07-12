@@ -58,8 +58,9 @@ export function applyImagingPinState(state, result, env) {
 const SUBJECT_FRAMING = {
   character: {
     pre:
-      "Portrait bust character sprite, head and shoulders, large readable face, "
-      + "centered composition, expressive eyes and hair, front-facing or 3/4 view,",
+      "Portrait bust character sprite of a single character, one person only, "
+      + "head and shoulders, large readable face, centered composition, "
+      + "expressive eyes and hair, front-facing or 3/4 view,",
     postTransparent:
       "character cutout on a fully transparent background (alpha channel), "
       + "no backdrop, no floor shadow, no scenery, even lighting, "
@@ -80,6 +81,31 @@ const STYLE_TEMPLATES = {
   pixel: "pixel art, 16-bit RPG sprite, crisp pixels",
   comic: "cartoon comic style, bold outlines",
   neutral: "clean digital illustration",
+};
+
+// Genre-appropriate aesthetic boost for character portraits — the plain
+// "anime cel-shaded" style template alone produces functional but flat-looking
+// designs, under-selling a book whose genre (e.g. harem/romance-adjacent)
+// expects idealized, attractive bishoujo/bishounen character art. Gated to
+// subjectType "character" only (never backgrounds/covers) and to the "anime"
+// style key only — realistic/pixel/comic keep their existing plain templates
+// since the tag phrasing here is tuned for anime character design
+// specifically. Gender-aware because "beautiful anime girl" boilerplate
+// pushed onto a male character reads as a mismatch, not a compliment.
+const CHARACTER_AESTHETIC_BOOST = {
+  female: "beautiful anime girl, gorgeous, alluring, large sparkling detailed eyes, "
+    + "silky glossy hair, flawless skin, graceful figure, charming confident expression,",
+  male: "handsome anime man, striking sharp features, confident charming expression, toned figure,",
+  default: "attractive, striking features, beautiful,",
+};
+
+// Short-tag equivalents for composeImagePrompt's `compact` mode — see that
+// mode's doc comment for why local_sd needs a much shorter prompt than cloud
+// providers do.
+const CHARACTER_AESTHETIC_BOOST_COMPACT = {
+  female: "beautiful, gorgeous, detailed eyes, glossy hair,",
+  male: "handsome, sharp features, confident,",
+  default: "attractive,",
 };
 
 function keys(env) {
@@ -126,14 +152,47 @@ export function artStyleKey(artStyle) {
   return STYLE_ALIASES[s] || "custom";
 }
 
-export function composeImagePrompt(description, { subjectType = "character", style = "neutral" } = {}) {
+export function composeImagePrompt(description, {
+  subjectType = "character", style = "neutral", gender = null, compact = false, isHumanoid = true,
+} = {}) {
   const subj = subjectType === "background" ? "background" : "character";
   const framing = SUBJECT_FRAMING[subj];
   const key = artStyleKey(style);
   const styleDesc = key === "custom" ? String(style || "").trim() : (STYLE_TEMPLATES[key] || STYLE_TEMPLATES.neutral);
   const desc = String(description || "").trim().replace(/\s+/g, " ");
+  // Gendered "beautiful anime girl"/"handsome anime man" tags only make
+  // sense for a human/humanoid design — forcing them onto an animal/creature
+  // character (e.g. "Lucy", "Krul") pushes human anatomy onto a non-human
+  // design instead of just making them look polished. isHumanoid defaults to
+  // true (the common case); set false via the character's is_humanoid field.
+  const boost = subj === "character" && key === "anime" && isHumanoid
+    ? `${CHARACTER_AESTHETIC_BOOST[gender] || CHARACTER_AESTHETIC_BOOST.default} `
+    : "";
+
+  // `compact`: local diffusion pipelines (local_sd/animagine-xl) run through
+  // diffusers' default CLIP text encoder, hard-capped at 77 tokens — and
+  // diffusers truncates by simply dropping whatever doesn't fit off the END,
+  // with zero prioritization. Confirmed live on "Rike": the full prose prompt
+  // below (~140 tokens once the aesthetic boost above was added) silently
+  // lost her OWN DESCRIPTION and the art-style tag to truncation — the
+  // model never saw either. This mode drops the verbose composition framing
+  // (server.py's own "solo, upper body," prefix already covers composition
+  // for animagine) and the transparent-background clause (not load-bearing —
+  // postProcess's purgeSpriteBackground/ensureCharacterSpriteTransparency
+  // forces a clean cutout afterward regardless of what the model paints),
+  // keeping only what actually needs to survive: a short aesthetic-tag list,
+  // the character's own description, and a short style tag. Comfortably
+  // under budget even with the server-side prefix added on top — see
+  // docs/LOCAL_IMAGE_GEN.md's "compact prompt for local_sd" section.
+  if (compact && subj === "character") {
+    const shortBoost = key === "anime" && isHumanoid
+      ? (CHARACTER_AESTHETIC_BOOST_COMPACT[gender] || CHARACTER_AESTHETIC_BOOST_COMPACT.default)
+      : "";
+    return `${shortBoost ? `${shortBoost} ` : ""}${desc}, ${styleDesc || STYLE_TEMPLATES.neutral}.`.replace(/\s+/g, " ").trim();
+  }
+
   const post = subj === "character" ? framing.postTransparent : framing.post;
-  return `${framing.pre} ${desc} ${post} Art style: ${styleDesc || STYLE_TEMPLATES.neutral}.`;
+  return `${framing.pre} ${boost}${desc} ${post} Art style: ${styleDesc || STYLE_TEMPLATES.neutral}.`;
 }
 
 async function fetchTimeout(url, options, ms = PER_PROVIDER_TIMEOUT_MS, fetchFn = fetch) {
@@ -533,7 +592,9 @@ async function tryHuggingface(prompt, seed, cfg, fetchFn = fetch) {
  * has no ip_adapter_repo configured and a reference was sent, so this
  * doesn't need to duplicate that capability check here.
  */
-async function tryLocalSd(prompt, env, fetchFn = fetch, { referenceImages = null, ipAdapterScale = null } = {}) {
+async function tryLocalSd(prompt, env, fetchFn = fetch, {
+  referenceImages = null, ipAdapterScale = null, forceReference = false,
+} = {}) {
   const base = String(env.LOCAL_IMAGE_URL || "").trim().replace(/\/$/, "");
   if (!base) throw new Error("local_sd: LOCAL_IMAGE_URL not set");
 
@@ -544,13 +605,38 @@ async function tryLocalSd(prompt, env, fetchFn = fetch, { referenceImages = null
   if (refBytes) {
     body.reference_image_b64 = arrayBufferToBase64(refBytes);
     if (ipAdapterScale != null) body.ip_adapter_scale = ipAdapterScale;
+    // Manual override for server.py's broken-grid reference-rejection guard
+    // — the classifier is a heuristic, not infallible, and a user who's
+    // confirmed their character's current image is actually fine (a false
+    // positive) needs a way to force it through rather than being silently
+    // overruled with no recourse.
+    if (forceReference) body.force_reference = true;
   }
 
+  // Local server auto-retries server-side on a detected "character sheet"
+  // grid artifact (see server.py's _generate_with_retry) — each retry is a
+  // full extra ~90-140s generation pass PLUS an Ollama vision classify call
+  // (_looks_like_grid), up to MAX_MULTI_FACE_RETRIES+1 attempts. A
+  // client-side abort here doesn't cancel the server-side work (FastAPI
+  // keeps running a sync-def request to completion in its thread pool
+  // regardless of the client), so a too-short timeout has twice caused real
+  // damage: the worker gives up and either (a) reports a false "timed out"
+  // failure to the user while a perfectly good image finishes generating
+  // seconds later unseen, or (b) moves on to the NEXT character while the
+  // local server is still mid-generation on this one — two calls land on
+  // the same shared pipeline object concurrently and corrupt its scheduler
+  // state (confirmed live: an IndexError deep in diffusers'
+  // scheduler.step(), surfaced to the worker as an unrelated HTTP 500 on
+  // the next request — now also mitigated server-side by a lock around
+  // every pipe() call, but a generous timeout here is still the fix for
+  // (a)). Bumped from 480s to 900s (2026-07-10) after 3 full retry
+  // attempts + Ollama round-trips measured close to the old ceiling on
+  // real hardware.
   const res = await fetchTimeout(`${base}/generate`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
-  }, 120_000, fetchFn);
+  }, 900_000, fetchFn);
   if (!res.ok) {
     const detail = await res.text().catch(() => "");
     throw new Error(`local_sd: HTTP ${res.status}${detail ? ` — ${detail.slice(0, 200)}` : ""}`);
@@ -649,8 +735,25 @@ export function ensureCharacterSpriteTransparency(result, env) {
 
     let out = maybePurgeFreemiumImage(result, env);
     if (!isTransparentEnough(out.bytes, out.contentType, minRatio)) {
+      // The "forced" retry used to reuse the EXACT SAME options as the first
+      // pass — a no-op fallback: if the first attempt failed because the
+      // border had no single dominant color (edge_dominance below
+      // minEdgeDominance), retrying with identical settings fails for the
+      // identical reason and silently gives up, leaving a noisy backdrop.
+      // Confirmed live: local_sd/animagine-xl sometimes paints a textured or
+      // gradient backdrop instead of a flat one, which is exactly this case.
+      // Loosen on retry — accept a much less uniform border and a wider
+      // color-distance tolerance — so a noisy local_sd backdrop still gets a
+      // clean transparent cutout instead of being left as-is.
+      const loosened = {
+        ...opts,
+        minEdgeDominance: Math.min(opts.minEdgeDominance, 0.12),
+        tolerance: Math.max(opts.tolerance, 40),
+        softness: Math.max(opts.softness, 20),
+        border: 4,
+      };
       try {
-        const forced = purgeSpriteBackground(out.bytes, { ...opts, contentType: out.contentType });
+        const forced = purgeSpriteBackground(out.bytes, { ...loosened, contentType: out.contentType });
         out = {
           ...out,
           bytes: forced.bytes,
@@ -762,6 +865,13 @@ export async function generateImage(prompt, {
   subjectType = "character", preferProvider, seed, env, onAttempt, onProviderWait, pollinationsAltFirst = false,
   referenceImages = null,
   referenceImageUrls = null,
+  forceReference = false,
+  // Optional shorter prompt used ONLY for the local_sd tier — see
+  // composeImagePrompt's `compact` mode doc comment for why: local_sd's CLIP
+  // text encoder hard-truncates at 77 tokens with no prioritization, so the
+  // full cloud-oriented prose prompt can silently lose the character's own
+  // description. Falls back to `prompt` when not provided.
+  localPrompt = null,
 } = {}) {
   if (!env) throw new Error("generateImage: env required");
   const tiers = orderTiersForPreference(await resolvedOrder(env, "image"), preferProvider);
@@ -845,8 +955,9 @@ export async function generateImage(prompt, {
         // uploadCharacterReferenceImage) silently generates unreferenced
         // rather than erroring — still strictly better than the old
         // behavior of skipping local_sd whenever any reference existed.
-        const result = await tryLocalSd(prompt, env, env.__fetch || fetch, {
+        const result = await tryLocalSd(localPrompt || prompt, env, env.__fetch || fetch, {
           referenceImages: hasRefs ? referenceImages : null,
+          forceReference,
         });
         return postProcess(result, subjectType, env);
       } catch (e) {

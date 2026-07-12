@@ -23,7 +23,43 @@ function catalogUrl(catalog, ref) {
   return catalog?.[ref] ?? catalog?.[String(ref)] ?? null;
 }
 
-/** Map illustration_ref → permanent cover / character / background slots. */
+function illustrationCaption(text) {
+  const t = String(text || "").trim();
+  if (!t) return null;
+  return t.length > 72 ? `${t.slice(0, 72).trim()}…` : t;
+}
+
+/** First line in reading order spoken by (or, failing that, present with)
+ * this character — where a matched plate's "moment" should unlock. Prefers
+ * an actual dialogue/narration line credited to the character over a mere
+ * presence entry, since that's the more narratively meaningful reveal. */
+function firstLineForCharacter(playback, charId) {
+  let presentFallback = null;
+  for (const scene of playback?.scenes || []) {
+    for (const line of scene.lines || []) {
+      if (line.character_id === charId) return line;
+      if (!presentFallback && (scene.present || []).some((p) => p.character_id === charId)) {
+        presentFallback = line;
+      }
+    }
+  }
+  return presentFallback;
+}
+
+/**
+ * Map illustration_ref → book cover / background slots, and character
+ * illustration_ref → an unlocked illustration "moment" on that character's
+ * first line — NEVER onto character.sprite. A raw EPUB plate (whole page,
+ * often multi-character, sometimes a caption-sheet montage) is not a
+ * portrait — the portrait a listener sees on stage must stay either the
+ * placeholder gradient or actual generated art (reference-conditioned via
+ * character.reference_images, see reference-images.js), same as this
+ * codebase already treats reference_images as generation input, never
+ * display art (see illustration-character-match-consumer.js). The plate
+ * itself belongs in the Illustrations gallery / as a story moment instead —
+ * see illustrationGallery.js's collectIllustrations, which reads exactly
+ * the inserts/line.illustration_url fields set below.
+ */
 export function applyDirectIllustrations(playback, analysis, illustrationUrls) {
   const counts = { characters: 0, backgrounds: 0, cover: 0 };
   if (!playback || !illustrationUrls || !Object.keys(illustrationUrls).length) {
@@ -41,17 +77,19 @@ export function applyDirectIllustrations(playback, analysis, illustrationUrls) {
     ? playback.cover
     : null);
 
+  playback.inserts = playback.inserts || {};
   for (const c of analysis?.characters || []) {
     if (!c?.id) continue;
     const url = catalogUrl(illustrationUrls, c.illustration_ref);
     if (!url || !playback.characters?.[c.id]) continue;
-    playback.characters[c.id].sprite = url;
-    for (const scene of playback.scenes || []) {
-      for (const p of scene.present || []) {
-        if (p.character_id === c.id) p.sprite = url;
-      }
+    const line = firstLineForCharacter(playback, c.id);
+    if (line) {
+      line.illustration_url = url;
+      line.illustration_caption = line.illustration_caption || illustrationCaption(line.text);
+      line.visual_moment = true;
+      playback.inserts[String(line.idx)] = url;
+      counts.characters += 1;
     }
-    counts.characters += 1;
     if (!coverUrl) coverUrl = url;
   }
 

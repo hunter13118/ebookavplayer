@@ -26,11 +26,51 @@ const NOW = 1_700_000_000_000;
   );
   assert.equal(
     jobLooksStuck(
-      { status: "imaging", detail: "Trying pollinations-anon for cover", updated_at: NOW - 4 * 60_000 },
+      { status: "imaging", detail: "Trying pollinations-anon for cover", updated_at: NOW - 17 * 60_000 },
       { now: NOW },
     ),
     true,
     "provider wait beyond PROVIDER_STALE_MS should be stuck",
+  );
+  // Regression: local_sd (animagine-xl, IP-Adapter reference conditioning)
+  // measured 90-140s+ for a single character generation with no
+  // intermediate progress tick — the old 3-minute PROVIDER_STALE_MS could
+  // false-flag a legitimately-still-working local generation as stuck,
+  // force-unlocking the book mid-write and orphaning the staged `.next.png`
+  // (surfaced live as a dead link in the compare modal). Bumped to 6
+  // minutes, then to 16 once server.py's _generate_with_retry started
+  // auto-retrying up to 3 full attempts server-side (each a full local_sd
+  // pass plus an Ollama vision classify call) — a multi-attempt retry
+  // sequence on a single character must not be considered stuck.
+  assert.equal(
+    jobLooksStuck(
+      { status: "imaging", detail: "Trying local_sd for character · emperor", updated_at: NOW - 12 * 60_000 },
+      { now: NOW },
+    ),
+    false,
+    "a local_sd generation still within its slower normal range must not be flagged stuck",
+  );
+  // Regression: a SECOND, separate staleness branch (atCap/highProgress)
+  // had its own hardcoded 4-minute threshold that silently overrode
+  // PROVIDER_STALE_MS above. step_total is the regen's ITEM count
+  // (characters/scenes/cover), not a diffusion step count — for the
+  // extremely common case of regenerating exactly ONE character,
+  // step_index (1) >= step_total (1) is true for that item's ENTIRE
+  // duration, not just once finalizing. Confirmed live: a one-character
+  // local_sd job force-unlocked at ~7m44s (past the old 4-minute atCap
+  // threshold, well under the 16-minute PROVIDER_STALE_MS) while the
+  // server was still legitimately retrying — the job wasn't stuck, it was
+  // burned by a second timeout nobody had touched.
+  assert.equal(
+    jobLooksStuck(
+      {
+        status: "imaging", detail: "Trying local_sd for character · anne",
+        progress: 0.99, step_index: 1, step_total: 1, updated_at: NOW - 8 * 60_000,
+      },
+      { now: NOW },
+    ),
+    false,
+    "a single-item local_sd regen at 'step_index >= step_total' must not be stuck via the atCap/highProgress path either",
   );
 }
 
@@ -73,7 +113,7 @@ const NOW = 1_700_000_000_000;
       status: "imaging",
       stage: "imaging",
       detail: "Trying cloudflare for background · scene-1",
-      updated_at: NOW - 5 * 60_000,
+      updated_at: NOW - 7 * 60_000,
       progress: 0.4,
     }),
   };

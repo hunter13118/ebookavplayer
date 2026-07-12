@@ -36,22 +36,38 @@ assert.equal(playback.characters.mei.illustration_ref, 1);
 // Regression: PATCH /books/:id/illustration-refs used to save cover_illustration_ref
 // and a character's illustration_ref as pure metadata numbers — nothing ever
 // resolved them against the catalog or wrote them onto the actual rendered
-// sprite/cover fields, so a manual assignment via the "Character settings" UI
+// cover/moment fields, so a manual assignment via the "Character settings" UI
 // saved successfully but changed nothing visible in the player. Confirms the
 // full manual-assignment chain (patch -> sync -> applyDirectIllustrations,
 // the same function onIllustrationRefsPatch now calls) actually updates them.
+//
+// A character's matched/assigned plate must NEVER become their rendered
+// sprite — a raw EPUB plate is often a multi-character scene or a caption
+// montage, not a clean portrait (see illustrations.js's applyDirectIllustrations
+// docstring). It surfaces instead as an unlocked illustration "moment" on
+// that character's first line, same data shape the Illustrations gallery
+// (illustrationGallery.js's collectIllustrations) already reads.
 {
   const playback2 = {
     cover: null,
     characters: { mei: { name: "Mei", sprite: "sprite:gradient:1,2" } },
-    scenes: [{ id: "s1", present: [{ character_id: "mei", sprite: "sprite:gradient:1,2" }] }],
+    scenes: [{
+      id: "s1",
+      present: [{ character_id: "mei", sprite: "sprite:gradient:1,2" }],
+      lines: [{ idx: 0, character_id: "mei", text: "Mei looked up." }],
+    }],
   };
   let synced = syncIllustrationRefsToPlayback(playback2, patched);
   const { playback: applied, counts } = applyDirectIllustrations(synced, patched, analysis.illustration_urls);
-  assert.equal(applied.characters.mei.sprite, "/media/x/illustrations/img_001.png",
-    "manually-assigned character plate actually becomes the rendered sprite");
-  assert.equal(applied.scenes[0].present[0].sprite, "/media/x/illustrations/img_001.png",
-    "denormalized scene.present sprite also updates, matching what the player reads");
+  assert.equal(applied.characters.mei.sprite, "sprite:gradient:1,2",
+    "a matched/assigned plate never overwrites the character's rendered sprite");
+  assert.equal(applied.scenes[0].present[0].sprite, "sprite:gradient:1,2",
+    "denormalized scene.present sprite is untouched too");
+  assert.equal(applied.scenes[0].lines[0].illustration_url, "/media/x/illustrations/img_001.png",
+    "the plate instead unlocks as an illustration moment on the character's first line");
+  assert.equal(applied.scenes[0].lines[0].visual_moment, true);
+  assert.equal(applied.inserts["0"], "/media/x/illustrations/img_001.png",
+    "moment is also recorded in playback.inserts so it survives a recompile");
   assert.equal(applied.cover, "/media/x/illustrations/img_000.png",
     "explicit cover_illustration_ref is honored even before this fix's opportunistic fallback would have kicked in");
   assert.equal(counts.characters, 1);

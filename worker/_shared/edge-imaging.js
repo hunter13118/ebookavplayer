@@ -42,6 +42,32 @@ function wantsCharacter(filter, id) {
   return false;
 }
 
+/**
+ * An explicit selection (scope: "selected") is a deliberate "generate THIS
+ * character" signal that overrides the stock-sprite heuristic. That heuristic
+ * (generic-sprites.js's useStockSprite) exists to save compute on low-dialogue
+ * side characters during bulk/auto imaging — not to veto a user who explicitly
+ * picked someone to regenerate. Promote any explicitly-selected stock character
+ * from `fromStock` into `toGenerate` so it gets a real portrait (local_sd etc.)
+ * instead of a deterministic pooled sprite. Confirmed live: Eizo (protagonist,
+ * but under VAE_CUSTOM_SPRITE_MIN_LINES attributed lines in this volume's
+ * prologue) was silently stock-spritzed on an explicit regen, and the empty
+ * `ok` count then tripped a misleading "set GEMINI_API_KEY" error downstream.
+ * Pure — returns a new plan, does not mutate its input.
+ */
+export function applySelectionStockOverride(plan, filter) {
+  if (!filter || filter.scope !== "selected") return plan;
+  const wanted = new Set(filter.character_ids || []);
+  if (!wanted.size) return plan;
+  const promote = plan.fromStock.filter((c) => wanted.has(c.id));
+  if (!promote.length) return plan;
+  return {
+    ...plan,
+    toGenerate: [...plan.toGenerate, ...promote],
+    fromStock: plan.fromStock.filter((c) => !wanted.has(c.id)),
+  };
+}
+
 function wantsCover(filter) {
   if (!filter || filter.scope === "all") return true;
   if (filter.scope === "cover") return true;
@@ -90,6 +116,70 @@ async function storeGeneratedAsset({
     beforeUrl: beforeLive,
     promoted: true,
   };
+}
+
+/**
+ * Expression Sensitivity Plan Phase 3d: 2-4 alt-expression portrait variants
+ * for a single primary character, using its base sprite as an IP-Adapter-style
+ * reference so the alt-expression stays recognizably the same character.
+ * Opt-in, best-effort — one bucket failing doesn't affect the others.
+ * Shared by the main imaging loop (base sprite just generated, still in
+ * memory) and by onMediaCommitPost's backfill path (base sprite already
+ * live in R2, loaded fresh as the reference).
+ *
+ * @returns {{ sprites: Record<string,string>, ok: number, fail: number }}
+ */
+export async function generateExpressionSpritesForCharacter({
+  env, book_id, art_style, character, baseImageBytes, preferProvider = "local_sd",
+  expressiveBuckets = DEFAULT_EXPRESSIVE_BUCKETS, bust = Date.now(), dbg,
+  onProgress = null, onProviderAttempt = null, onProviderWait = null, onImageFailure = null,
+}) {
+  const desc = characterGenDescription(character);
+  const isHumanoid = character.is_humanoid !== false;
+  const sprites = {};
+  let ok = 0;
+  let fail = 0;
+  for (const bucket of expressiveBuckets) {
+    onProgress?.({ kind: "expression_sprite", id: `${character.id}:${bucket}` });
+    const exprDesc = `${desc}. ${expressionPromptSuffix(bucket)}`;
+    const exprPrompt = composeImagePrompt(exprDesc, {
+      subjectType: "character", style: art_style, gender: character.gender, isHumanoid,
+    });
+    const exprLocalPrompt = composeImagePrompt(exprDesc, {
+      subjectType: "character", style: art_style, gender: character.gender, isHumanoid, compact: true,
+    });
+    const exprSeed = hashSeed(`${book_id}:${character.id}:${art_style}:expr:${bucket}`);
+    try {
+      // Pin to whatever provider already holds the warm model (default
+      // local_sd, same as the just-generated base sprite) instead of
+      // letting generateImage re-run the whole freemium cascade per bucket
+      // — Gemini/freemium retries+timeouts between each of the 4 images
+      // would burn real time for zero benefit once local_sd is already up.
+      const exprImg = await generateImage(exprPrompt, {
+        subjectType: "character",
+        preferProvider,
+        seed: exprSeed,
+        env,
+        localPrompt: exprLocalPrompt,
+        referenceImages: [baseImageBytes],
+        onAttempt: (provider) => onProviderAttempt?.(provider, { kind: "expression_sprite", id: `${character.id}:${bucket}` }),
+        onProviderWait: (provider, waitMs) => onProviderWait?.(provider, { kind: "expression_sprite", id: `${character.id}:${bucket}`, waitMs }),
+      });
+      const fname = `char_${character.id}_expr_${bucket}.png`;
+      await env.VAE_PACKS.put(r2MediaKey(book_id, art_style, fname), exprImg.bytes, {
+        httpMetadata: { contentType: exprImg.contentType || "image/png" },
+      });
+      sprites[bucket] = mediaUrl(book_id, art_style, fname, { bust });
+      ok += 1;
+      dbg?.log("P3_IMAGES", `expr sprite ok ${character.id}:${bucket}`, { provider: exprImg.provider });
+    } catch (e) {
+      fail += 1;
+      const errText = String(e.message || e).slice(0, 300);
+      dbg?.log("P3_IMAGES", `expr sprite fail ${character.id}:${bucket}`, { error: errText.slice(0, 120) });
+      onImageFailure?.({ kind: "expression_sprite", id: `${character.id}:${bucket}`, error: errText });
+    }
+  }
+  return { sprites, ok, fail };
 }
 
 /** Phase 3 — freemium sprites + backgrounds → R2 + updated playback JSON. */
@@ -155,7 +245,9 @@ export async function runEdgeImaging({
     }
   }
 
-  const { toGenerate, fromStock, lineCounts, totalLines } = planCharacterImaging(analysis, env);
+  const { toGenerate, fromStock, lineCounts, totalLines } = applySelectionStockOverride(
+    planCharacterImaging(analysis, env), filter,
+  );
   let chars = toGenerate.filter((c) => wantsCharacter(filter, c.id));
   if (maxChars) chars = chars.slice(0, maxChars);
 
@@ -228,7 +320,11 @@ export async function runEdgeImaging({
     const c = chars[ci];
     onProgress?.({ kind: "character", index: ci + 1, total: chars.length, id: c.id });
     const desc = characterGenDescription(c);
-    const prompt = composeImagePrompt(desc, { subjectType: "character", style: art_style });
+    const isHumanoid = c.is_humanoid !== false; // unset/missing defaults to humanoid
+    const prompt = composeImagePrompt(desc, { subjectType: "character", style: art_style, gender: c.gender, isHumanoid });
+    const localPrompt = composeImagePrompt(desc, {
+      subjectType: "character", style: art_style, gender: c.gender, isHumanoid, compact: true,
+    });
     const seed = hashSeed(`${book_id}:${c.id}:${art_style}${diversify ? `:${Date.now()}` : ""}`);
     const beforeLive = media.characters[c.id] || null;
     const refTargets = await referenceTargetsForCharacterWithStylePool(
@@ -241,8 +337,10 @@ export async function runEdgeImaging({
         seed,
         env,
         pollinationsAltFirst,
+        localPrompt,
         referenceImages: refTargets.bytes.length ? refTargets.bytes : undefined,
         referenceImageUrls: refTargets.urls.length ? refTargets.urls : undefined,
+        forceReference: Boolean(filter?.force_reference),
         onAttempt: (provider) => onProviderAttempt?.(provider, { kind: "character", id: c.id }),
         onProviderWait: (provider, waitMs) => onProviderWait?.(provider, { kind: "character", id: c.id, waitMs }),
       });
@@ -271,42 +369,19 @@ export async function runEdgeImaging({
       // variants for primary characters only (cost control), using the base
       // sprite just generated as a reference so the alt-expression stays
       // recognizably the same character. Opt-in, best-effort — one variant
-      // failing doesn't affect the base sprite or the others.
+      // failing doesn't affect the base sprite or the others. Requires
+      // `stored.promoted` (not staged for compare) — see
+      // onMediaCommitPost/expression-sprites-consumer.js for the backfill
+      // path that covers a character confirmed later out of compare mode.
       if (generateExpressiveSprites && c.importance === "primary" && stored.promoted) {
-        const exprSprites = {};
-        for (const bucket of expressiveBuckets) {
-          onProgress?.({
-            kind: "expression_sprite", index: ci + 1, total: chars.length, id: `${c.id}:${bucket}`,
-          });
-          const exprPrompt = composeImagePrompt(`${desc}. ${expressionPromptSuffix(bucket)}`, {
-            subjectType: "character", style: art_style,
-          });
-          const exprSeed = hashSeed(`${book_id}:${c.id}:${art_style}:expr:${bucket}`);
-          try {
-            const exprImg = await generateImage(exprPrompt, {
-              subjectType: "character",
-              preferProvider: imagePin,
-              seed: exprSeed,
-              env,
-              pollinationsAltFirst,
-              referenceImages: [img.bytes],
-              onAttempt: (provider) => onProviderAttempt?.(provider, { kind: "expression_sprite", id: `${c.id}:${bucket}` }),
-              onProviderWait: (provider, waitMs) => onProviderWait?.(provider, { kind: "expression_sprite", id: `${c.id}:${bucket}`, waitMs }),
-            });
-            const fname = `char_${c.id}_expr_${bucket}.png`;
-            await env.VAE_PACKS.put(r2MediaKey(book_id, art_style, fname), exprImg.bytes, {
-              httpMetadata: { contentType: exprImg.contentType || "image/png" },
-            });
-            exprSprites[bucket] = mediaUrl(book_id, art_style, fname, { bust });
-            ok += 1;
-            dbg?.log("P3_IMAGES", `expr sprite ok ${c.id}:${bucket}`, { provider: exprImg.provider });
-          } catch (e) {
-            fail += 1;
-            const errText = String(e.message || e).slice(0, 300);
-            dbg?.log("P3_IMAGES", `expr sprite fail ${c.id}:${bucket}`, { error: errText.slice(0, 120) });
-            onImageFailure?.({ kind: "expression_sprite", id: `${c.id}:${bucket}`, error: errText });
-          }
-        }
+        const { sprites: exprSprites, ok: exprOk, fail: exprFail } = await generateExpressionSpritesForCharacter({
+          env, book_id, art_style, character: { ...c, id: c.id }, baseImageBytes: img.bytes,
+          preferProvider: imagePin, expressiveBuckets, bust, dbg,
+          onProgress: (p) => onProgress?.({ ...p, index: ci + 1, total: chars.length }),
+          onProviderAttempt, onProviderWait, onImageFailure,
+        });
+        ok += exprOk;
+        fail += exprFail;
         if (Object.keys(exprSprites).length) {
           media.expressionSprites[c.id] = { ...(media.expressionSprites[c.id] || {}), ...exprSprites };
         }

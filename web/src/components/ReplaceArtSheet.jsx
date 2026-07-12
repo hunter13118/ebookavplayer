@@ -98,6 +98,7 @@ export default function ReplaceArtSheet({ book, open, onClose, onStarted, onFail
   const [packBusy, setPackBusy] = useState(false);
   const [styleOverride, setStyleOverride] = useState(() => resolveReplaceArtStyle(book));
   const [imageProvider, setImageProvider] = useState("auto");
+  const [forceReference, setForceReference] = useState(false);
   const activeConnection = getActiveConnection();
   const [collapsedGroups, setCollapsedGroups] = useState(() => new Set());
 
@@ -121,6 +122,12 @@ export default function ReplaceArtSheet({ book, open, onClose, onStarted, onFail
     [items, selected],
 
   );
+
+  // force_reference (server.py's /generate) only means something for
+  // IP-Adapter character conditioning — hide the checkbox entirely for a
+  // backgrounds/cover/inserts-only selection rather than showing a control
+  // that would silently do nothing.
+  const selectedHasCharacter = selectedItems.some((it) => it.kind === "characters");
 
 
 
@@ -325,7 +332,7 @@ export default function ReplaceArtSheet({ book, open, onClose, onStarted, onFail
 
   async function runGenerate() {
 
-    const body = selectionToGenerateBody([...selected], items, book, { styleOverride });
+    const body = selectionToGenerateBody([...selected], items, book, { styleOverride, forceReference });
 
     if (imageProvider !== "auto") body.prefer_provider = imageProvider;
 
@@ -497,6 +504,21 @@ export default function ReplaceArtSheet({ book, open, onClose, onStarted, onFail
 
           Provider: <ProviderSelect lane="image" connection={activeConnection} value={imageProvider}
             onChange={setImageProvider} testId="replace-art-provider" />
+
+          {selectedHasCharacter && (
+            <>
+              {" · "}
+              <label className="vae-force-reference-toggle" title="Use the character's current image as the AI reference even if it's flagged as a broken generation — for when you've looked at it and disagree with the automatic check.">
+                <input
+                  type="checkbox"
+                  checked={forceReference}
+                  onChange={(e) => setForceReference(e.target.checked)}
+                  data-testid="replace-art-force-reference"
+                />
+                {" "}Force current image as reference
+              </label>
+            </>
+          )}
 
           {" · "}
 

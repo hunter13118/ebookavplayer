@@ -278,9 +278,10 @@ export async function applyLocalExtractPreset(presetId) {
   return res.json();
 }
 
-export async function revertMediaAsset(bookId, kind, key, { style } = {}) {
+export async function revertMediaAsset(bookId, kind, key, { style, jobId } = {}) {
   const body = { kind, key };
   if (style) body.style = style;
+  if (jobId) body.job_id = jobId;
   const res = await fetch(apiUrl(`/books/${encodeURIComponent(bookId)}/media/revert`), {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -291,9 +292,10 @@ export async function revertMediaAsset(bookId, kind, key, { style } = {}) {
   return res.json();
 }
 
-export async function commitMediaAsset(bookId, kind, key, { style } = {}) {
+export async function commitMediaAsset(bookId, kind, key, { style, jobId } = {}) {
   const body = { kind, key };
   if (style) body.style = style;
+  if (jobId) body.job_id = jobId;
   const res = await fetch(apiUrl(`/books/${encodeURIComponent(bookId)}/media/commit`), {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -407,8 +409,21 @@ export async function pollIngestJob(jobId) {
   throw new Error("pollIngestJob removed — use subscribeJobEvents");
 }
 
-export async function unlockImaging(bookId, { force = false, connection } = {}) {
-  const q = force ? "?force=true" : "";
+/** jobId, when passed, scopes the unlock to that specific job — the server
+ * refuses (no-ops) if the book's currently active job doesn't match. Root
+ * cause of a real, confirmed-live bug: without this, a caller with stale
+ * client-side job-tracking state (e.g. a browser tab that's been open
+ * across several regen attempts) could force-unlock and stale-mark a
+ * DIFFERENT, still-legitimately-running job just because IT was the one
+ * active on the book when the stale caller's own (unrelated, already-dead)
+ * job finally reported an error. Omit jobId for the "clear whatever's
+ * currently stuck, I don't know or care what it is" case (e.g. retrying
+ * after a 409 conflict). */
+export async function unlockImaging(bookId, { force = false, jobId, connection } = {}) {
+  const params = [];
+  if (force) params.push("force=true");
+  if (jobId) params.push(`job_id=${encodeURIComponent(jobId)}`);
+  const q = params.length ? `?${params.join("&")}` : "";
   const res = await fetch(apiUrl(`/books/${encodeURIComponent(bookId)}/imaging/unlock${q}`, connection), {
     method: "POST",
     signal: fetchSignal(8000),
@@ -546,6 +561,17 @@ export async function setCharacterDescription(bookId, { id, description }) {
   return res.json();
 }
 
+export async function setCharacterIsHumanoid(bookId, { id, is_humanoid }) {
+  const res = await fetch(apiUrl(`/books/${encodeURIComponent(bookId)}/characters/is-humanoid`), {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id, is_humanoid }),
+    signal: AbortSignal.timeout(12000),
+  });
+  if (!res.ok) throw new Error(`character is-humanoid: HTTP ${res.status}`);
+  return res.json();
+}
+
 export async function uploadCharacterReferenceImage(bookId, charId, file) {
   const form = new FormData();
   form.append("file", file);
@@ -554,6 +580,48 @@ export async function uploadCharacterReferenceImage(bookId, charId, file) {
     { method: "POST", body: form, signal: AbortSignal.timeout(30000) },
   );
   if (!res.ok) throw new Error(`character reference image: HTTP ${res.status}`);
+  return res.json();
+}
+
+/** Detach one reference image from a character — the R2 object stays
+ * (cheap; re-attachable via assignCharacterReferenceImage below). */
+export async function removeCharacterReferenceImage(bookId, charId, url) {
+  const res = await fetch(
+    apiUrl(`/books/${encodeURIComponent(bookId)}/characters/${encodeURIComponent(charId)}/reference-image`),
+    {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url }),
+      signal: AbortSignal.timeout(12000),
+    },
+  );
+  if (!res.ok) throw new Error(`character reference image delete: HTTP ${res.status}`);
+  return res.json();
+}
+
+/** Attach an already-stored crop (e.g. another character's mismatched
+ * reference) to this character instead of uploading a new file. */
+export async function assignCharacterReferenceImage(bookId, charId, url) {
+  const res = await fetch(
+    apiUrl(`/books/${encodeURIComponent(bookId)}/characters/${encodeURIComponent(charId)}/reference-image/assign`),
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url }),
+      signal: AbortSignal.timeout(12000),
+    },
+  );
+  if (!res.ok) throw new Error(`character reference image assign: HTTP ${res.status}`);
+  return res.json();
+}
+
+/** Every reference crop currently attached to any character in the book,
+ * tagged by current owner — powers the "pick from existing crops" picker. */
+export async function getCharacterCrops(bookId) {
+  const res = await fetch(apiUrl(`/books/${encodeURIComponent(bookId)}/character-crops`), {
+    signal: AbortSignal.timeout(12000),
+  });
+  if (!res.ok) throw new Error(`character crops: HTTP ${res.status}`);
   return res.json();
 }
 

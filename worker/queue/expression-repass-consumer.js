@@ -38,7 +38,13 @@ export async function handleExpressionRepassMessage(message, env) {
 
     const scenes = playback.scenes || [];
     const temperamentByCharacter = temperamentByCharacterFrom(playback);
-    const preferProvider = opts.prefer_provider || null;
+    // Default to whatever model did the original extraction — for continuity
+    // of voice/temperament reads across the book — rather than always
+    // soft-preferring the cheap local model. Explicit opts.prefer_provider
+    // (from the API caller) still wins.
+    const bookMetaRaw = await env.VAE_JOBS?.get(`book:${book_id}`);
+    const bookMeta = bookMetaRaw ? JSON.parse(bookMetaRaw) : {};
+    const preferProvider = opts.prefer_provider || bookMeta.extract_provider || null;
 
     const nextScenes = [];
     const totalBatches = Math.max(1, Math.ceil(scenes.length / SCENES_PER_BATCH));
@@ -74,25 +80,40 @@ export async function handleExpressionRepassMessage(message, env) {
       { httpMetadata: { contentType: "application/json" } },
     );
 
-    await putBookIndex(env, book_id, { active_job_id: null });
+    const doneDetail = `Expression re-tag complete · ${scenes.length} scene(s)`;
+    await putBookIndex(env, book_id, {
+      active_job_id: null,
+      status: "ready",
+      stage: "done",
+      progress: 1,
+      detail: doneDetail,
+    });
     await dbg.flush((patch) => touchIngestJob(env, job_id, patch, { eventType: "done", dbg }), {
       status: "done",
       stage: "done",
       progress: 1,
-      detail: `Expression re-tag complete · ${scenes.length} scene(s)`,
+      detail: doneDetail,
       book_id,
     });
     message.ack();
   } catch (e) {
     console.error("expression repass", job_id, e);
+    const errDetail = String(e.message || e).slice(0, 300);
     await touchIngestJob(env, job_id, {
       status: "error",
       stage: "error",
       progress: 0,
-      detail: String(e.message || e).slice(0, 300),
-      error: String(e.message || e).slice(0, 300),
+      detail: errDetail,
+      error: errDetail,
     }, { eventType: "error", dbg });
-    await putBookIndex(env, book_id, { active_job_id: null }).catch(() => {});
+    await putBookIndex(env, book_id, {
+      active_job_id: null,
+      status: "ready",
+      stage: "done",
+      progress: 1,
+      detail: errDetail,
+      error: errDetail,
+    }).catch(() => {});
     message.ack();
   }
 }

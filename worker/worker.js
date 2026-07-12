@@ -35,7 +35,8 @@ import { onProgressGet, onProgressPost } from "./api/v1/progress.js";
 import { onEdgeVoicesGet, onBookVoicesGet, onBookVoicesPost } from "./api/v1/voices.js";
 import {
   onCharacterMergePatch, onCharacterRenamePatch, onCharacterTemperamentPatch,
-  onCharacterDescriptionPatch, onCharacterReferenceImageUploadPost,
+  onCharacterDescriptionPatch, onCharacterIsHumanoidPatch, onCharacterReferenceImageUploadPost,
+  onCharacterReferenceImageDelete, onCharacterReferenceImageAssignPost, onCharacterCropsGet,
 } from "./api/v1/characters.js";
 import { onQueueBatch } from "./queue/dispatch.js";
 import { json } from "./_shared/jobs-kv.js";
@@ -209,11 +210,43 @@ export async function handleEbookavplayerApi(request, env, ctx) {
     return onRequest({ request, env });
   }
 
+  const characterIsHumanoid = path.match(/^\/books\/([^/]+)\/characters\/is-humanoid$/);
+  if (method === "PATCH" && characterIsHumanoid) {
+    const edge = await onCharacterIsHumanoidPatch({ request, env, bookId: characterIsHumanoid[1] });
+    if (edge) return edge;
+    return onRequest({ request, env });
+  }
+
   const characterReferenceImage = path.match(/^\/books\/([^/]+)\/characters\/([^/]+)\/reference-image$/);
-  if (method === "POST" && characterReferenceImage) {
-    const edge = await onCharacterReferenceImageUploadPost({
-      request, env, bookId: characterReferenceImage[1], charId: characterReferenceImage[2],
+  if (characterReferenceImage) {
+    if (method === "POST") {
+      const edge = await onCharacterReferenceImageUploadPost({
+        request, env, bookId: characterReferenceImage[1], charId: characterReferenceImage[2],
+      });
+      if (edge) return edge;
+      return onRequest({ request, env });
+    }
+    if (method === "DELETE") {
+      const edge = await onCharacterReferenceImageDelete({
+        request, env, bookId: characterReferenceImage[1], charId: characterReferenceImage[2],
+      });
+      if (edge) return edge;
+      return onRequest({ request, env });
+    }
+  }
+
+  const characterReferenceImageAssign = path.match(/^\/books\/([^/]+)\/characters\/([^/]+)\/reference-image\/assign$/);
+  if (method === "POST" && characterReferenceImageAssign) {
+    const edge = await onCharacterReferenceImageAssignPost({
+      request, env, bookId: characterReferenceImageAssign[1], charId: characterReferenceImageAssign[2],
     });
+    if (edge) return edge;
+    return onRequest({ request, env });
+  }
+
+  const characterCrops = path.match(/^\/books\/([^/]+)\/character-crops$/);
+  if (method === "GET" && characterCrops) {
+    const edge = await onCharacterCropsGet({ env, bookId: characterCrops[1] });
     if (edge) return edge;
     return onRequest({ request, env });
   }

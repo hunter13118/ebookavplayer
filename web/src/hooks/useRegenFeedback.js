@@ -71,11 +71,16 @@ export function useRegenFeedback(bookId) {
     setImagingJob(idleImaging());
   }, []);
 
-  const releaseServerLock = useCallback(async () => {
+  // jobId scopes the unlock server-side to that specific job — see
+  // unlockImaging's docstring for the real, confirmed-live bug this fixes:
+  // without it, THIS hook's own stale tracking (e.g. surviving across
+  // several regen attempts in one open tab) could force-unlock and
+  // stale-mark a completely different, still-legitimately-running job.
+  const releaseServerLock = useCallback(async (jobId) => {
     const id = bookIdRef.current;
     if (!id) return;
     try {
-      await unlockImaging(id, { force: true });
+      await unlockImaging(id, { force: true, jobId });
     } catch { /* best-effort */ }
   }, []);
 
@@ -93,7 +98,7 @@ export function useRegenFeedback(bookId) {
     });
   }, []);
 
-  const applyStatus = useCallback((st, targetLabel, { onDone, onError, holdAfterDone, startedAt, lastProgressRef, doneOnceRef }) => {
+  const applyStatus = useCallback((st, targetLabel, { onDone, onError, holdAfterDone, startedAt, lastProgressRef, doneOnceRef, jobId }) => {
     const lastProgress = lastProgressRef.current;
     const nextProgress = computeProgress(st, { lastProgress, startedAt });
     lastProgressRef.current = nextProgress;
@@ -115,7 +120,7 @@ export function useRegenFeedback(bookId) {
         "regen_failed",
         detail ? `Regen failed (${targetLabel}): ${detail}` : `Regen failed for ${targetLabel}.`,
       );
-      releaseServerLock().then(() => {});
+      releaseServerLock(jobId).then(() => {});
       onError?.(detail);
       stopImaging();
       return true;
@@ -191,7 +196,7 @@ export function useRegenFeedback(bookId) {
         pushLog(ev);
         const st = jobEventToStatus(ev);
         if (applyStatus(st, targetLabel, {
-          onDone, onError, holdAfterDone, startedAt, lastProgressRef, doneOnceRef,
+          onDone, onError, holdAfterDone, startedAt, lastProgressRef, doneOnceRef, jobId,
         })) return;
       },
       onError: () => { /* SSE reconnects internally — server KV watch backs progress */ },

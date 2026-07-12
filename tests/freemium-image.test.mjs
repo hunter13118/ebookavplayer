@@ -27,6 +27,48 @@ import { computeImagingProgress, waitingOnProvider } from "../worker/_shared/ima
   assert.doesNotMatch(p, /transparent background/i);
 }
 
+// composeImagePrompt — gendered aesthetic boost on "anime" character
+// portraits only. Gated to subjectType "character" + style "anime"
+// specifically: must not leak into backgrounds/covers, and must not apply to
+// other art styles the boost phrasing wasn't tuned for.
+{
+  const female = composeImagePrompt("blacksmith apprentice", { subjectType: "character", style: "anime", gender: "female" });
+  assert.match(female, /beautiful anime girl/i);
+  const male = composeImagePrompt("blacksmith apprentice", { subjectType: "character", style: "anime", gender: "male" });
+  assert.match(male, /handsome anime man/i);
+  assert.doesNotMatch(male, /beautiful anime girl/i);
+  // no/unknown gender still gets a neutral attractiveness boost, not nothing
+  const unknown = composeImagePrompt("blacksmith apprentice", { subjectType: "character", style: "anime" });
+  assert.match(unknown, /attractive, striking features/i);
+
+  // never applied to backgrounds
+  const bg = composeImagePrompt("a forge interior", { subjectType: "background", style: "anime" });
+  assert.doesNotMatch(bg, /beautiful anime girl|gorgeous|attractive, striking features/i);
+
+  // never applied to other art styles
+  const realistic = composeImagePrompt("blacksmith apprentice", { subjectType: "character", style: "realistic", gender: "female" });
+  assert.doesNotMatch(realistic, /beautiful anime girl|gorgeous/i);
+}
+
+// composeImagePrompt — isHumanoid gates the aesthetic boost off for animal/
+// creature characters (e.g. "Lucy", "Krul") that shouldn't get gendered
+// human-anatomy styling tags forced onto them. Defaults to true (humanoid).
+{
+  const humanoid = composeImagePrompt("a fox spirit", { subjectType: "character", style: "anime", gender: "female" });
+  assert.match(humanoid, /beautiful anime girl/i, "defaults to humanoid when unset");
+
+  const animal = composeImagePrompt("a fox spirit", { subjectType: "character", style: "anime", gender: "female", isHumanoid: false });
+  assert.doesNotMatch(animal, /beautiful anime girl|gorgeous|attractive, striking features/i, "no gendered boost for non-humanoid characters");
+  assert.match(animal, /a fox spirit/);
+
+  // compact mode respects the same gate
+  const animalCompact = composeImagePrompt("a fox spirit", {
+    subjectType: "character", style: "anime", gender: "female", isHumanoid: false, compact: true,
+  });
+  assert.doesNotMatch(animalCompact, /beautiful|gorgeous/i);
+  assert.match(animalCompact, /a fox spirit/);
+}
+
 // artStyleKey — exact-match alias table (not loose substring matching)
 {
   assert.equal(artStyleKey("anime"), "anime");
@@ -407,6 +449,79 @@ import { computeImagingProgress, waitingOnProvider } from "../worker/_shared/ima
   };
   await generateImage("background test", { env, subjectType: "background", preferProvider: "local_sd" });
   assert.deepEqual(Object.keys(sentBody), ["prompt"]);
+}
+
+// generateImage — an explicit `localPrompt` is what actually reaches
+// local_sd, not the full cloud-oriented `prompt`. Regression guard for the
+// CLIP-77-token truncation bug: local_sd's diffusers pipeline silently drops
+// whatever doesn't fit in 77 tokens with zero prioritization, so the full
+// prose prompt (framing + aesthetic boost + description + style, confirmed
+// live at ~140 tokens for "Rike") lost the character's OWN DESCRIPTION to
+// truncation. `localPrompt` (composeImagePrompt's `compact` mode) is the
+// short variant meant to survive intact.
+{
+  let sentBody = null;
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 0, 0, 0, 0]);
+  const env = {
+    EXTRACT_SKIP_GEMINI: "true",
+    LOCAL_IMAGE_URL: "http://127.0.0.1:7860",
+    __fetch: async (url, opts) => {
+      sentBody = JSON.parse(opts.body);
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: (h) => (h === "content-type" ? "image/png" : null) },
+        arrayBuffer: async () => png.buffer.slice(png.byteOffset, png.byteOffset + png.byteLength),
+      };
+    },
+  };
+  const fullProse = "A very long, extremely verbose cloud-oriented prompt that would never fit in 77 CLIP tokens once combined with framing and style text.";
+  await generateImage(fullProse, {
+    env, subjectType: "character", preferProvider: "local_sd", localPrompt: "short compact tag prompt",
+  });
+  assert.equal(sentBody.prompt, "short compact tag prompt", "local_sd receives localPrompt, not the full prose prompt");
+}
+
+// ...and falls back to the full prompt when no localPrompt is given (e.g.
+// the moment-insert path, which intentionally doesn't compute one).
+{
+  let sentBody = null;
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 0, 0, 0, 0]);
+  const env = {
+    EXTRACT_SKIP_GEMINI: "true",
+    LOCAL_IMAGE_URL: "http://127.0.0.1:7860",
+    __fetch: async (url, opts) => {
+      sentBody = JSON.parse(opts.body);
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: (h) => (h === "content-type" ? "image/png" : null) },
+        arrayBuffer: async () => png.buffer.slice(png.byteOffset, png.byteOffset + png.byteLength),
+      };
+    },
+  };
+  await generateImage("plain prompt", { env, subjectType: "character", preferProvider: "local_sd" });
+  assert.equal(sentBody.prompt, "plain prompt", "falls back to prompt when localPrompt is not provided");
+}
+
+// composeImagePrompt — `compact` mode drops the verbose framing/transparent-
+// background clauses (not load-bearing for local_sd — postProcess's
+// purgeSpriteBackground enforces transparency afterward regardless) and
+// keeps only the short aesthetic tags + description + a short style tag.
+{
+  const compact = composeImagePrompt("a dwarf blacksmith", {
+    subjectType: "character", style: "anime", gender: "female", compact: true,
+  });
+  assert.match(compact, /a dwarf blacksmith/);
+  assert.match(compact, /beautiful, gorgeous/i);
+  assert.doesNotMatch(compact, /Portrait bust character sprite/i, "verbose framing dropped in compact mode");
+  assert.doesNotMatch(compact, /transparent background/i, "transparent-background clause dropped — not load-bearing, enforced by postProcess");
+
+  // never compacts backgrounds — subjectType gate still applies
+  const compactBg = composeImagePrompt("a forge interior", {
+    subjectType: "background", style: "anime", compact: true,
+  });
+  assert.match(compactBg, /environment art/i, "background prompts ignore compact mode, keep full framing");
 }
 
 console.log("freemium-image.test.mjs — all passed");

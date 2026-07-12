@@ -3,7 +3,7 @@
 import { assignVoices, assignVoicesIncremental, narratorVoice, poolForGender } from "./voice-assign.js";
 import { expandAnalysisLineText } from "./line-chunk.js";
 
-function gradientToken(seed) {
+export function gradientToken(seed) {
   let h = 0;
   for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
   const a = h % 360;
@@ -104,6 +104,7 @@ export function compilePlayback(analysis, {
       rate: va.rate || "+0%",
       description: c.description || "",
       temperament: c.temperament || "",
+      reference_images: c.reference_images || [],
     };
   }
   charactersOut.narrator = {
@@ -375,6 +376,37 @@ export function applyInsertsToLines(playback) {
   return playback;
 }
 
+/**
+ * A raw EPUB plate URL (illustrations/img_NNN.*) must never be shown as a
+ * character sprite — it's not a portrait, see illustrations.js's
+ * applyDirectIllustrations docstring. Older stored books can still have one
+ * stuck in playback.characters[id].sprite / scene.present[].sprite from
+ * before that function stopped writing them there (a stray plate reference
+ * used to get written to sprite on every illustration-character-match
+ * re-run). Resets any such sprite back to the placeholder gradient token so
+ * a book self-heals without needing a full recompile — needed because
+ * enrichPlaybackFromAnalysis (which also guards against this) is skipped
+ * whenever a book has moment art (see books.js), which this very fix makes
+ * more common. Mutates and returns playback.
+ */
+export function healRawPlateSprites(playback, analysis) {
+  const rawPlateUrls = new Set(Object.values(analysis?.illustration_urls || {}));
+  if (!rawPlateUrls.size) return playback;
+  for (const [cid, info] of Object.entries(playback?.characters || {})) {
+    if (info?.sprite && rawPlateUrls.has(info.sprite)) {
+      info.sprite = `sprite:${gradientToken(cid)}`;
+    }
+  }
+  for (const scene of playback?.scenes || []) {
+    for (const p of scene.present || []) {
+      if (p?.sprite && p?.character_id && rawPlateUrls.has(p.sprite)) {
+        p.sprite = `sprite:${gradientToken(p.character_id)}`;
+      }
+    }
+  }
+  return playback;
+}
+
 export function enrichPlaybackFromAnalysis(playback, analysis, { narrator_gender = "male" } = {}) {
   const inserts = harvestInsertMap(playback);
   const fresh = compilePlayback(analysis, {
@@ -382,6 +414,9 @@ export function enrichPlaybackFromAnalysis(playback, analysis, { narrator_gender
     narrator_gender,
     media: Object.keys(inserts).length ? { inserts } : null,
   });
+
+  const rawPlateUrls = new Set(Object.values(analysis?.illustration_urls || {}));
+  const isRawPlate = (url) => rawPlateUrls.has(url);
 
   for (let si = 0; si < (fresh.scenes || []).length; si += 1) {
     const oldScene = playback.scenes?.[si];
@@ -392,7 +427,7 @@ export function enrichPlaybackFromAnalysis(playback, analysis, { narrator_gender
     }
     for (const p of newScene.present || []) {
       const oldP = (oldScene.present || []).find((x) => x.character_id === p.character_id);
-      if (oldP?.sprite && String(oldP.sprite).startsWith("/media/")) {
+      if (oldP?.sprite && String(oldP.sprite).startsWith("/media/") && !isRawPlate(oldP.sprite)) {
         p.sprite = oldP.sprite;
       }
     }
@@ -400,7 +435,7 @@ export function enrichPlaybackFromAnalysis(playback, analysis, { narrator_gender
 
   for (const [cid, info] of Object.entries(fresh.characters || {})) {
     const old = playback.characters?.[cid];
-    if (old?.sprite && String(old.sprite).startsWith("/media/")) {
+    if (old?.sprite && String(old.sprite).startsWith("/media/") && !isRawPlate(old.sprite)) {
       info.sprite = old.sprite;
     }
   }

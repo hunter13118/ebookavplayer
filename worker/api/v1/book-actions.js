@@ -325,21 +325,42 @@ export async function onGenerateMediaPost({ request, env, bookId }) {
   return json({ job_id: jobId, book_id: bookId, status: "queued" });
 }
 
-/** POST /books/:id/imaging/unlock — ?force=true clears even when job looks active (after stale mark). */
+/** POST /books/:id/imaging/unlock — ?force=true clears even when job looks
+ * active (after stale mark). ?job_id=<id>, when present, scopes the unlock
+ * to that specific job: a mismatch against the book's currently active job
+ * is a no-op (imaging_locked/active_job_id are left untouched) rather than
+ * clearing/stale-marking whatever happens to be active. Root cause of a
+ * real, confirmed-live bug: a client with stale job-tracking state (e.g. a
+ * browser tab that outlived several regen attempts) called this with
+ * force=true after ITS OWN long-dead job finally reported an error — with
+ * no job_id to scope against, this force-unlocked and stale-marked a
+ * completely different, still-legitimately-running job that happened to be
+ * active on the book at that moment. */
 export async function onImagingUnlockPost({ env, bookId, request }) {
   if (!env.VAE_JOBS) return null;
   if (!(await bookExists(env, bookId))) {
     return json({ error: "no such book" }, 404);
   }
   try {
-    const force = new URL(request?.url || "", "https://x").searchParams.get("force") === "true";
+    const url = new URL(request?.url || "", "https://x");
+    const force = url.searchParams.get("force") === "true";
+    const scopedJobId = url.searchParams.get("job_id") || null;
+
+    const raw = await env.VAE_JOBS.get(`book:${bookId}`);
+    const meta = raw ? JSON.parse(raw) : {};
+    const activeJobId = meta.active_job_id || meta.job_id || null;
+
+    if (scopedJobId && activeJobId && scopedJobId !== activeJobId) {
+      return json({
+        ok: true, book_id: bookId, imaging_locked: Boolean(meta.imaging_locked),
+        skipped: "job_id did not match the currently active job",
+      });
+    }
+
     if (force) {
-      const raw = await env.VAE_JOBS.get(`book:${bookId}`);
-      const meta = raw ? JSON.parse(raw) : {};
-      const jobId = meta.active_job_id || meta.job_id;
-      if (jobId) {
-        const job = await getJob(env, "ingest", jobId);
-        await markJobStale(env, jobId, job, "Manually unlocked");
+      if (activeJobId) {
+        const job = await getJob(env, "ingest", activeJobId);
+        await markJobStale(env, activeJobId, job, "Manually unlocked");
       }
     } else {
       await ensureImagingLockFresh(env, bookId);
@@ -479,13 +500,20 @@ export async function onMediaRevertPost({ request, env, bookId }) {
   );
   const { mediaUrl } = await import("../../_shared/freemium-image.js");
   const ok = await revertMediaAsset(env, bookId, style, kind, key);
-  if (!ok) return json({ error: "no previous version to restore" }, 404);
+  if (!ok) {
+    // Nothing to revert to (e.g. the character never had committed art
+    // before this generation) — still a resolved decision from the user's
+    // perspective, so stop re-offering this comparison on future job resyncs.
+    if (body.job_id) await clearResolvedComparison(env, body.job_id, kind, key);
+    return json({ error: "no previous version to restore" }, 404);
+  }
 
   const { assetFilename } = await import("../../_shared/media-versions.js");
   const fn = assetFilename(kind, key);
   const url = cacheBustUrl(mediaUrl(bookId, style, fn));
   await patchPlaybackMediaUrl(env, bookId, kind, key, url);
   if (kind === "cover") await syncCatalogCover(env, bookId, url);
+  if (body.job_id) await clearResolvedComparison(env, body.job_id, kind, key);
   return json({ ok: true, url });
 }
 
@@ -725,8 +753,69 @@ export async function onMediaCommitPost({ request, env, bookId }) {
 
   const { commitMediaAsset, patchPlaybackMediaUrl } = await import("../../_shared/media-versions.js");
   const url = await commitMediaAsset(env, bookId, style, kind, key);
-  if (!url) return json({ error: "asset not found" }, 404);
+  if (!url) {
+    // Staged asset is gone (e.g. orphaned after a dev-server restart) — the
+    // user still made a decision, so stop re-offering this comparison.
+    if (body.job_id) await clearResolvedComparison(env, body.job_id, kind, key);
+    return json({ error: "asset not found" }, 404);
+  }
   await patchPlaybackMediaUrl(env, bookId, kind, key, url);
   if (kind === "cover") await syncCatalogCover(env, bookId, url);
-  return json({ ok: true, url });
+  if (body.job_id) await clearResolvedComparison(env, body.job_id, kind, key);
+
+  // A primary character's base portrait was staged (compare mode always
+  // stages by default — see imaging-regen-consumer.js), so runEdgeImaging's
+  // inline expression-sprite generation was skipped at generation time (it
+  // requires `stored.promoted`, i.e. NOT staged). Confirming here is the
+  // only later point that knows this sprite is now live — backfill the
+  // alt-expression variants now instead of leaving primary characters
+  // permanently missing expression art whenever a regen went through
+  // compare/review (the default UI flow).
+  let expressionSpritesJobId = null;
+  if (kind === "characters") {
+    const character = playback?.characters?.[key];
+    const hasExpressions = character?.expressionSprites
+      && Object.keys(character.expressionSprites).length > 0;
+    if (character?.importance === "primary" && !hasExpressions) {
+      expressionSpritesJobId = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
+      const job = {
+        job_id: expressionSpritesJobId,
+        book_id: bookId,
+        kind: "expression-sprites",
+        status: "queued",
+        progress: 0,
+        detail: "queued",
+        stage: "queued",
+      };
+      await putJob(env, "ingest", expressionSpritesJobId, job);
+      await emitJobEvent(env, expressionSpritesJobId, jobToEvent(job, "queued"));
+      await enqueueJob(env, {
+        kind: "expression-sprites",
+        job_id: expressionSpritesJobId,
+        book_id: bookId,
+        character_id: key,
+        art_style: style,
+      });
+    }
+  }
+
+  return json({ ok: true, url, expression_sprites_job_id: expressionSpritesJobId });
+}
+
+/** Remove a resolved (kind, key) entry from a job's staged comparisons so the
+ * compare modal stops being re-offered on every SSE resubscribe/page mount. */
+async function clearResolvedComparison(env, jobId, kind, key) {
+  if (!env.VAE_JOBS) return;
+  const { touchIngestJob } = await import("../../_shared/job-touch.js");
+  const raw = await env.VAE_JOBS.get(`ingest:${jobId}`);
+  if (!raw) return;
+  const job = JSON.parse(raw);
+  const comparisons = (job.comparisons || []).filter(
+    (c) => !(c.kind === kind && String(c.key) === String(key)),
+  );
+  if (comparisons.length === (job.comparisons || []).length) return;
+  await touchIngestJob(env, jobId, {
+    comparisons,
+    staged: comparisons.length > 0,
+  });
 }

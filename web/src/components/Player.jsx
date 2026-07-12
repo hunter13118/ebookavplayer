@@ -17,6 +17,7 @@ import PlayerMenu from "./PlayerMenu.jsx";
 import ReplaceArtSheet from "./ReplaceArtSheet.jsx";
 
 import EpubPlatesSheet from "./EpubPlatesSheet.jsx";
+import CharacterRosterSheet from "./CharacterRosterSheet.jsx";
 
 import GapNavSheet from "./GapNavSheet.jsx";
 
@@ -129,6 +130,7 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
   const [replaceOpen, setReplaceOpen] = useState(false);
   const [platesOpen, setPlatesOpen] = useState(false);
   const [gapNavOpen, setGapNavOpen] = useState(false);
+  const [charactersOpen, setCharactersOpen] = useState(false);
 
   const {
     comparePending,
@@ -1117,6 +1119,18 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
 
         )}
 
+        {lines.length > 0 && (
+
+          <button type="button" className="vae-toolbar-btn vae-characters-btn" data-testid="show-characters"
+
+            onClick={() => setCharactersOpen(true)}>
+
+            Characters
+
+          </button>
+
+        )}
+
       </div>
 
 
@@ -1309,6 +1323,12 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
           if (it.lineIdx != null) seekTo(it.lineIdx, { preserveFlash: true });
           showIllustration(it.url, { manual: true, lineIdx: it.lineIdx ?? st.index });
         }}
+      />
+
+      <CharacterRosterSheet
+        book={bk}
+        open={charactersOpen}
+        onClose={() => setCharactersOpen(false)}
       />
 
       <TtsErrorModal open={Boolean(ttsError)} onAcknowledge={acknowledgeTtsError} />

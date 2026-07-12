@@ -108,32 +108,118 @@ instruction may need loosening.
      detection given `epubExtract.cover_index` is referenced elsewhere in
      `chapter-extract-pipeline.js` — check what that's currently used for).
 
-## 2. Character portraits should reference actual EPUB illustrations — PARTIALLY DONE
+## 2. Character portraits should reference actual EPUB illustrations — DONE
 
-**Status:** the "who's pictured" matching pass is done and verified
-end-to-end. Cropping is not — see below for exactly why, and what it needs.
+**Status:** matching, cropping, and in-image name-caption detection are all
+done. Update (2026-07-09): the original text-only matching pass that only
+matched 2/13 plates (and mismatched at least one non-character plate) has
+been replaced with a vision-first pass, plus a separate OCR pass for plates
+that caption character names directly on the image (the "plate 8" case
+below).
 
-**Matching — DONE:** `worker/_shared/illustration-character-match.js`'s
-`matchPlatesToCharacters` is a targeted, separate LLM read (not the main
-extraction prompt) run via `POST /books/:id/illustrations/match-characters`
+**Correction (2026-07-10) — a matched plate must NEVER become the rendered
+character sprite.** The original design (this same doc, below) had
+`applyDirectIllustrations` write a character's matched `illustration_ref`
+straight onto `playback.characters[id].sprite` — meaning the raw EPUB plate
+(often a multi-character scene, or a caption-sheet montage) became that
+character's permanent portrait on stage. Confirmed live: "Lidy"'s portrait
+was literally a two-character embrace illustration, and a character whose
+plate happened to be a multi-face design-sheet rendered as a tiled mosaic.
+Reference crops (`character.reference_images`) were never the problem here —
+those were already correctly scoped to generation-only input (never
+rendered directly, see item 2's cropping section below) — the bug was the
+*whole-plate* `illustration_ref` path.
+
+Fixed in `worker/_shared/illustrations.js`'s `applyDirectIllustrations`: a
+character's matched plate now unlocks as an **illustration moment** on that
+character's first line (`line.illustration_url`/`playback.inserts`, the same
+data shape `illustrationGallery.js`'s `collectIllustrations` already reads
+for the Illustrations panel) instead of touching `sprite` at all. This also
+fixed a second, previously-invisible bug: automatic matches never populated
+`line.illustration_url`, so the Illustrations panel showed "0 unlocked
+visual moments" even when a raw plate was plainly on screen as a sprite —
+moments and the direct-sprite path were two disconnected systems. They're
+now the same system.
+
+**Self-heal for already-corrupted stored books:** a book matched before this
+fix has the bad plate URL stuck in its stored `playback.json` sprite fields
+forever otherwise — `enrichPlaybackFromAnalysis`'s "reuse any existing
+`/media/` sprite across a recompile" rule can't tell a real generated
+portrait from a mistakenly-stored raw plate. Added `healRawPlateSprites`
+(`compile-playback.js`) — resets any sprite matching a URL in
+`analysis.illustration_urls` back to the placeholder gradient token. Wired
+into `GET /books/:id` (`books.js`) in **both** branches (the
+`enrichPlaybackFromAnalysis` recompile path, and the `hasMomentArt`
+lightweight-patch path) — the latter matters because a book with moment art
+(which this fix causes automatically now) skips the recompile branch
+entirely, so the heal has to run independently of it. Verified live: Lidy
+and Helen's sprites reset to gradient placeholders, Diana and Samya's real
+generated portraits were untouched. Test: `tests/compile-playback-inserts.test.mjs`.
+
+Scene *backgrounds* still use the raw plate directly (`sceneOut.background =
+url` in `applyDirectIllustrations`) — unchanged, not something the user
+flagged, and a full-scene backdrop is a reasonable direct use of a plate
+unlike a character portrait.
+
+Also fixed in the same pass: two duplicate, conflicting `.vae-sheet-backdrop`
+CSS definitions in `web/src/styles.css` — a later, unconditional rule
+(`align-items: flex-end`) silently overrode an earlier responsive one meant
+to center the sheet as a dialog on desktop widths, so every sheet (not just
+Illustrations) was stuck in mobile bottom-sheet layout regardless of
+viewport. Consolidated to one definition; desktop (≥520px) now centers,
+mobile still bottom-sheets. If a *stale PWA offline cache* is still serving
+old CSS/JS on a given device, a hard refresh / re-caching the book is needed
+separately — this app aggressively caches for offline reading
+(`start:local`/VitePWA), so a code fix alone doesn't retroactively bust an
+already-cached client bundle.
+
+**Matching — DONE, now vision-first:**
+`worker/_shared/illustration-character-match.js` exports
+`matchPlatesToCharacters`, called from `POST
+/books/:id/illustrations/match-characters`
 (`worker/queue/illustration-character-match-consumer.js`, "Auto-match plates
-to characters" button in Character settings). Re-parses the stored EPUB
-(cheap, no LLM) to recover plate/chapter association via the existing
-`matchIllustrationsToChapters`, then asks per-chapter: given the known
-character roster and text context, which character (if any) does each plate
-depict — told explicitly not to guess. **Real finding while building this:**
-a plate's own nearby text (`textNear()` in `epub-images.js`) is frequently
-useless on its own — plates conventionally live on their own dedicated,
-nearly-empty spine page (just an `<img>` tag), so the captured "context" is
-often that page's own XML boilerplate, not narrative prose. Fixed by also
-feeding the model the opening of the chapter the plate was matched to
-(`parsed.chapters[chapterPos].text`) — confirmed this is what actually makes
-matches possible; the plate-only-context version matched 0/13 plates on a
-real book, the chapter-text-grounded version matched 2/13 (a modest but
-real, honest number — the system is designed to decline rather than
-false-positive). A confirmed match applies immediately via the same
-`applyDirectIllustrations` path a manual assignment uses — sprite/cover
-update included, verified live.
+to characters" button in Character settings). For each plate it:
+1. **Vision pass** (`matchPlatesToCharactersVision`) — one call per plate to
+   a local, vision-capable Ollama model (`OLLAMA_MODEL_VISION`, default
+   `gemma3:27b` — already multimodal, no separate model pull needed) via
+   `/api/chat` with the plate image attached. The model actually sees the
+   plate's pixels (art style, features, clothing, setting) plus surrounding
+   text, and can correctly say "not a character" for scenery/object plates —
+   the root cause of the earlier text-only pass's bad matches (it explicitly
+   could not see the image at all, "you cannot see it" was in its own system
+   prompt).
+2. **Text-only fallback** (`matchPlatesToCharactersTextOnly`) — the original
+   heuristic, now used only for plates the vision pass couldn't resolve (no
+   image bytes, or Ollama unreachable/erroring for that plate).
+
+**Widened text context:** previously only the plate's own (often-useless)
+nearby-HTML text plus the *next* chapter's opening 600 chars. Now also
+includes the *preceding* chapter's last 500 chars — plates sit on their own
+spine page between two chapters, so "who was just in this scene" context
+often lives in the chapter before, not just the one the plate precedes.
+
+A confirmed match applies immediately via the same `applyDirectIllustrations`
+path a manual assignment uses — sprite/cover update included, verified live.
+See `tests/illustration-character-match-vision.test.mjs`.
+
+**In-image name-caption detection — DONE (the "plate 8" case):** some plates
+label each pictured character's name directly on the image (a captioned
+group shot). `scripts/local-image-server`'s new `POST /ocr_faces` (Tesseract
+OCR + nearest-face pairing, `detect_and_crop_faces.py`'s
+`crop_named_faces_from_bytes`) finds each name-like caption and pairs it with
+its nearest detected face, returning a crop per confidently-paired face.
+`illustration-character-match-consumer.js`'s `ocrNamedCropsForPlate` calls
+this for every considered plate (regardless of whether the vision/text match
+above found anything — a captioned group shot can name several characters at
+once) and fuzzy-matches each label against the book's character roster
+(`fuzzyMatchCharacterName` — substring-tolerant, since Tesseract on small
+in-image text frequently drops a leading/trailing character, e.g. "Elara"
+read as "lara"). Each confidently-matched label's crop is stored directly as
+that character's reference image — no whole-plate face-detection fallback
+needed, since OCR already paired the right face to the right name. Requires
+`brew install tesseract` + `pip install pytesseract` (see
+[LOCAL_IMAGE_GEN.md](LOCAL_IMAGE_GEN.md)'s Setup section). See
+`tests/illustration-plate-ocr.test.mjs`.
 
 **Cropping — DONE.** Corrected an earlier claim in this doc that no image
 manipulation capability existed in the codebase — it did: a local Stable
@@ -191,6 +277,94 @@ description + uploaded reference pictures" half of the original ask.
   endpoint and persists; an uploaded PNG round-trips through the POST
   endpoint, is retrievable via `GET /media/...`, and renders in the grid.
 
+**Managing reference images (remove + pick-from-existing-crops) — DONE
+(2026-07-10).** Once auto-matching actually started working (item 2 above),
+a real book accumulated redundant near-duplicate crops on one character
+(re-running the match job doesn't dedupe by *visual* similarity, only by
+exact URL — see `MAX_REFERENCE_IMAGES` note in `character-merge.js`) and at
+least one outright mismatched crop. Needed a way to clean that up, plus a
+way to fix a mismatch by picking the *correct* character's crop instead of
+manually re-uploading a file.
+
+- `removeCharacterReferenceImageInAnalysis`/`InPlayback`
+  (`character-merge.js`) + `DELETE /books/:id/characters/:charId/reference-image`
+  (body `{url}`) — detaches one image from a character's list. Leaves the R2
+  object alone (cheap, and it may still be a valid crop for a *different*
+  character) — this is a pointer removal, not a hard delete.
+- `POST /books/:id/characters/:charId/reference-image/assign` (body `{url}`)
+  — attaches an *already-stored* media URL to a character, reusing the same
+  `addCharacterReferenceImageInAnalysis`/`InPlayback` the upload endpoint
+  uses. Guarded to only accept this book's own `/media/{bookId}/...` URLs
+  (same SSRF-avoidance reasoning as the upload endpoint).
+- `GET /books/:id/character-crops` — every reference image currently
+  attached to *any* character in the book, each tagged with its current
+  `owner_id`/`owner_name`. No separate R2 listing needed: every crop this
+  app ever stores gets added to some character's `reference_images` at
+  creation time, so the union of every character's list already is the
+  complete set.
+- `CharacterManager.jsx`: each reference thumbnail now has a small "×"
+  overlay to remove it, plus a new "⌸ pick from existing crops" button next
+  to upload (`CropPicker`) — opens a grid of every other crop in the book
+  (lazily fetched, excludes ones this character already has), tagged with
+  its current owner; clicking one assigns it here immediately. This is the
+  "I know the right crop is sitting on the wrong character, let me just grab
+  it" flow instead of a re-upload.
+- Verified end-to-end live: removed a redundant Anne crop (8→7), reassigned
+  a Helen crop to Anne via the picker (7→8), confirmed via the API's stored
+  `reference_images` array both times. Tests:
+  `tests/character-reference-images.test.mjs`.
+
+**Full-size preview lightbox — DONE (2026-07-10).** The reference/crop
+thumbnails above are 44-60px — too small to tell who's actually pictured,
+which defeats the point of managing them. `ImageLightbox` (exported from
+`CharacterManager.jsx`) opens on click instead of acting immediately: shows
+the image full-size, with an optional action slot below it. Used in three
+places — the reference-pictures grid (click → preview, with a "Remove this
+reference" button right there), the per-character `CropPicker` (click →
+preview tagged with current owner, "Use this for {name}" to confirm — no
+longer assigns blindly on first click), and the crop catalog below. Verified
+live: a crop that looked like a plausible thumbnail turned out, at full
+size, to be an unrelated hooded/masked figure with dialogue text baked in —
+exactly the kind of mismatch this was built to catch.
+
+**Crop catalog replacing the raw-plate gallery + manual plate mapping —
+DONE (2026-07-10).** Removed the old "EPUB plate mapping" section (a
+per-character dropdown picking which *whole raw plate* is that character's
+portrait) and the raw-plates preview grid — a raw plate is rarely a clean
+single-character portrait (see item 2's "never onto character.sprite" fix
+above), so crops are the right unit for "who is this," not whole plates.
+Replaced with `CropCatalog.jsx`: a book-wide grid of **every** crop ever
+stored, mapped or not — click to preview (`ImageLightbox`) and assign to any
+character or remove from its current owner, right there.
+
+- `GET /books/:id/character-crops` changed from "union of every character's
+  `reference_images`" to an actual `env.VAE_PACKS.list({prefix:
+  "media/{id}/character-refs/"})` R2 listing, cross-referenced against
+  `reference_images` for `owner_id`/`owner_name` (`null` = unassigned).
+  Needed because a crop detached via the DELETE endpoint above (or one that
+  was created but fell off a character's 8-image cap after repeated
+  auto-match runs — `MAX_REFERENCE_IMAGES` evicts oldest-first) was
+  otherwise invisible even though it still exists in storage. Also exposes
+  `stored_under` (the R2 folder it was originally cropped into, which can
+  differ from `owner_id` after a reassignment).
+- The still-useful "Re-scan EPUB for plates" / "Auto-match plates to
+  characters" trigger buttons stayed — they're what *populates* the crop
+  catalog. The cover-art plate picker also stayed (a whole plate is a
+  legitimate book cover, unlike a character portrait) but now saves just
+  `cover_illustration_ref` on its own instead of bundling per-character
+  mappings into the same PATCH.
+- Trimmed `illustrationCatalog.js`: `plateAssignmentMap`/
+  `characterIllustrationRefs` deleted (only existed for the removed
+  section); `listIllustrationPlates` stayed for the cover picker.
+- Verified live on a real book: the catalog surfaced 32 stored crops, 30 of
+  them "Unassigned" (fallout from re-running auto-match repeatedly during
+  this session's testing — each run's fresh crops evicted older ones off
+  the 8-image cap, but the R2 files never got cleaned up) — exactly the
+  "orphaned crop" visibility problem this feature exists to solve. Assigned
+  one to a character live, confirmed it updated instantly. Tests updated in
+  `tests/character-reference-images.test.mjs` to cover the "unassigned crop
+  still shows up" case specifically.
+
 **Not yet done — genuinely separate, deferred:**
 - Alt-expression sprites and EPUB-illustration crops in the viewer (needs
   item 2 below to exist first — nothing to show yet).
@@ -242,6 +416,30 @@ automatic per-chapter trigger). UI trigger: "Re-tag expressions" in
 - **Where:** user asked for this "somewhere in the menu around the 'generate
   art' button" — that's `PlayerMenu.jsx` / `ArtStyleSwitcher.jsx`'s
   neighborhood.
+
+**Update (2026-07-12) — two bugs fixed, both confirmed live:**
+1. **Model continuity.** `runExpressionRepass`'s `preferProvider` always
+   soft-defaulted to `"ollama-7b"` regardless of what actually extracted the
+   book — a book extracted on `ollama-30b` got re-tagged on the cheaper 7b
+   model, a plausible quality regression for no reason. Fixed in
+   `expression-repass-consumer.js` to default to the book's own
+   `extract_provider` (`env.VAE_JOBS`'s `book:{id}` record) when the caller
+   doesn't explicitly pass one — mirrors the existing
+   `re-extract-consumer.js:54` precedent
+   (`prefer_provider || (force_provider ? null : meta.extract_provider)`).
+   Verified live: triggering a repass on a book with `extract_provider:
+   "ollama-30b"` loaded `qwen3:30b-a3b` in `ollama ps`, not the 7b model.
+2. **Stale catalog status.** The consumer's success/error paths only ever
+   patched `active_job_id: null` onto the book index — never `status`/
+   `stage`/`progress`/`detail`. A finished (or failed) repass left the
+   catalog showing whatever the job's *first* progress tick was (`stage:
+   "expression-repass", progress: 0.02, detail: "Loading book"`)
+   indefinitely, because `worker/_shared/imaging-lock.js`'s reconciliation
+   only re-syncs those fields from the live job while `active_job_id` is
+   still set — once it's cleared, nothing corrects the stale snapshot.
+   Fixed by writing `status: "ready", stage: "done", progress: 1, detail`
+   (and `error` on failure) on both terminal paths, same shape other
+   consumers (`illustration-character-match-consumer.js`, etc.) already use.
 
 ## 6. Chapter titles showing as generic "Chapter N" instead of the real EPUB title
 

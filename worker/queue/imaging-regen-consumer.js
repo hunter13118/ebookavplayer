@@ -31,6 +31,12 @@ function imagingFilterFromOpts(opts = {}) {
     character_ids: opts.character_ids || [],
     scene_ids: opts.scene_ids || [],
     include_cover: Boolean(opts.include_cover),
+    // Manual override for local_sd's broken-grid reference-rejection guard
+    // (server.py's /generate) — see ReplaceArtSheet.jsx's "Force current
+    // image as reference" checkbox. Only meaningful for a targeted
+    // character regen, hence gated behind the non-"all" scope this
+    // function already requires.
+    force_reference: Boolean(opts.force_reference),
   };
 }
 
@@ -121,6 +127,12 @@ export async function handleImagingRegenMessage(message, env) {
       diversify: Boolean(opts.diversify),
       ignorePins: Boolean(opts.ignore_pins),
       preferProvider: opts.prefer_provider || null,
+      // Regens used to never pass this at all, so runEdgeImaging's default
+      // (false) always won regardless of what the original upload chose —
+      // expression sprites silently never generated on ANY regen. Default
+      // true here (matching the upload flow's new default), overridable via
+      // opts.generate_expressive_sprites: false if a caller wants to skip it.
+      generateExpressiveSprites: opts.generate_expressive_sprites !== false,
       compare,
       stageUntilConfirm,
       onComparison: async (row) => {
@@ -167,7 +179,13 @@ export async function handleImagingRegenMessage(message, env) {
       },
     });
 
-    if ((img.stats?.ok ?? 0) === 0 && imgPlan.total > 0) {
+    // A regen that produced only stock sprites (ok=0, stock>0) is a SUCCESS,
+    // not a failure — the selected character(s) got a deterministic pooled
+    // sprite, no generator was ever meant to run, and no API key is relevant.
+    // The old guard checked only `ok === 0` and threw the misleading
+    // "set GEMINI_API_KEY" error in exactly that case. Mirror
+    // chapter-extract-pipeline.js's guard, which already requires stock === 0.
+    if ((img.stats?.ok ?? 0) === 0 && (img.stats?.stock ?? 0) === 0 && imgPlan.total > 0) {
       throw new Error(
         `All ${imgPlan.total} image(s) failed to generate — set GEMINI_API_KEY (wrangler secret) or freemium image keys`,
       );

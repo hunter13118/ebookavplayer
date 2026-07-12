@@ -48,12 +48,20 @@ const urls = { 0: "/media/x/illustrations/img_000.png", 1: "/media/x/illustratio
 const playback = {
   cover: null,
   characters: { mei: { name: "Mei", sprite: "sprite:x" } },
-  scenes: [{ id: "scene-0001", background: "gradient:1,2", present: [{ character_id: "mei", sprite: "sprite:x" }] }],
+  scenes: [{
+    id: "scene-0001",
+    background: "gradient:1,2",
+    present: [{ character_id: "mei", sprite: "sprite:x" }],
+    lines: [{ idx: 0, character_id: "mei", text: "Mei spoke." }],
+  }],
 };
 const applied = applyDirectIllustrations(structuredClone(playback), analysis, urls);
 assert.equal(applied.counts.characters, 1);
 assert.equal(applied.counts.backgrounds, 1);
 assert.equal(applied.counts.cover, 1);
-assert.equal(applied.playback.characters.mei.sprite, urls[0]);
+// A matched plate never overwrites the rendered sprite — it unlocks as an
+// illustration moment on the character's line instead (see illustrations.js).
+assert.equal(applied.playback.characters.mei.sprite, "sprite:x");
+assert.equal(applied.playback.scenes[0].lines[0].illustration_url, urls[0]);
 
 console.log("external-refs + illustrations: ok");

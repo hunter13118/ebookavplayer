@@ -4,7 +4,7 @@ import {
   resolveCoverUrl,
   syncCatalogCover,
 } from "../../_shared/catalog-cover.js";
-import { enrichPlaybackFromAnalysis, harvestInsertMap, applyInsertsToLines } from "../../_shared/compile-playback.js";
+import { enrichPlaybackFromAnalysis, harvestInsertMap, applyInsertsToLines, healRawPlateSprites } from "../../_shared/compile-playback.js";
 import { normalizePlaybackLines } from "../../_shared/line-chunk.js";
 import { normalizeBookProgress } from "../../_shared/ingest-progress.js";
 import { ensureImagingLockFresh } from "../../_shared/imaging-lock.js";
@@ -115,11 +115,13 @@ export async function onBookGet({ env, bookId }) {
   if (analysis && !hasMomentArt && !isPartialBook) {
     try {
       playback = enrichPlaybackFromAnalysis(playback, analysis);
+      healRawPlateSprites(playback, analysis);
       recompiled = true;
     } catch { /* keep stored playback */ }
   } else if (hasMomentArt) {
     playback.inserts = preservedInserts;
     applyInsertsToLines(playback);
+    if (analysis) healRawPlateSprites(playback, analysis);
     repaired = true;
   }
 

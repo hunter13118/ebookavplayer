@@ -21,4 +21,7 @@ graphify-out/
 .claude/
 worker/.dev.vars
 worker/.wrangler/
+.wrangler/
 test_assets/m4b-sync-drop/
+scripts/local-image-server/debug/
+smoke_out/freemium_probe/runs/

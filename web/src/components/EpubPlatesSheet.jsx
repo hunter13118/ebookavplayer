@@ -3,33 +3,9 @@ import {
   backfillIllustrations, matchIllustrationsToCharacters, saveExternalRefs, saveIllustrationRefs,
   subscribeJobEvents, jobEventToStatus,
 } from "../api.js";
-import {
-  characterIllustrationRefs,
-  listIllustrationPlates,
-  plateAssignmentMap,
-} from "../illustrationCatalog.js";
-import { mediaImageSrc } from "../media.js";
+import { listIllustrationPlates } from "../illustrationCatalog.js";
 import CharacterManager from "./CharacterManager.jsx";
-
-function PlateThumb({ url, index }) {
-  const [broken, setBroken] = useState(false);
-  if (!url || broken) {
-    return (
-      <div className="vae-plate-thumb vae-plate-thumb-fallback" aria-hidden>
-        {index}
-      </div>
-    );
-  }
-  return (
-    <img
-      src={mediaImageSrc(url)}
-      alt=""
-      className="vae-plate-thumb"
-      loading="lazy"
-      onError={() => setBroken(true)}
-    />
-  );
-}
+import CropCatalog from "./CropCatalog.jsx";
 
 function ExternalUrlList({ urls, onRemove }) {
   if (!urls?.length) return <p className="vae-sheet-hint">No URLs yet.</p>;
@@ -45,10 +21,22 @@ function ExternalUrlList({ urls, onRemove }) {
   );
 }
 
-/** EPUB plates + external reference URLs for continuity / BYO prompts. */
+/**
+ * Character settings: rename/merge/description/reference pictures, the crop
+ * catalog (every cropped character face this book has, mapped or not — see
+ * CropCatalog.jsx), a cover-art plate picker, and external reference URLs.
+ *
+ * Used to also have a raw-EPUB-plate gallery and a manual per-character
+ * "which whole plate is this character's portrait" dropdown mapping. Removed
+ * (2026-07-10): a raw plate is often a multi-character scene or a captioned
+ * design sheet, never a clean single-character portrait (see
+ * illustrations.js's applyDirectIllustrations docstring) — crops are the
+ * right unit for "who is this", and CropCatalog now covers browsing +
+ * assigning them directly. The cover-art use case is different (a whole
+ * plate legitimately makes a fine book cover) and keeps its own picker below.
+ */
 export default function EpubPlatesSheet({ book, open, onClose, onSaved }) {
   const plates = useMemo(() => listIllustrationPlates(book), [book]);
-  const assignments = useMemo(() => plateAssignmentMap(book), [book]);
 
   const characters = useMemo(
     () => Object.entries(book?.characters || {})
@@ -58,14 +46,13 @@ export default function EpubPlatesSheet({ book, open, onClose, onSaved }) {
   );
 
   const [coverRef, setCoverRef] = useState("");
-  const [charRefs, setCharRefs] = useState({});
   const [extRefs, setExtRefs] = useState({ characters: {}, book: [] });
   const [draftUrls, setDraftUrls] = useState({});
   const [bookDraftUrl, setBookDraftUrl] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [coverBusy, setCoverBusy] = useState(false);
   const [extBusy, setExtBusy] = useState(false);
   const [err, setErr] = useState("");
-  const [saved, setSaved] = useState(false);
+  const [coverSaved, setCoverSaved] = useState(false);
   const [extSaved, setExtSaved] = useState(false);
   const [backfillBusy, setBackfillBusy] = useState(false);
   const [backfillResult, setBackfillResult] = useState("");
@@ -75,48 +62,38 @@ export default function EpubPlatesSheet({ book, open, onClose, onSaved }) {
   useEffect(() => {
     if (!open) return;
     setErr("");
-    setSaved(false);
+    setCoverSaved(false);
     setExtSaved(false);
     setCoverRef(
       book?.cover_illustration_ref != null ? String(book.cover_illustration_ref) : "",
     );
-    setCharRefs(characterIllustrationRefs(book));
     setExtRefs(book?.external_refs || { characters: {}, book: [] });
     setDraftUrls({});
     setBookDraftUrl("");
-  }, [open, book?.book_id, book?.cover_illustration_ref, book?.characters, book?.external_refs]);
+  }, [open, book?.book_id, book?.cover_illustration_ref, book?.external_refs]);
 
   if (!open) return null;
-
-  function setCharRef(id, value) {
-    setCharRefs((prev) => {
-      const next = { ...prev };
-      if (!value) delete next[id];
-      else next[id] = parseInt(value, 10);
-      return next;
-    });
-  }
 
   function addExternalUrl(characterId, raw) {
     const url = String(raw || "").trim();
     if (!url) return;
     setExtRefs((prev) => {
-      const characters = { ...prev.characters };
-      const list = [...(characters[characterId] || [])];
+      const characters2 = { ...prev.characters };
+      const list = [...(characters2[characterId] || [])];
       if (list.includes(url)) return prev;
       list.push(url);
-      characters[characterId] = list;
-      return { ...prev, characters };
+      characters2[characterId] = list;
+      return { ...prev, characters: characters2 };
     });
     setDraftUrls((prev) => ({ ...prev, [characterId]: "" }));
   }
 
   function removeExternalUrl(characterId, url) {
     setExtRefs((prev) => {
-      const characters = { ...prev.characters };
-      characters[characterId] = (characters[characterId] || []).filter((u) => u !== url);
-      if (!characters[characterId]?.length) delete characters[characterId];
-      return { ...prev, characters };
+      const characters2 = { ...prev.characters };
+      characters2[characterId] = (characters2[characterId] || []).filter((u) => u !== url);
+      if (!characters2[characterId]?.length) delete characters2[characterId];
+      return { ...prev, characters: characters2 };
     });
   }
 
@@ -131,26 +108,20 @@ export default function EpubPlatesSheet({ book, open, onClose, onSaved }) {
     setBookDraftUrl("");
   }
 
-  async function handleSavePlates() {
-    setBusy(true);
+  async function handleSaveCoverRef() {
+    setCoverBusy(true);
     setErr("");
-    setSaved(false);
+    setCoverSaved(false);
     try {
-      const body = {
+      const result = await saveIllustrationRefs(book.book_id, {
         cover_illustration_ref: coverRef === "" ? null : parseInt(coverRef, 10),
-        characters: {},
-      };
-      for (const c of characters) {
-        const v = charRefs[c.id];
-        body.characters[c.id] = v == null ? null : v;
-      }
-      const result = await saveIllustrationRefs(book.book_id, body);
+      });
       onSaved?.(result);
-      setSaved(true);
+      setCoverSaved(true);
     } catch (e) {
-      setErr(e?.message || "Could not save plate mapping.");
+      setErr(e?.message || "Could not save cover reference.");
     } finally {
-      setBusy(false);
+      setCoverBusy(false);
     }
   }
 
@@ -183,7 +154,7 @@ export default function EpubPlatesSheet({ book, open, onClose, onSaved }) {
           if (done) { unsub(); resolve(st); }
           else if (errored) { unsub(); reject(new Error(st.detail || st.error || "Matching failed.")); }
         },
-        onError: (err) => { unsub(); reject(err || new Error("Lost connection to matching job.")); },
+        onError: (err2) => { unsub(); reject(err2 || new Error("Lost connection to matching job.")); },
       });
     });
   }
@@ -272,76 +243,40 @@ export default function EpubPlatesSheet({ book, open, onClose, onSaved }) {
           </div>
         )}
 
-        {plates.length > 0 ? (
-          <>
-            <div className="vae-plates-grid" data-testid="epub-plates-grid">
-              {plates.map((plate) => {
-                const usedBy = assignments.get(plate.index) || [];
-                return (
-                  <figure key={plate.index} className="vae-plate-card" data-testid={`epub-plate-${plate.index}`}>
-                    <PlateThumb url={plate.url} index={plate.index} />
-                    <figcaption>
-                      <span className="vae-plate-label">{plate.label}</span>
-                      {usedBy.length > 0 && (
-                        <span className="vae-plate-used">{usedBy.join(", ")}</span>
-                      )}
-                    </figcaption>
-                  </figure>
-                );
-              })}
-            </div>
+        <section className="vae-menu-section">
+          <h3>Crop catalog</h3>
+          <CropCatalog bookId={book.book_id} characters={characters} onRefresh={onSaved} />
+        </section>
 
-            <section className="vae-menu-section">
-              <h3>EPUB plate mapping</h3>
-              <label className="vae-sheet-field">
-                Cover reference plate
-                <span className="vae-select-wrap">
-                  <select
-                    className="vae-select"
-                    data-testid="epub-cover-ref"
-                    value={coverRef}
-                    onChange={(e) => setCoverRef(e.target.value)}
-                  >
-                    <option value="">None</option>
-                    {plates.map((p) => (
-                      <option key={p.index} value={String(p.index)}>{p.label}</option>
-                    ))}
-                  </select>
-                </span>
-              </label>
-
-              {characters.map((c) => (
-                <label key={c.id} className="vae-sheet-field">
-                  {c.name}
-                  <span className="vae-select-wrap">
-                    <select
-                      className="vae-select"
-                      data-testid={`epub-char-ref-${c.id}`}
-                      value={charRefs[c.id] != null ? String(charRefs[c.id]) : ""}
-                      onChange={(e) => setCharRef(c.id, e.target.value)}
-                    >
-                      <option value="">None</option>
-                      {plates.map((p) => (
-                        <option key={p.index} value={String(p.index)}>{p.label}</option>
-                      ))}
-                    </select>
-                  </span>
-                </label>
-              ))}
-
-              <button
-                type="button"
-                className="vae-menu-link"
-                data-testid="epub-plates-save"
-                disabled={busy}
-                onClick={handleSavePlates}
-              >
-                {busy ? "Saving…" : saved ? "Saved" : "Save plate mapping"}
-              </button>
-            </section>
-          </>
-        ) : (
-          <p className="vae-sheet-hint">No EPUB plates yet — re-ingest a book with interior art.</p>
+        {plates.length > 0 && (
+          <section className="vae-menu-section">
+            <h3>Cover art</h3>
+            <label className="vae-sheet-field">
+              Cover reference plate
+              <span className="vae-select-wrap">
+                <select
+                  className="vae-select"
+                  data-testid="epub-cover-ref"
+                  value={coverRef}
+                  onChange={(e) => setCoverRef(e.target.value)}
+                >
+                  <option value="">None</option>
+                  {plates.map((p) => (
+                    <option key={p.index} value={String(p.index)}>{p.label}</option>
+                  ))}
+                </select>
+              </span>
+            </label>
+            <button
+              type="button"
+              className="vae-menu-link"
+              data-testid="epub-cover-ref-save"
+              disabled={coverBusy}
+              onClick={handleSaveCoverRef}
+            >
+              {coverBusy ? "Saving…" : coverSaved ? "Saved" : "Save cover reference"}
+            </button>
+          </section>
         )}
 
         <section className="vae-menu-section">

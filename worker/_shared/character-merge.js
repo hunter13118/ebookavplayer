@@ -115,6 +115,29 @@ export function setCharacterDescriptionInPlayback(playback, id, description) {
   };
 }
 
+/** Is this character a human/humanoid design, or an animal/creature? Same
+ * shape/pattern as temperament and description above. Feeds image generation
+ * (edge-imaging.js/freemium-image.js) — gendered "beautiful anime girl" /
+ * "handsome anime man" aesthetic-boost tags only make sense for a humanoid
+ * character; forcing them onto an animal character (e.g. "Lucy", "Krul")
+ * would push human anatomy onto a non-human design. Unset/null means
+ * humanoid (the common case) — only explicitly set false for animals. */
+export function setCharacterIsHumanoidInAnalysis(analysis, id, isHumanoid) {
+  if (!(analysis.characters || []).some((c) => c.id === id)) return analysis;
+  return {
+    ...analysis,
+    characters: analysis.characters.map((c) => (c.id === id ? { ...c, is_humanoid: isHumanoid } : c)),
+  };
+}
+
+export function setCharacterIsHumanoidInPlayback(playback, id, isHumanoid) {
+  if (!playback.characters?.[id]) return playback;
+  return {
+    ...playback,
+    characters: { ...playback.characters, [id]: { ...playback.characters[id], is_humanoid: isHumanoid } },
+  };
+}
+
 const MAX_REFERENCE_IMAGES = 8;
 
 /** User-uploaded reference pictures of their own choosing, shown in the
@@ -146,6 +169,33 @@ export function addCharacterReferenceImageInPlayback(playback, id, url) {
         ...c,
         reference_images: [...new Set([...(c.reference_images || []), url])].slice(-MAX_REFERENCE_IMAGES),
       },
+    },
+  };
+}
+
+/** Drop one reference image (a redundant near-duplicate crop, or a
+ * mismatched face) from a character's reference_images — the R2 object
+ * itself is left alone (cheap, and other characters/history may still point
+ * at it); this only detaches it from this character's list. */
+export function removeCharacterReferenceImageInAnalysis(analysis, id, url) {
+  if (!(analysis.characters || []).some((c) => c.id === id)) return analysis;
+  return {
+    ...analysis,
+    characters: analysis.characters.map((c) => (c.id === id ? {
+      ...c,
+      reference_images: (c.reference_images || []).filter((u) => u !== url),
+    } : c)),
+  };
+}
+
+export function removeCharacterReferenceImageInPlayback(playback, id, url) {
+  if (!playback.characters?.[id]) return playback;
+  const c = playback.characters[id];
+  return {
+    ...playback,
+    characters: {
+      ...playback.characters,
+      [id]: { ...c, reference_images: (c.reference_images || []).filter((u) => u !== url) },
     },
   };
 }

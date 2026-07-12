@@ -59,4 +59,40 @@ const analysis = {
   assert.equal(pb.scenes[0].lines[0].illustration_url, "/media/demo/anime/insert_27.png?v=1");
 }
 
+// Regression: a raw EPUB plate URL that got stuck in an old stored book's
+// character/scene sprite (from before applyDirectIllustrations stopped
+// writing them there — see illustrations.js) must self-heal on the next
+// recompile rather than being preserved forever by the "any existing
+// /media/ sprite wins" reuse rule, which can't otherwise distinguish a real
+// generated portrait from a raw plate.
+{
+  const analysisWithPlates = {
+    ...analysis,
+    illustration_urls: { 0: "/media/demo/illustrations/img_000.jpg" },
+  };
+  const oldWithBadSprite = {
+    art_style: "anime",
+    characters: { hero: { sprite: "/media/demo/illustrations/img_000.jpg" } },
+    scenes: [{
+      id: "s1",
+      present: [{ character_id: "hero", sprite: "/media/demo/illustrations/img_000.jpg" }],
+    }],
+  };
+  const healed = enrichPlaybackFromAnalysis(oldWithBadSprite, analysisWithPlates);
+  assert.notEqual(healed.characters.hero.sprite, "/media/demo/illustrations/img_000.jpg",
+    "raw plate sprite is not preserved across a recompile");
+  assert.ok(healed.characters.hero.sprite.startsWith("sprite:gradient:"),
+    "falls back to the placeholder gradient instead");
+  assert.notEqual(healed.scenes[0].present[0].sprite, "/media/demo/illustrations/img_000.jpg");
+
+  // A genuine generated portrait (not in illustration_urls) is still preserved.
+  const oldWithRealSprite = {
+    art_style: "anime",
+    characters: { hero: { sprite: "/media/demo/anime/char_hero.png?v=1" } },
+    scenes: [{ id: "s1", present: [{ character_id: "hero", sprite: "/media/demo/anime/char_hero.png?v=1" }] }],
+  };
+  const preserved = enrichPlaybackFromAnalysis(oldWithRealSprite, analysisWithPlates);
+  assert.equal(preserved.characters.hero.sprite, "/media/demo/anime/char_hero.png?v=1");
+}
+
 console.log("compile-playback-inserts.test.mjs: ok");

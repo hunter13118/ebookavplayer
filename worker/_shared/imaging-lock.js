@@ -4,8 +4,31 @@ import { getJob, putJob, putBookIndex } from "./jobs-kv.js";
 const STALE_MS = 20 * 60 * 1000;
 /** Queue pickup grace — ingest jobs may sit queued briefly without timestamps. */
 const QUEUED_GRACE_MS = 2 * 60 * 1000;
-/** Full freemium chain ≈ 5 providers × 18s — allow headroom before declaring stuck. */
-const PROVIDER_STALE_MS = 3 * 60 * 1000;
+/**
+ * Full freemium chain ≈ 5 providers × 18s — allow headroom before declaring
+ * stuck. This threshold is too tight for the local_sd provider though: a
+ * single animagine-xl character generation (28 steps, IP-Adapter reference
+ * conditioning) measured at 90-140s+ per image on Apple Silicon MPS, with no
+ * intermediate progress tick during that single "Trying local_sd for
+ * character X" attempt — a slow character (or the first one after the
+ * pipeline's been idle and needs to reload) could exceed the old 3-minute
+ * threshold on its own, well before actually being stuck. Confirmed live:
+ * this fired mid-generation, force-unlocking the book while local_sd was
+ * still legitimately working, orphaning the write before the `.next.png`
+ * staging file landed — surfaced as a dead link in the compare modal, since
+ * the UI already had a comparison entry pointing at a file that never got
+ * (or hadn't yet) written. Bumped again (2026-07-10, 6min -> 16min) once
+ * server.py's _generate_with_retry started auto-retrying up to
+ * MAX_MULTI_FACE_RETRIES+1 times server-side (each a full ~90-140s pass plus
+ * an Ollama vision classify call) — same failure mode, same fix: this must
+ * stay comfortably above tryLocalSd's own fetch timeout
+ * (freemium-image.js, currently 900s), or this lock check fires and
+ * force-unlocks the book while local_sd is still legitimately working,
+ * before the client-side fetch even times out. Harmless for the fast
+ * cloud-chain case this constant was originally tuned for, since those
+ * finish in seconds either way.
+ */
+const PROVIDER_STALE_MS = 16 * 60 * 1000;
 
 function waitingOnProvider(detail) {
   return / via |Trying /i.test(String(detail || ""));
@@ -44,10 +67,25 @@ function jobLooksStuck(job, { now = Date.now() } = {}) {
     if (now - ts > PROVIDER_STALE_MS) return true;
   }
 
+  // Root cause of a real, confirmed-live bug: this branch's own hardcoded
+  // 4-minute threshold was silently overriding PROVIDER_STALE_MS above.
+  // step_total is the ITEM count for the regen (characters/scenes/cover),
+  // not a diffusion step count — for the extremely common case of
+  // regenerating exactly ONE character, step_index >= step_total (atCap)
+  // is true from the moment that single item starts, for its entire
+  // duration, not just once it's actually finalizing. So a one-character
+  // local_sd job with detail "Trying local_sd for character · X" (which
+  // legitimately takes several minutes across retries — see
+  // MAX_MULTI_FACE_RETRIES) got force-unlocked here at 4 minutes even
+  // though PROVIDER_STALE_MS (16 min) says it isn't stuck yet. Skip this
+  // branch whenever the provider-wait branch above already owns the
+  // staleness call for this detail string — atCap/highProgress should only
+  // catch a stall AFTER the provider call returns (e.g. stuck finalizing/
+  // writing), which waitingOnProvider's detail pattern doesn't match.
   const atCap = job.step_index != null && job.step_total != null
     && job.step_index >= job.step_total;
   const highProgress = (job.progress ?? 0) >= 0.99;
-  if (active && (atCap || highProgress)) {
+  if (active && (atCap || highProgress) && !waitingOnProvider(detail)) {
     if (!ts) return false;
     if (now - ts > 4 * 60 * 1000) return true;
   }

@@ -127,6 +127,9 @@ const STAGE_META = {
     tier: "primary",
     lane: "image",
     requires: ["GEMINI_API_KEY"],
+    note: "Highest-quality default when a key is set. Full i2i support — up to "
+      + "3 reference images (crops/uploads) are sent inline as multimodal image "
+      + "parts alongside the text prompt, no separate IP-Adapter setup needed.",
   },
   freemium_image: {
     label: "Freemium APIs",
@@ -134,6 +137,12 @@ const STAGE_META = {
     tier: "freemium",
     lane: "image",
     requires: [],
+    note: "A chain of free/low-cost cloud providers, tried in order — see the "
+      + "\"image_freemium_character\"/\"image_freemium_background\" lanes below "
+      + "to reorder that inner chain. Pollinations auto-upgrades to its i2i "
+      + "(image-to-image) endpoint whenever a character has reference "
+      + "images/crops available; Hugging Face and Workers AI are text-only, no "
+      + "reference-image conditioning.",
   },
   local_sd: {
     label: "Local SD",
@@ -142,6 +151,18 @@ const STAGE_META = {
     lane: "image",
     requires: [],
     optionalEnv: ["LOCAL_IMAGE_URL"],
+    note: "Self-hosted SDXL/SD1.5 server (scripts/local-image-server/server.py, "
+      + "see docs/LOCAL_IMAGE_GEN.md) — one of three model profiles runs at a "
+      + "time, picked via LOCAL_IMAGE_MODEL: "
+      + "sdxl-turbo (2 steps, fastest, but base-SDXL photoreal training fights "
+      + "anime prompts — no i2i, turbo's guidance_scale=0 strips the mechanism "
+      + "IP-Adapter needs); "
+      + "animagine-xl (28 steps, anime-native training + real CFG, best anime "
+      + "fidelity, ~20-25x slower than turbo — i2i via IP-Adapter reference "
+      + "crops, the profile this book uses); "
+      + "sd15-anime-lcm (6 steps via LCM-LoRA, anime-native and close to turbo "
+      + "speed — also has i2i via IP-Adapter). "
+      + "Only animagine-xl and sd15-anime-lcm accept reference_image_b64.",
   },
   "pollinations-anon": {
     label: "Pollinations (free)",
@@ -149,6 +170,9 @@ const STAGE_META = {
     tier: "freemium",
     lane: "image_freemium",
     requires: [],
+    note: "Unauthenticated flux, 0 cost, no rate-limit tier — the always-available "
+      + "fallback. Auto-upgrades to i2i (image param, a reference URL) when a "
+      + "character has reference images available.",
   },
   "pollinations-seed": {
     label: "Pollinations (seed)",
@@ -156,6 +180,9 @@ const STAGE_META = {
     tier: "freemium",
     lane: "image_freemium",
     requires: ["POLLINATIONS_TOKEN"],
+    note: "Authenticated tier (costs pollen when balance > 0) — same i2i "
+      + "auto-upgrade as the free tier, plus access to the kontext/seedream/klein "
+      + "i2i models (POLLINATIONS_I2I_MODEL) not available unauthenticated.",
   },
   huggingface: {
     label: "Hugging Face",
@@ -166,6 +193,8 @@ const STAGE_META = {
     optionalEnv: ["HF_TOKEN", "FAL_KEY", "FAL_AI_API_KEY"],
     modelEnv: "HF_IMAGE_MODEL",
     defaultModel: "black-forest-labs/FLUX.1-schnell",
+    note: "Text-to-image only, no reference-image conditioning. Tries the HF "
+      + "Inference router first, then a direct fal.ai call if FAL_KEY is set.",
   },
   "workers-ai": {
     label: "Workers AI (FLUX)",
@@ -174,7 +203,8 @@ const STAGE_META = {
     lane: "image_freemium",
     requires: [],
     defaultModel: "@cf/black-forest-labs/flux-1-schnell",
-    note: "Edge AI binding — last resort; shares 10k neurons/day with extract",
+    note: "Edge AI binding — last resort; shares 10k neurons/day with extract. "
+      + "Text-to-image only, no reference-image conditioning.",
   },
 };
 
@@ -364,6 +394,7 @@ export async function publicView(env) {
         enabled: !disabled.has(sid),
         available: stageAvailable(env, sid),
         model,
+        note: meta.note || null,
       };
     });
     lanes[lane] = { title: laneTitle(lane), items };

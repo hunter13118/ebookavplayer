@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { revertMediaAsset, commitMediaAsset } from "../api.js";
+import {
+  revertMediaAsset, commitMediaAsset, replaceMedia, generateMomentIllustration,
+} from "../api.js";
 import { backgroundStyle, spriteVisual, mediaImageSrc, resolveCompareArtStyle } from "../media.js";
+import { patchOfflineMediaAsset } from "../offline/packBridge.js";
 
 function cacheBust(url) {
   if (!url) return url;
@@ -31,9 +34,15 @@ function CompareThumb({ url, kind, label }) {
   }
   const v = spriteVisual(url);
   if (v.type === "image") {
+    // v.url is already fully resolved (spriteVisual -> mediaUrl already
+    // prepends the API base / checks the offline-pack cache) — do NOT run
+    // it through mediaImageSrc again, that double-prepends the API base
+    // (e.g. "/projects/x/api/projects/x/api/media/...") and 503s. Every
+    // other spriteVisual() caller (Sprite.jsx, ReplaceArtSheet.jsx) already
+    // uses v.url directly for exactly this reason.
     return (
       <div className="vae-compare-thumb">
-        <img src={mediaImageSrc(cacheBust(v.url))} alt={label} draggable={false} />
+        <img src={cacheBust(v.url)} alt={label} draggable={false} />
       </div>
     );
   }
@@ -51,6 +60,7 @@ export default function ArtCompareSheet({
   queueRemaining = 0,
   open,
   onResolved,
+  onRetry,
 }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -67,7 +77,15 @@ export default function ArtCompareSheet({
     setBusy(true);
     setErr("");
     try {
-      await revertMediaAsset(book.book_id, comparison.kind, comparison.key, { style });
+      const { url } = await revertMediaAsset(book.book_id, comparison.kind, comparison.key, {
+        style,
+        jobId: comparison.jobId,
+      });
+      // Best-effort — an install-less/never-installed book has nothing to
+      // patch, and a failure here must not block the revert itself (the
+      // live URL is already correct either way; worst case is the old
+      // full-pack-resync path is still available as a fallback).
+      patchOfflineMediaAsset(book.book_id, url).catch(() => {});
       onResolved?.("reverted");
     } catch (e) {
       setErr(e.message || "Revert failed.");
@@ -80,10 +98,53 @@ export default function ArtCompareSheet({
     setBusy(true);
     setErr("");
     try {
-      await commitMediaAsset(book.book_id, comparison.kind, comparison.key, { style });
+      const { url } = await commitMediaAsset(book.book_id, comparison.kind, comparison.key, {
+        style,
+        jobId: comparison.jobId,
+      });
+      patchOfflineMediaAsset(book.book_id, url).catch(() => {});
       onResolved?.("kept");
     } catch (e) {
       setErr(e.message || "Could not keep new art.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Fires a brand-new generation for just this one item, without leaving the
+  // sheet or reselecting anything in ReplaceArtSheet — avoids re-paying the
+  // reopen/reselect UI cost on every retry. The local image server's model
+  // stays warm between requests either way (see docs/LOCAL_IMAGE_GEN.md), so
+  // this doesn't skip any real setup cost, just the UI friction of getting
+  // back to "regenerate this one" after a bad result. The never-committed
+  // "after" from this attempt is simply superseded; nothing was kept live, so
+  // there's nothing to revert first — the new job reads the same live
+  // "before" this sheet is already showing.
+  async function retry() {
+    setBusy(true);
+    setErr("");
+    try {
+      let jobId;
+      if (comparison.kind === "inserts") {
+        const lineIdx = parseInt(comparison.key, 10);
+        ({ job_id: jobId } = await generateMomentIllustration(book.book_id, { lineIdx, diversify: true }));
+      } else {
+        const body = {
+          scope: "selected",
+          force_all: false,
+          include_cover: comparison.kind === "cover",
+          character_ids: comparison.kind === "characters" ? [comparison.key] : null,
+          scene_ids: comparison.kind === "backgrounds" ? [comparison.key] : null,
+          ignore_pins: true,
+          compare: true,
+          diversify: true,
+          art_style: style,
+        };
+        ({ job_id: jobId } = await replaceMedia(book.book_id, body));
+      }
+      onRetry?.(jobId);
+    } catch (e) {
+      setErr(e.message || "Retry failed.");
     } finally {
       setBusy(false);
     }
@@ -116,6 +177,11 @@ export default function ArtCompareSheet({
             <button type="button" disabled={busy} onClick={keepPrevious}>
               Keep previous
             </button>
+            {onRetry && (
+              <button type="button" disabled={busy} onClick={retry} title="Generate this one again">
+                {busy ? "…" : "Try again"}
+              </button>
+            )}
             <button type="button" className="primary" disabled={busy} onClick={keepNew}>
               Keep new
             </button>

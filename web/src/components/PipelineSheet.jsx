@@ -67,6 +67,7 @@ function LaneSection({ laneKey, lane, onChange }) {
               {item.model && <span className="vae-pipeline-model">{item.model}</span>}
               {!item.available && <span className="vae-pipeline-badge">no key</span>}
               <span className="vae-pipeline-tier">{item.tier}</span>
+              {item.note && <p className="vae-pipeline-note">{item.note}</p>}
             </div>
           </li>
         ))}

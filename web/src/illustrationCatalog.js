@@ -1,5 +1,11 @@
-/** EPUB illustration plate catalog from playback / analysis fields. */
-
+/**
+ * EPUB illustration plate catalog from playback / analysis fields — used
+ * only for the cover-art plate picker (EpubPlatesSheet.jsx) now. Per-
+ * character plate assignment was removed (2026-07-10): a raw plate is
+ * rarely a clean single-character portrait, see CropCatalog.jsx and
+ * illustrations.js's applyDirectIllustrations docstring for why crops
+ * replaced it as the "who is this" unit.
+ */
 export function listIllustrationPlates(book) {
   const urls = book?.illustration_urls || {};
   return Object.entries(urls)
@@ -10,31 +16,4 @@ export function listIllustrationPlates(book) {
     }))
     .filter((p) => !Number.isNaN(p.index))
     .sort((a, b) => a.index - b.index);
-}
-
-/** Map plate index → list of character names using it as reference. */
-export function plateAssignmentMap(book) {
-  const map = new Map();
-  const coverRef = book?.cover_illustration_ref;
-  if (coverRef != null) {
-    map.set(coverRef, ["Cover"]);
-  }
-  for (const [id, c] of Object.entries(book?.characters || {})) {
-    if (id === "narrator") continue;
-    const ref = c?.illustration_ref;
-    if (ref == null) continue;
-    const list = map.get(ref) || [];
-    list.push(c.name || id);
-    map.set(ref, list);
-  }
-  return map;
-}
-
-export function characterIllustrationRefs(book) {
-  const out = {};
-  for (const [id, c] of Object.entries(book?.characters || {})) {
-    if (id === "narrator") continue;
-    if (c?.illustration_ref != null) out[id] = c.illustration_ref;
-  }
-  return out;
 }

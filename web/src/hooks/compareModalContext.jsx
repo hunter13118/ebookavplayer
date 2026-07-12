@@ -31,6 +31,7 @@ export function CompareModalProvider({ bookId, book, children }) {
         queueRemaining={compare.queueRemaining}
         open={compare.compareOpen}
         onResolved={(outcome) => onResolvedRef.current?.(outcome)}
+        onRetry={(jobId) => compare.startCompareJob(jobId)}
       />
     </CompareModalContext.Provider>
   );

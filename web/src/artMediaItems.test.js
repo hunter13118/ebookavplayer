@@ -78,4 +78,30 @@ describe("artMediaItems", () => {
     const body = selectionToGenerateBody([items[0].key], items, book, { styleOverride: "watercolor storybook" });
     expect(body.art_style).toBe("watercolor storybook");
   });
+
+  it("selectionToGenerateBody defaults force_reference to false", () => {
+    const book = makeBook();
+    const items = listArtMediaItems(book);
+    const charItem = items.find((it) => it.key === "char:eizo");
+    const body = selectionToGenerateBody([charItem.key], items, book);
+    expect(body.force_reference).toBe(false);
+  });
+
+  it("selectionToGenerateBody threads forceReference through for a character selection", () => {
+    const book = makeBook();
+    const items = listArtMediaItems(book);
+    const charItem = items.find((it) => it.key === "char:eizo");
+    const body = selectionToGenerateBody([charItem.key], items, book, { forceReference: true });
+    expect(body.force_reference).toBe(true);
+  });
+
+  it("selectionToGenerateBody ignores forceReference for a non-character-only selection", () => {
+    // force_reference only means something for IP-Adapter character
+    // conditioning — a background-only selection has nothing to force.
+    const book = makeBook();
+    const items = listArtMediaItems(book);
+    const bgItem = items.find((it) => it.key === "bg:s0");
+    const body = selectionToGenerateBody([bgItem.key], items, book, { forceReference: true });
+    expect(body.force_reference).toBe(false);
+  });
 });

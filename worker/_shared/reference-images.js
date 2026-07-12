@@ -173,7 +173,17 @@ export async function referenceTargetsForCharacter(env, bookId, analysis, charac
     urls.push(...t.urls);
   }
 
-  if (characterId) {
+  // Only fall back to the character's current live sprite when NONE of the
+  // higher-priority sources above (explicit reference_images, external refs,
+  // illustration_ref) actually found anything — this block used to `unshift`
+  // unconditionally, which meant the live sprite always won bytes[0] even
+  // when an explicit reference crop was already in `bytes`, since local_sd
+  // (freemium-image.js's tryLocalSd) only ever sends referenceImages[0].
+  // Confirmed live: a character with a clean, explicitly-assigned reference
+  // crop still got conditioned on their own broken "character sheet" grid
+  // sprite, because the grid sprite silently displaced the real reference
+  // instead of only being used when there was nothing better.
+  if (characterId && bytes.length === 0) {
     const pub = spritePublicUrl(bookId, artStyle, characterId);
     const spriteKey = r2MediaKey(bookId, artStyle, `char_${characterId}.png`);
     const spriteObj = await env.VAE_PACKS.get(spriteKey);
