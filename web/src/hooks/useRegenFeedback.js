@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { subscribeJobEvents, jobEventToStatus, unlockImaging } from "../api.js";
+import { subscribeJobEvents, jobEventToStatus, unlockImaging, fetchJobStatus } from "../api.js";
 import { useClientBanners } from "./useClientBanners.js";
 import { logLineFromEvent } from "./useJobEvents.js";
 import { summarizeRegenTarget } from "../regenSummary.js";
@@ -227,11 +227,37 @@ export function useRegenFeedback(bookId) {
     const stored = readStoredRegen(bookId);
     if (!stored?.jobId || !stored?.regen || cleanupRef.current) return undefined;
     if (hasPendingCompareReview(bookId)) return undefined;
-    trackImagingJob(stored.jobId, stored.label || "art", {
-      holdAfterDone: stored.holdAfterDone,
-      onDone: () => {},
-    });
-    return undefined;
+
+    let cancelled = false;
+    // A stored job can outlive its own job — reopening the tab (or just
+    // remounting) days later used to resume tracking unconditionally,
+    // subscribing to a job that finished (or errored, or was cleaned up
+    // out of KV) long ago. Since a dead job never emits another SSE event,
+    // the banner got stuck showing its very first "queued" state forever —
+    // confirmed live: "Regenerating 2 images — queued · 25%" with a
+    // processing log of nothing but repeated "queued" entries at
+    // different timestamps (each SSE reconnect re-delivering the same
+    // stale initial event, never a real one). Check the job's actual
+    // current status once before resuming; only keep tracking it if it's
+    // genuinely still in flight.
+    fetchJobStatus(stored.jobId)
+      .then((job) => {
+        if (cancelled) return;
+        if (job?.status === "done" || job?.status === "error") {
+          writeStoredRegen(bookId, null);
+          return;
+        }
+        trackImagingJob(stored.jobId, stored.label || "art", {
+          holdAfterDone: stored.holdAfterDone,
+          onDone: () => {},
+        });
+      })
+      .catch(() => {
+        // Job vanished entirely (e.g. KV expired) — nothing to resume.
+        if (!cancelled) writeStoredRegen(bookId, null);
+      });
+
+    return () => { cancelled = true; };
   }, [bookId, trackImagingJob]);
 
   return {

@@ -150,6 +150,18 @@ export async function onExpressionSpriteRegenPost({ request, env, bookId, charac
   const meta = metaRaw ? JSON.parse(metaRaw) : {};
   const style = meta.art_style || playback?.active_style || "anime";
 
+  // No lock check here, deliberately — this request always gets a job id
+  // and gets enqueued immediately, even if another expression-sprites (or
+  // bulk imaging-regen) job is already running on this book. Confirming a
+  // batch of staged characters back-to-back (each commit auto-triggers its
+  // own backfill, see onMediaCommitPost below) should queue up, not have
+  // the 2nd/3rd/... confirm's backfill silently dropped because the 1st
+  // one is still generating — that's the "move onto the next character"
+  // behavior. expression-sprites-consumer.js takes the actual
+  // imaging_locked/active_job_id lock itself, right before it starts
+  // touching books/{id}.json, and retries (with a delay) if something
+  // else already holds it — the queue's own ordering does the serializing,
+  // this API layer no longer gate-keeps it.
   const jobId = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
   const job = {
     job_id: jobId,
@@ -854,7 +866,9 @@ export async function onMediaUploadPost({ request, env, bookId }) {
   await patchPlaybackMediaUrl(env, bookId, kind, mediaKey, url);
   if (kind === "cover") await syncCatalogCover(env, bookId, url);
 
-  return json({ kind, key, url });
+  const expressionSpritesJobId = await maybeTriggerExpressionBackfill(env, bookId, kind, mediaKey, style);
+
+  return json({ kind, key, url, expression_sprites_job_id: expressionSpritesJobId });
 }
 
 /** POST /books/:id/media/commit */
@@ -883,43 +897,63 @@ export async function onMediaCommitPost({ request, env, bookId }) {
   if (kind === "cover") await syncCatalogCover(env, bookId, url);
   if (body.job_id) await clearResolvedComparison(env, body.job_id, kind, key);
 
-  // A primary character's base portrait was staged (compare mode always
-  // stages by default — see imaging-regen-consumer.js), so runEdgeImaging's
-  // inline expression-sprite generation was skipped at generation time (it
-  // requires `stored.promoted`, i.e. NOT staged). Confirming here is the
-  // only later point that knows this sprite is now live — backfill the
-  // alt-expression variants now instead of leaving primary characters
-  // permanently missing expression art whenever a regen went through
-  // compare/review (the default UI flow).
-  let expressionSpritesJobId = null;
-  if (kind === "characters") {
-    const character = playback?.characters?.[key];
-    const hasExpressions = character?.expressionSprites
-      && Object.keys(character.expressionSprites).length > 0;
-    if (wantsExpressionSprites(character) && !hasExpressions) {
-      expressionSpritesJobId = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
-      const job = {
-        job_id: expressionSpritesJobId,
-        book_id: bookId,
-        kind: "expression-sprites",
-        status: "queued",
-        progress: 0,
-        detail: "queued",
-        stage: "queued",
-      };
-      await putJob(env, "ingest", expressionSpritesJobId, job);
-      await emitJobEvent(env, expressionSpritesJobId, jobToEvent(job, "queued"));
-      await enqueueJob(env, {
-        kind: "expression-sprites",
-        job_id: expressionSpritesJobId,
-        book_id: bookId,
-        character_id: key,
-        art_style: style,
-      });
-    }
-  }
+  const expressionSpritesJobId = await maybeTriggerExpressionBackfill(env, bookId, kind, key, style);
 
   return json({ ok: true, url, expression_sprites_job_id: expressionSpritesJobId });
+}
+
+/**
+ * A character's LIVE base portrait just changed — check whether it now
+ * qualifies for expression-sprite generation (`wantsExpressionSprites`)
+ * and doesn't have any yet, and if so enqueue the backfill job. Shared by
+ * every path that can update a character's live sprite:
+ * - onMediaCommitPost: confirming a staged (compare-mode) regen —
+ *   runEdgeImaging's inline expression-sprite generation requires the base
+ *   sprite to be `promoted` (not staged), so it's always skipped at
+ *   generation time for the default compare flow; this is the first later
+ *   point that knows the sprite is now live.
+ * - onMediaUploadPost: a direct manual "upload replacement image" — never
+ *   went through runEdgeImaging's generation loop at all, so without this
+ *   call a manually-uploaded portrait would never get expression art
+ *   either, even for an already-eligible primary character. Confirmed
+ *   live: this was a real, reported gap — replacing eizo's portrait via
+ *   upload silently never fired a backfill.
+ * Always enqueues, never skips on a busy lock — reviewing/uploading
+ * several characters back-to-back must queue each backfill up, not
+ * silently drop the 2nd/3rd/... because the 1st is still generating.
+ * expression-sprites-consumer.js takes the actual lock itself and retries
+ * if something else holds it (see tryAcquireLock there); this API layer
+ * just needs to get the job queued so nothing is lost.
+ */
+async function maybeTriggerExpressionBackfill(env, bookId, kind, key, style) {
+  if (kind !== "characters") return null;
+  const pbObj = await env.VAE_PACKS.get(`books/${bookId}.json`);
+  const playback = pbObj ? await pbObj.json() : null;
+  const character = playback?.characters?.[key];
+  const hasExpressions = character?.expressionSprites
+    && Object.keys(character.expressionSprites).length > 0;
+  if (!wantsExpressionSprites(character) || hasExpressions) return null;
+
+  const jobId = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
+  const job = {
+    job_id: jobId,
+    book_id: bookId,
+    kind: "expression-sprites",
+    status: "queued",
+    progress: 0,
+    detail: "queued",
+    stage: "queued",
+  };
+  await putJob(env, "ingest", jobId, job);
+  await emitJobEvent(env, jobId, jobToEvent(job, "queued"));
+  await enqueueJob(env, {
+    kind: "expression-sprites",
+    job_id: jobId,
+    book_id: bookId,
+    character_id: key,
+    art_style: style,
+  });
+  return jobId;
 }
 
 /** Remove a resolved (kind, key) entry from a job's staged comparisons so the

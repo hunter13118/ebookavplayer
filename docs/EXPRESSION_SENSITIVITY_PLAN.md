@@ -174,6 +174,81 @@ character in.
   and "Expression art enabled" (checked) for a character that could never
   have gotten expression art before this change.
 
+**Update (2026-07-12, one more pass) — regen jobs weren't visible anywhere:**
+user feedback after the above shipped: triggering "regenerate all
+expressions" gave no indication anywhere that anything was happening — no
+entry in the Library's "Processing" queue (`IngestActivity.jsx`), nothing
+in the Player. Root cause: `onExpressionSpriteRegenPost` and the
+`onMediaCommitPost` backfill trigger created the job record and enqueued
+the message, but never touched the book's `active_job_id`/`imaging_locked`
+— and `Library.jsx`'s `catalogActiveJobs` (which feeds the queue panel)
+filters strictly on `active_job_id` being set. Fixed by taking the same
+lock every other art-generation job takes, for two reasons at once: (1) it
+makes the job show up in the Library queue, since that's the mechanism the
+queue already keys off; (2) this job and a bulk character/background regen
+both read-modify-write the whole `books/{id}.json` playback, so without
+the lock they could race and clobber each other's write — a real
+correctness reason to hold it, not just a display side effect. Symmetric
+with the earlier "staged/compare regens skip expression sprites" fix: the
+lock is taken before enqueueing (`onExpressionSpriteRegenPost` also now
+checks `ensureImagingLockFresh` first and 409s if something else is
+already running) and released in `expression-sprites-consumer.js` on both
+the success and error paths (previously that consumer never touched the
+book index at all).
+
+Also found and fixed a **second, unrelated stale-state bug** while
+verifying this in the Player itself: reopening/reloading the page showed a
+progress banner stuck at "Regenerating 2 images — queued · 25%" with a
+processing log of nothing but repeated "queued" entries at different
+timestamps. Root cause was in `useRegenFeedback.js`'s mount-time resume
+effect (reads `sessionStorage["vae-regen-job:{bookId}"]`, written by an
+earlier "Replace art" bulk regen session) — it resumed tracking
+unconditionally, subscribing to a job id that had long since finished (or
+been cleaned out of KV). A dead job never emits another SSE event, so the
+banner stayed pinned to whatever its very first event was, forever, with
+each SSE reconnect just re-delivering that same stale "queued" state at a
+new timestamp. Fixed by validating the stored job's actual current status
+(one-off `fetchJobStatus` call, not polling) before resuming — if it's
+already `done`/`error`, or the fetch fails because the job's gone entirely,
+the stale `sessionStorage` entry is cleared instead of being resumed.
+
+**Update (2026-07-12, yet another pass) — backfills were silently dropped,
+and the upload path never had one at all:** two more reports right after
+the above shipped.
+1. "Reviewing/confirming characters back-to-back, only some got expression
+   art." Root cause: `onExpressionSpriteRegenPost` and `onMediaCommitPost`'s
+   backfill trigger both took the imaging lock *at the API layer* before
+   enqueueing — if the lock was already held (e.g. by the previous
+   character's still-running backfill), the request was accepted (200) but
+   the backfill was silently skipped, not queued, not retried. Confirming
+   character 2 while character 1's expression job was still generating
+   meant character 2's backfill just never happened, with no error
+   surfaced anywhere. Fixed by moving lock acquisition out of the API
+   layer entirely: both endpoints now always create the job and enqueue it
+   immediately, no matter what else is running. `expression-sprites-
+   consumer.js` (`tryAcquireLock`) claims the lock right before it starts
+   touching `books/{id}.json`, and calls `message.retry({ delaySeconds:
+   30 })` if something else still holds it — Cloudflare Queues redelivers
+   the message later instead of it being lost. If the lock's held by a job
+   that's already `done`/`error` (crashed without releasing it), it
+   self-heals by just taking the lock rather than retrying forever against
+   nothing. Confirmed live: firing two regen requests for different
+   characters back-to-back both return a real `job_id` with `status:
+   "queued"` immediately (no more silent accept-and-drop).
+2. "Replaced eizo's portrait, expression art never regenerated for him."
+   Root cause: the backfill trigger only ever lived in
+   `onMediaCommitPost` — the "confirm a staged AI-generated portrait"
+   endpoint. `onMediaUploadPost` (Replace Art's "Upload replacement image"
+   mode — a direct manual file upload, never touches `runEdgeImaging` or
+   staging at all) had no backfill trigger whatsoever. A manually-uploaded
+   portrait for an eligible character with no expression art yet would
+   silently never get any. Fixed by extracting the shared check into
+   `maybeTriggerExpressionBackfill(env, bookId, kind, key, style)` and
+   calling it from both endpoints. Verified live: re-uploaded Emperor's
+   (primary, no expression art yet) portrait via `/media/upload` — response
+   now includes a real `expression_sprites_job_id`, and the job
+   immediately started generating (`Generating emperor:happy`).
+
 **Goal:** right now `expression` is real (schema → extraction → compile → sprite CSS →
 image prompts) but under-triggers, and even when it fires, over half of what the model
 actually says is thrown away downstream. Target vibe: **highly expressive, almost

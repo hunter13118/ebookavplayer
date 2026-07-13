@@ -1,9 +1,45 @@
+import { putBookIndex, getJob } from "../_shared/jobs-kv.js";
 import { touchIngestJob } from "../_shared/job-touch.js";
 import { createPhaseLogger, PHASE } from "../_shared/phase-debug.js";
 import { generateExpressionSpritesForCharacter } from "../_shared/edge-imaging.js";
 import { r2MediaKey } from "../_shared/freemium-image.js";
 import { normalizeExpressionBucket } from "../_shared/expression-bucket.js";
 import { isJobCancelled } from "../_shared/imaging-lock.js";
+
+const RETRY_DELAY_SECONDS = 30;
+
+/**
+ * Claim the imaging_locked/active_job_id lock for this job, or report that
+ * something else still holds it. Both API-layer callers (onExpressionSpriteRegenPost,
+ * onMediaCommitPost's backfill) enqueue unconditionally and don't touch the
+ * lock themselves — confirming several staged characters back-to-back must
+ * queue each one's backfill, not drop the 2nd/3rd because the 1st is still
+ * running. This is the actual serialization point: if another job's lock
+ * is still genuinely active, the caller retries later instead of racing a
+ * concurrent read-modify-write of books/{id}.json.
+ */
+async function tryAcquireLock(env, book_id, job_id, detail) {
+  const raw = await env.VAE_JOBS?.get(`book:${book_id}`);
+  const meta = raw ? JSON.parse(raw) : {};
+  const otherId = meta.active_job_id;
+  if (otherId && otherId !== job_id) {
+    const otherJob = await getJob(env, "ingest", otherId);
+    const otherStillActive = otherJob && otherJob.status !== "done" && otherJob.status !== "error";
+    if (otherStillActive) return false;
+    // The other job is done/errored but the book's lock never got cleared
+    // (e.g. a crash) — self-heal by just taking it instead of retrying
+    // forever against a lock nothing will ever release.
+  }
+  await putBookIndex(env, book_id, {
+    imaging_locked: true,
+    active_job_id: job_id,
+    status: "processing",
+    stage: "expression-sprites",
+    progress: 0,
+    detail,
+  });
+  return true;
+}
 
 /**
  * Generate (or regenerate) alt-expression portrait sprites for ONE primary
@@ -14,15 +50,25 @@ import { isJobCancelled } from "../_shared/imaging-lock.js";
  *   staged), so this is the only later point that knows the sprite is now
  *   live and can generate the missing variants — defaults to all of
  *   DEFAULT_EXPRESSIVE_BUCKETS.
- * - onExpressionSpriteRegenPost (`buckets: [oneBucket]`): an explicit
- *   "redo just this one expression" request — there's no bulk "redo all"
- *   equivalent by design, same cost-gate as the rest of this feature.
- * Independent of the main imaging lock either way — this is a best-effort
- * enhancement, not required for the book to be playable.
+ * - onExpressionSpriteRegenPost (`buckets: [oneBucket]` or all of them): an
+ *   explicit "redo this expression (or all of them)" request.
+ * Takes the same imaging_locked/active_job_id lock every other
+ * art-generation job takes, right here (not at enqueue time — see
+ * tryAcquireLock), and releases it on the way out, success or error, same
+ * as imaging-regen-consumer.js. That lock is also what makes the job show
+ * up in the Library's "Processing" queue (IngestActivity.jsx /
+ * Library.jsx's catalogActiveJobs) — this used to run with no queue
+ * visibility at all.
  */
 export async function handleExpressionSpritesMessage(message, env) {
   const { job_id, book_id, character_id, art_style, buckets } = message.body;
   const dbg = createPhaseLogger(env, "expression-sprites", job_id);
+
+  const gotLock = await tryAcquireLock(env, book_id, job_id, `Regenerating ${character_id}'s expression art…`);
+  if (!gotLock) {
+    message.retry({ delaySeconds: RETRY_DELAY_SECONDS });
+    return;
+  }
 
   try {
     await touchIngestJob(env, job_id, {
@@ -74,25 +120,44 @@ export async function handleExpressionSpritesMessage(message, env) {
       );
     }
 
+    const doneDetail = cancelled
+      ? `Expression art cancelled · ${ok} ok before stopping`
+      : `Expression art ready · ${ok} ok${fail ? `, ${fail} failed` : ""}`;
+    await putBookIndex(env, book_id, {
+      imaging_locked: false,
+      active_job_id: null,
+      status: "ready",
+      stage: "done",
+      progress: 1,
+      detail: doneDetail,
+    });
     await dbg.flush((patch) => touchIngestJob(env, job_id, patch, { eventType: "done", dbg }), {
       status: "done",
       stage: "done",
       progress: 1,
-      detail: cancelled
-        ? `Expression art cancelled · ${ok} ok before stopping`
-        : `Expression art ready · ${ok} ok${fail ? `, ${fail} failed` : ""}`,
+      detail: doneDetail,
       book_id,
     });
     message.ack();
   } catch (e) {
     console.error("expression sprites", job_id, e);
+    const errDetail = String(e.message || e).slice(0, 300);
     await touchIngestJob(env, job_id, {
       status: "error",
       stage: "error",
       progress: 0,
-      detail: String(e.message || e).slice(0, 300),
-      error: String(e.message || e).slice(0, 300),
+      detail: errDetail,
+      error: errDetail,
     }, { eventType: "error", dbg });
+    await putBookIndex(env, book_id, {
+      imaging_locked: false,
+      active_job_id: null,
+      status: "ready",
+      stage: "done",
+      progress: 1,
+      detail: errDetail,
+      error: errDetail,
+    }).catch(() => {});
     message.ack();
   }
 }
