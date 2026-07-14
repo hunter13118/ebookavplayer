@@ -45,8 +45,6 @@ export function resolveChapterDurationsFromContainer(slidesByChapter, containerI
  * @param {Blob} input.blob               The attached .m4b file.
  * @param {import('./types.js').ChapterSlides[]} input.slidesByChapter
  * @param {string} input.algorithmId      'linear' | 'punctuation' | 'moov-atom' | 'whisperx'
- *        (NOT 'forced-aligner' — that path doesn't scan a local blob; see
- *        forcedAlignerClient.js).
  * @param {{baseUrl:string}} [input.connection]  Required when algorithmId is 'whisperx'.
  * @param {(chapter:number, total:number) => void} [input.onChapterProgress]
  * @param {(partial: Record<number,{startMs:number,endMs:number,durationMs:number}>) => void} [input.onLinesReady]

@@ -1,5 +1,13 @@
 # Cloudflare as your backend (without Fly)
 
+> **Historical.** This is the pre-port planning doc for moving off FastAPI
+> onto Cloudflare Workers. That migration is complete — every phase listed
+> below shipped, including "drop `VAE_API_ORIGIN`/Fly entirely," which has
+> now happened: the origin-proxy fallback has been removed from `worker/`
+> entirely, and the original FastAPI backend is archived at
+> `legacy/server/`. Kept for historical record of the migration reasoning;
+> see [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) for the current architecture.
+
 Your expectation was right: **Cloudflare Pages static hosting ≠ a backend.**  
 But **Cloudflare Workers** *are* a backend — free tier included — with a different shape than FastAPI.
 

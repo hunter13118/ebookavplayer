@@ -114,7 +114,7 @@ def _ensure_owl(path: Path, *, skip_gen: bool) -> Path:
 
     from dotenv import load_dotenv
     load_dotenv(ROOT / ".env")
-    from server.images.freemium import _cfg, _maybe_purge_sprite_background, _try_pollinations_anon, compose_prompt
+    from legacy.server.images.freemium import _cfg, _maybe_purge_sprite_background, _try_pollinations_anon, compose_prompt
 
     prompt = compose_prompt(
         "Sable the owl familiar: surprised expression, wide golden eyes, blue-gray feathers, "
@@ -199,7 +199,7 @@ def main() -> int:
     ill = _ensure_owl(args.illustration, skip_gen=args.skip_owl_gen)
     build_epub(args.output, ill)
 
-    from server.epub.parse import parse_epub
+    from legacy.server.epub.parse import parse_epub
     book = parse_epub(str(args.output), BOOK_ID)
     print(
         f"Parse check: title={book.title!r} chapters={len(book.chapters)} "

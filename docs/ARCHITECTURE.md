@@ -7,23 +7,29 @@ with an older doc, this file wins. Keep it live: update it in the same
 session as any change to a backend, pipeline stage, or default (see
 `.claude/CLAUDE.md`).
 
-## Two backends exist; one is deployed
+## One backend; the legacy one is retired
 
-> **`worker/` (Cloudflare Workers) is the current, actively developed and
-> deployed backend.** `server/` (Python/FastAPI) is **not dead code** — it's
-> a large, actively-tested local package (192+ passing tests under `tests/`)
-> that a real body of dev/ops tooling still imports directly:
-> `scripts/audit_expression.py`, `scripts/validate_extract.py`,
-> `scripts/smoke_extract.py`, `scripts/purge_white_background.py`,
-> `scripts/build_e2e_test_epub.py`, plus `scripts/local-align-server/` (which
-> re-exports `server/align/forced_aligner.py`). Treat `server/` as **local
-> library + test infrastructure**, not as a service anyone runs in
-> production. Nothing in the deployed path imports it — `VAE_API_ORIGIN`
-> (the one wire that could connect a live FastAPI origin to the Worker) is
-> unset in both this repo's `worker/wrangler.toml` and the production
-> `milkman-webapp-portfolio` repo's config, so the Worker's origin-proxy
-> fallback (`worker/_shared/proxy-fetch.js`) is a dead-end safety net that
-> always 503s, not a live tier.
+> **`worker/` (Cloudflare Workers) is the only backend.** The original
+> Python/FastAPI implementation is archived at `legacy/server/` — kept for
+> git history and reference, not run in any active path. A handful of
+> dev/ops scripts still import it directly (`scripts/audit_expression.py`,
+> `scripts/validate_extract.py`, `scripts/smoke_extract.py`,
+> `scripts/purge_white_background.py`, `scripts/build_e2e_test_epub.py`,
+> `scripts/test_freemium_providers.py` — all import `legacy.server.*`), so it
+> isn't deleted outright, but it carries no test coverage of its own anymore
+> and should not gain new functionality. The Worker's origin-proxy fallback
+> (which used to reach a live FastAPI origin via `VAE_API_ORIGIN`) has been
+> removed entirely — there is no origin tier, dead or otherwise, left in
+> `worker/`.
+>
+> `scripts/local-align-server/` is a **separate, unrelated** standalone
+> WhisperX ASR server (Algorithm 5/"whisperx" in the timing engine) — it does
+> not import from `legacy/server/` and never did; the two just happen to
+> both be local-dev-only Python. The old "Forced aligner (local server)"
+> timing option, which *was* backed by `legacy/server/align/forced_aligner.py`,
+> was removed from the UI — its only working code path duplicated math the
+> client already does for free, and its planned real backends (Aeneas/MMS)
+> were never implemented.
 
 Production deploy: handlers under `worker/` are copied into
 `milkman-webapp-portfolio/worker/ebookavplayer/` at build time and served
@@ -44,11 +50,11 @@ worker/                 Cloudflare Workers backend — the deployed API
   durable-objects/         job/queue coordination (JobEventHub)
   wrangler.toml            R2 + KV + Queue bindings, dev port 8600
 
-server/                 Python package — local test/tooling infra, NOT deployed
-  align/forced_aligner.py   live consumer: scripts/local-align-server/
-  pipeline/registry.py      Python-side mirror of worker/_shared/pipeline-registry.js
-  analyze/, epub/, images/, playback/, audio/  original mega-pass pipeline,
-                            covered by tests/test_*.py (192+ passing)
+legacy/server/           Archived Python/FastAPI backend — NOT deployed, NOT tested
+  align/forced_aligner.py   dead: backed a removed timing-UI option, no live consumer
+  pipeline/registry.py      superseded by worker/_shared/pipeline-registry.js
+  analyze/, epub/, images/, playback/, audio/  original mega-pass pipeline;
+                            still imported by a few scripts/*.py dev tools (see above)
 
 web/                     React + Vite client
   src/audio/               orchestrator.js (timing authority — do not touch lightly),
@@ -59,10 +65,13 @@ web/                     React + Vite client
   src/components/          Library, Player, Stage, Sprite, dialogue boxes,
                            CharacterManager, GapNavSheet, Controls...
 
-scripts/local-align-server/  Local WhisperX forced-alignment bridge (dev tool)
-scripts/                 Dev/ops tooling — several scripts import server.* (see above)
+scripts/local-align-server/  Local WhisperX forced-alignment bridge (dev tool, standalone)
+scripts/                 Dev/ops tooling — a few scripts import legacy.server.* (see above)
 data/books/               per-book sidecars (.analysis/.media/.status/.progress)
-tests/                    root node tests/*.test.mjs + python tests/test_*.py
+tests/                    root node tests/*.test.mjs + a small python tests/test_*.py
+                          set (only for scripts/local-align-server/ and
+                          scripts/local-image-server/ — legacy/server/ has no
+                          test coverage)
 web/tests/e2e/            Playwright specs against the Vite client
 ```
 
@@ -95,11 +104,12 @@ npm test
 
 Runs every `tests/*.test.mjs` (root, no per-file script needed — new test
 files are picked up automatically by `scripts/run-all-tests.mjs`) followed by
-`npm --prefix web test` (Vitest, 49 files / 400+ tests). The Python suite
-(`tests/test_*.py`, `server/`-backed) is separate — run with
-`python -m pytest tests -q` from a `venv` with `requirements.txt` installed;
-it's not wired into `npm test` because it exercises `server/` tooling paths,
-not the deployed Worker.
+`npm --prefix web test` (Vitest, 48 files / 390+ tests). A small separate
+Python suite (`tests/test_*.py`) covers `scripts/local-align-server/` and
+`scripts/local-image-server/` only (six files) — run with
+`python -m pytest tests -q` from a `venv` with `requirements.txt` installed.
+It's not wired into `npm test` since it's local-dev-tooling coverage, not the
+deployed Worker; `legacy/server/` itself has no test coverage anymore.
 
 Note: this environment's Node (26.x) ships an experimental native
 `globalThis.localStorage` that shadows Vitest's jsdom implementation unless

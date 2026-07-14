@@ -11,9 +11,6 @@ export {
 export {
   scan as scanContainer, moovAtomTiming, findMoov, walkTopLevel, tailScanForMoov, readAtomHeader, MOOV_MARKER,
 } from "./moovAtomScanner.js";
-export {
-  forcedAlignerClient, manifestToTimingResult, ALIGNER_MARKER,
-} from "./forcedAlignerClient.js";
 
 export {
   ALGORITHMS, DEFAULT_ALGORITHM, getAlgorithm, describeAlgorithms, isKnownAlgorithm, computeTimeline,

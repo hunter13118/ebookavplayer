@@ -1,25 +1,7 @@
-import { proxyToOrigin, originBase } from "../../_shared/proxy-fetch.js";
 import { packDownloadResponse, tryPackFromR2 } from "../../_shared/r2-packs.js";
 
-const API_PREFIX = "/projects/ebookavplayer/api";
-
-/**
- * Catch-all fallback for routes with no edge handler.
- * Proxies to VAE_API_ORIGIN when configured (not currently, in dev or prod —
- * see proxy-fetch.js); otherwise returns 503. Every real route below has its
- * own edge handler and only reaches this on an unrecognized path.
- */
-export async function onRequest({ request, env }) {
-  const url = new URL(request.url);
-  if (!url.pathname.startsWith(API_PREFIX)) {
-    return Response.json({ error: "not found" }, { status: 404 });
-  }
-  const upstream = url.pathname.slice(API_PREFIX.length) || "/";
-  return proxyToOrigin(request, env, upstream);
-}
-
-/** GET pack build file — R2 fast path, then origin. */
-export async function onPackBuildFileGet({ request, env, bookId, jobId }) {
+/** GET pack build file — R2 fast path, then KV job status. */
+export async function onPackBuildFileGet({ env, bookId, jobId }) {
   const hit = await tryPackFromR2(env, { jobId });
   if (hit) {
     return packDownloadResponse(hit.obj, `${bookId}.vaepack`);
@@ -55,17 +37,9 @@ export async function onPackBuildFileGet({ request, env, bookId, jobId }) {
     }
   }
 
-  if (!originBase(env)) {
-    return Response.json(
-      { error: "pack not found — start a build and wait until ready=true", job_id: jobId },
-      { status: 404 },
-    );
-  }
-  const url = new URL(request.url);
-  return proxyToOrigin(
-    request,
-    env,
-    `/books/${encodeURIComponent(bookId)}/pack/build/${encodeURIComponent(jobId)}/file${url.search}`,
+  return Response.json(
+    { error: "pack not found — start a build and wait until ready=true", job_id: jobId },
+    { status: 404 },
   );
 }
 
@@ -76,15 +50,10 @@ export async function onPackCacheGet({ env, cacheKey, bookId }) {
   return packDownloadResponse(hit.obj, `${bookId || "pack"}.${cacheKey}.vaepack`);
 }
 
-/** POST pack build — enqueue when queue binding present, else proxy to origin. */
-export async function onPackBuildPost({ request, env, bookId, body }) {
+/** POST pack build — enqueue on the edge job queue. */
+export async function onPackBuildPost({ env, bookId, body }) {
   if (!env.VAE_JOBS_QUEUE && !env.VAE_PACK_QUEUE) {
-    const url = new URL(request.url);
-    return proxyToOrigin(
-      request,
-      env,
-      `/books/${encodeURIComponent(bookId)}/pack/build${url.search}`,
-    );
+    return Response.json({ error: "no pack build queue configured" }, { status: 503 });
   }
   const jobId = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
   const msg = {
@@ -118,8 +87,8 @@ export async function onPackBuildPost({ request, env, bookId, body }) {
   });
 }
 
-/** POST cancel pack build — KV job update, origin fallback. */
-export async function onPackBuildCancelPost({ request, env, bookId, jobId }) {
+/** POST cancel pack build — KV job update. */
+export async function onPackBuildCancelPost({ env, bookId, jobId }) {
   if (env.VAE_JOBS) {
     const key = `job:${jobId}`;
     const raw = await env.VAE_JOBS.get(key);
@@ -145,19 +114,11 @@ export async function onPackBuildCancelPost({ request, env, bookId, jobId }) {
       return Response.json(updated);
     }
   }
-  if (!originBase(env)) {
-    return Response.json({ error: "no such pack job" }, { status: 404 });
-  }
-  const url = new URL(request.url);
-  return proxyToOrigin(
-    request,
-    env,
-    `/books/${encodeURIComponent(bookId)}/pack/build/${encodeURIComponent(jobId)}/cancel${url.search}`,
-  );
+  return Response.json({ error: "no such pack job" }, { status: 404 });
 }
 
-/** GET external audio manifest — R2 when present, stub on edge-only. */
-export async function onAudioManifestGet({ request, env, bookId }) {
+/** GET external audio manifest — R2 when present, stub otherwise. */
+export async function onAudioManifestGet({ env, bookId }) {
   if (env.VAE_PACKS) {
     const manifestObj = await env.VAE_PACKS.get(`books/${bookId}/audio/manifest.json`);
     if (manifestObj) {
@@ -169,18 +130,11 @@ export async function onAudioManifestGet({ request, env, bookId }) {
       return Response.json({ book_id: bookId, available: false, line_count: 0 });
     }
   }
-  if (originBase(env)) {
-    return proxyToOrigin(
-      request,
-      env,
-      `/books/${encodeURIComponent(bookId)}/audio/manifest`,
-    );
-  }
   return Response.json({ book_id: bookId, available: false, line_count: 0 });
 }
 
-/** Poll job status — KV first (edge pack build), origin fallback. */
-export async function onPackBuildStatusGet({ request, env, bookId, jobId }) {
+/** Poll job status — KV (edge pack build). */
+export async function onPackBuildStatusGet({ env, bookId, jobId }) {
   if (env.VAE_JOBS) {
     const raw = await env.VAE_JOBS.get(`job:${jobId}`);
     if (raw) {
@@ -196,13 +150,5 @@ export async function onPackBuildStatusGet({ request, env, bookId, jobId }) {
       });
     }
   }
-  if (!env.VAE_API_ORIGIN) {
-    return Response.json({ error: "no such pack job" }, { status: 404 });
-  }
-  const url = new URL(request.url);
-  return proxyToOrigin(
-    request,
-    env,
-    `/books/${encodeURIComponent(bookId)}/pack/build/${encodeURIComponent(jobId)}${url.search}`,
-  );
+  return Response.json({ error: "no such pack job" }, { status: 404 });
 }

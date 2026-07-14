@@ -5,19 +5,19 @@ cited directly from the repo.
 
 ## Which backend?
 
-Two backends exist. **`worker/` (Cloudflare Workers, via `wrangler dev`) is
-current and what every command below uses by default.** `server/` (Python
-FastAPI) is legacy — kept for reference and because `scripts/local-align-server`
-still imports `server/align/forced_aligner.py`. It's covered separately at the
-end, marked optional.
+One backend: **`worker/` (Cloudflare Workers, via `wrangler dev`)**, and
+that's what every command below uses by default. The original Python/FastAPI
+implementation is archived at `legacy/server/` — kept for reference and
+because a few dev scripts still import individual modules from it. It's
+covered separately at the end, marked optional.
 
 ## Prerequisites
 
 - **Node.js 18+** (for `wrangler` + web dev; [package.json:4](package.json#L4))
 - **npm** (ships with Node)
 - **Git** (to clone)
-- **Python 3.10+** — only needed for the legacy `server/app.py` path or the
-  local WhisperX align server; skip it for normal web/worker development.
+- **Python 3.10+** — only needed for the archived `legacy/server/app.py` path
+  or the local WhisperX align server; skip it for normal web/worker development.
 
 ## 1. Clone & install
 
@@ -169,7 +169,7 @@ your own hardware first.
 | `wrangler dev` fails with "port 8600 in use" | `lsof -i :8600 \| kill -9 <pid>`, or override with `PORT=8601 npm run dev:worker` |
 | Tests fail with "module not found" | Re-run `npm install` at root **and** in `web/` |
 | Web dev server proxy errors | Check `target` in [web/vite.config.js](web/vite.config.js) points at `:8600` |
-| `web/src/timing/whisperxAlignerClient` calls fail | The local align bridge isn't running — see [scripts/local-align-server/server.py](scripts/local-align-server/server.py) (Python, separate from the worker) |
+| `web/src/timing/whisperxAlignerClient` calls fail | The local align bridge isn't running — see [scripts/local-align-server/server.py](scripts/local-align-server/server.py) (Python, standalone WhisperX ASR server, separate from both the worker and `legacy/server/`) |
 | `.env` edits don't take effect in `dev:worker` | You're editing `worker/.dev.vars` directly — edit root `.env` instead, `sync-dev-vars.mjs` regenerates it |
 | Character merge doesn't persist | Confirm the KV binding in [worker/wrangler.toml:31](worker/wrangler.toml#L31) is configured |
 | A book is stuck showing "Processing" with no progress (e.g. after a dev server restart or crash mid-extraction) | Library → **⋯** → select the book → **Cancel processing**. Can't interrupt an already-running queue consumer invocation (no cancel primitive), but it marks the dead job terminal and resets the book to "partial" (resumable, if any chapters finished) or "error" — see `onCancelProcessingPost` in [worker/api/v1/book-actions.js](worker/api/v1/book-actions.js) |
@@ -179,21 +179,26 @@ your own hardware first.
 
 ---
 
-## Optional: legacy Python/FastAPI backend
+## Optional: archived Python/FastAPI backend
 
-Only needed if you're working on `server/` itself or a tool that imports it
-(e.g. the local align server needs `server/align/forced_aligner.py`, but only
-that one module — you don't need the FastAPI app running for it).
+Only needed if you're working on `legacy/server/` itself or a dev script
+that still imports individual modules from it (`scripts/audit_expression.py`,
+`scripts/validate_extract.py`, `scripts/smoke_extract.py`,
+`scripts/purge_white_background.py`, `scripts/build_e2e_test_epub.py`,
+`scripts/test_freemium_providers.py`). It carries no test coverage anymore
+and isn't wired to the Worker in any way — `scripts/local-align-server/`
+(the WhisperX bridge) is a separate, unrelated standalone server and does
+**not** import from it.
 
 ```bash
 pip install -r requirements.txt
 export GEMINI_API_KEY=<key>
-uvicorn server.app:app --port 8600 --reload --reload-dir server
+uvicorn legacy.server.app:app --port 8600 --reload --reload-dir legacy/server
 ```
 
-See [server/app.py](server/app.py) for the FastAPI app, and
+See [legacy/server/app.py](legacy/server/app.py) for the FastAPI app, and
 [docs/HOST_CHECKLIST.md](docs/HOST_CHECKLIST.md) for its full host-verification
-checklist (pytest, live Edge TTS smoke, Gemini smoke script). That checklist
+checklist (pytest, live Edge TTS smoke, Gemini smoke script) — historical,
 predates the Workers port and does not cover `worker/`.
 
 ## Optional: local LLM extraction (Ollama)

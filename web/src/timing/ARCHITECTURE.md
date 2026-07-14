@@ -26,7 +26,7 @@ book.scenes ──buildSlidesByChapter──▶ ChapterSlides[]  (lines grouped 
         │
         ├─(1 linear / 2 punctuation)  needs per-chapter audio durations ──┐
         ├─(3 moov-atom)  scanContainer(blob) ─▶ ContainerInfo (mvhd dur + chpl chapters)
-        └─(4 forced-aligner)  POST /books/{id}/audio/align ─▶ manifest
+        └─(4 whisperx)  streams NDJSON from a local align server ─▶ per-line timings
                                                                           │
    distributeProportional(totalMs, weights)  ◀───────────────────────────┘
         │  (THE zero-drift core: cumulative-boundary rounding)
@@ -48,7 +48,7 @@ at render time, exactly as it already does for measured TTS durations).
 | 1 | `linear` | `naive-linear-fallback` | client | instant | O(lines) | low | **0 ms** |
 | 2 | `punctuation` | `punctuation-density-map` | client | instant | O(lines) | medium | **0 ms** |
 | 3 | `moov-atom` | `container-atom-snap` | client | ms (header reads only) | O(moov), **never O(file)** | high at chapter edges | **0 ms** within chapter |
-| 4 | `forced-aligner` | `phonetic-forced-align` | local server | seconds–minutes | host-bound | **frame-perfect** | acoustic |
+| 4 | `whisperx` | `whisperx-forced-align` | local server | minutes (real ASR) | host-bound | real acoustic timing | fuzzy-match, chapter-by-chapter |
 
 ### Trade-off analysis
 
@@ -74,13 +74,18 @@ at render time, exactly as it already does for measured TTS durations).
   "instantly." Accuracy is high at chapter boundaries (real timestamps) but still linear
   *within* a chapter. Degrades gracefully to whole-book linear if the file has no `chpl`.
 
-- **4 — Forced aligner ("Smart Offline").** The only acoustically-correct option. Runs on
-  the user's own machine (FastAPI tier), pipes the audio + per-line transcript through a
-  real aligner (Aeneas / MMS) and returns frame-perfect per-line `[start,end]`. It writes
-  the **same manifest shape** the player already consumes (`ExternalAudioPack`), so the
-  result drops into the existing offline-audio path with no new consumption code. Ships
-  with a deterministic, dependency-free **proportional stub** so the endpoint works (and
-  is testable) on a host with no aligner binary installed; the real backends are drop-in.
+- **4 — WhisperX forced-align ("Smart Offline").** The only acoustically-correct option.
+  Runs against a local align server (`scripts/local-align-server/`, standalone — not part
+  of this repo's `worker/` deploy) that transcribes what the audiobook actually says
+  (WhisperX ASR) and fuzzy-matches it to the known line texts, chapter by chapter,
+  streaming results back as NDJSON as they resolve. Robust to audio/text drift (ad-libbed
+  narrator intros, minor abridgment) since it's matching against real transcribed speech
+  rather than assuming word-for-word alignment with a guessed boundary.
+
+  A prior "forced aligner" option (a local FastAPI endpoint under the now-retired
+  `server/`) was removed — its only working path was a deterministic proportional
+  distributor that reproduced Algorithms 1/2's math with an added network round-trip and
+  no acoustic benefit; its planned real backends (Aeneas / MMS) were never implemented.
 
 ## The zero-drift guarantee (Algorithms 1–3)
 
@@ -96,9 +101,7 @@ duration[i] = boundary[i] - boundary[i-1]
 The final cumulative weight equals the total weight, so the final boundary is
 `round(total) === total`; differences telescope to exactly `total`. Boundaries are
 non-decreasing (cumulative sum is monotonic, `Math.round` is monotonic), so no duration
-is ever negative. All-zero weights fall back to an even split. The same routine is
-re-implemented in Python (`server/align/forced_aligner.py`) so the local fallback is
-millisecond-identical to the client algorithms.
+is ever negative. All-zero weights fall back to an even split.
 
 ## File map
 
@@ -110,14 +113,12 @@ web/src/timing/
   linearSplit.js          — Algorithm 1
   punctuationDensity.js   — Algorithm 2 (+ punctuationWeight, elastic weights)
   moovAtomScanner.js      — Algorithm 3 (scan + moovAtomTiming; byte-range walking)
-  forcedAlignerClient.js  — Algorithm 4 client (calls local server, normalizes manifest)
+  whisperxAlignerClient.js — Algorithm 4 client (streams NDJSON from a local align server)
   registry.js             — multi-choice dispatch (ALGORITHMS, computeTimeline)
   fromContainer.js        — computeTimelineFromM4b: scan + resolve chapter durations + dispatch
   index.js                — public barrel
-server/align/
-  forced_aligner.py       — Algorithm 4 backends (stub + Aeneas/MMS skeletons), align_book
-  __init__.py
-server/app.py             — POST /books/{id}/audio/align (AlignAudioRequest)
+scripts/local-align-server/
+  server.py                — standalone WhisperX ASR + fuzzy-match align server (Algorithm 4 backend)
 web/src/audio/
   sharedAudioSource.js    — single <audio> element, plays a [startMs,endMs) segment per line
 web/src/offline/

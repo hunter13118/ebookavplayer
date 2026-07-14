@@ -41,7 +41,7 @@ def ext(name: str) -> str:
 
 
 def test_images() -> list[dict]:
-    from server.images.freemium import (
+    from legacy.server.images.freemium import (
         _PROVIDER_FUNCS,
         _cfg,
         compose_prompt,
@@ -105,7 +105,7 @@ def test_images() -> list[dict]:
 
 
 def test_extracts() -> list[dict]:
-    from server.analyze.freemium_extract import (
+    from legacy.server.analyze.freemium_extract import (
         _PROVIDER_MODELS,
         _PROVIDER_URLS,
         _cfg,

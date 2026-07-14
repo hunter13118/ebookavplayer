@@ -485,7 +485,7 @@ body: {"prompt": str, "width"?: int, "height"?: int, "model"?: str,
 (force_reference skips the broken-grid reference-rejection guard — see
 "Manual override" above)
 (this is the contract worker/_shared/freemium-image.js's tryLocalSd and
-server/images/backends.py's _try_local_http actually call — the production
+legacy/server/images/backends.py's _try_local_http actually call — the production
 app only ever sends {prompt, width, height, model}; reference_image_b64 and
 ip_adapter_scale are additions for local dev/character-consistency work, see
 below. Only valid for a model with ip_adapter_repo set — see the table below.)
@@ -713,12 +713,12 @@ source repeatedly.
 
 ### Character expression variants — reviving `expression_sprites.py`
 
-[server/images/expression_sprites.py](../server/images/expression_sprites.py)
+[legacy/server/images/expression_sprites.py](../legacy/server/images/expression_sprites.py)
 already has real logic for this: `collect_character_expressions()` scans a
 book's actual dialogue lines (via `infer_expression_from_text`) to figure out
 which expressions (`sad`, `angry`, `whisper`, `yell`, `happy`, `surprised`) a
 given character actually needs portraits for, and
-[server/images/generate.py:318-347](../server/images/generate.py#L318) already
+[legacy/server/images/generate.py:318-347](../legacy/server/images/generate.py#L318) already
 calls the image backend per-expression with `"Same character, same outfit and
 hair as reference."` It never had a local backend with a real adherence
 mechanism to plug into — cloud img2img/reference support was the only option,
@@ -842,8 +842,8 @@ re-downloads on restart.
 |---|---|
 | Server implementation | [scripts/local-image-server/server.py](../scripts/local-image-server/server.py) |
 | Character-crop tool | [scripts/local-image-server/detect_and_crop_faces.py](../scripts/local-image-server/detect_and_crop_faces.py) |
-| Production contract this backs | [worker/_shared/freemium-image.js](../worker/_shared/freemium-image.js) (`tryLocalSd`), [server/images/backends.py](../server/images/backends.py) (`_try_local_http`) |
-| Dormant expression-variant logic this revives | [server/images/expression_sprites.py](../server/images/expression_sprites.py), [server/images/generate.py:318-347](../server/images/generate.py#L318) |
+| Production contract this backs | [worker/_shared/freemium-image.js](../worker/_shared/freemium-image.js) (`tryLocalSd`), [legacy/server/images/backends.py](../legacy/server/images/backends.py) (`_try_local_http`) |
+| Dormant expression-variant logic this revives | [legacy/server/images/expression_sprites.py](../legacy/server/images/expression_sprites.py), [legacy/server/images/generate.py:318-347](../legacy/server/images/generate.py#L318) |
 | Env vars | [.env.example](../.env.example) |
 | General setup | [SETUP.md](../SETUP.md) |
 | The analogous Ollama/LLM local-extraction benchmark | [LOCAL_LLM_EXTRACTION.md](LOCAL_LLM_EXTRACTION.md) |

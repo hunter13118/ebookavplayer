@@ -119,13 +119,13 @@ function post(path, body, env) {
   assert.equal(env._queue[0].kind, "moment-generate");
 }
 
-// route: no edge bindings → falls through to proxy 503
+// route: no edge bindings → falls through to a plain 404 (no origin fallback anymore)
 {
   const env = {};
   const res = await post("/books/demo/moments/generate", { line_idx: 0 }, env);
-  assert.equal(res.status, 503);
+  assert.equal(res.status, 404);
   const err = await res.json();
-  assert.match(err.error, /VAE_API_ORIGIN/);
+  assert.match(err.error, /not found/);
 }
 
 console.log("moment-route.test.mjs: ok");

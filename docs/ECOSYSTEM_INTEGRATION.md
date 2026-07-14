@@ -9,7 +9,7 @@ each plugs into the reading/audio core.
 
 | App | Path | What it is | Stack |
 |---|---|---|---|
-| **EbookAVPlayer** | `D:\EbookAVPlayer` | Visual audiobook engine (this app) | Cloudflare Workers + React/Vite (FastAPI `server/` retained as local test/tooling infra, not deployed) |
+| **EbookAVPlayer** | `D:\EbookAVPlayer` | Visual audiobook engine (this app) | Cloudflare Workers + React/Vite (original FastAPI backend archived at `legacy/server/`, not deployed, no test coverage) |
 | **Gyōkan** | `…\Projects\Gyōkan` | JP⇄EN parallel reader | FastAPI + React PWA |
 | **VoxNovel** (Milkman Audiobook Generator) | `D:\personal webapp portfolio` | Ebook→audiobook: BookNLP + XTTS v2 + M4B | Flask + CUDA |
 | **Copilot Sonar** | `D:\copilot-tts` | Edge Neural TTS bridge for Copilot chat (streaming, earcons) | VS Code ext (TS) |

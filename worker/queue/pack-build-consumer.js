@@ -1,4 +1,4 @@
-/** Pack build — edge (Phase 4) or FastAPI webhook fallback. */
+/** Pack build — edge (Phase 4). */
 
 import { buildPackOnEdge, TIER_VISUAL, TIER_AUDIOBOOK } from "../_shared/pack-build-edge.js";
 import { createPhaseLogger, PHASE } from "../_shared/phase-debug.js";
@@ -11,46 +11,10 @@ async function updateJob(env, jobId, patch) {
   await env.VAE_JOBS.put(key, JSON.stringify({ ...base, ...patch }), { expirationTtl: 86400 * 7 });
 }
 
-async function webhookToOrigin(message, env) {
-  const base = (env.VAE_API_ORIGIN || "").replace(/\/$/, "");
-  const secret = env.QUEUE_WEBHOOK_SECRET || "";
-  if (!base || !secret) return false;
-
-  const res = await fetch(`${base}/internal/queue/pack-build`, {
-    method: "POST",
-    headers: { "content-type": "application/json", "X-Queue-Secret": secret },
-    body: JSON.stringify(message.body),
-  });
-  if (!res.ok) {
-    console.error("pack-build webhook", res.status, await res.text());
-    return false;
-  }
-  const st = await res.json();
-  if (env.VAE_JOBS && st?.job_id) {
-    await env.VAE_JOBS.put(`job:${st.job_id}`, JSON.stringify(st), { expirationTtl: 86400 });
-  }
-  return true;
-}
-
 export async function handlePackBuildMessage(message, env) {
   const body = message.body;
   const { job_id, book_id, tier = TIER_AUDIOBOOK, style } = body;
   const dbg = createPhaseLogger(env, "pack", job_id);
-
-  const useOrigin =
-    String(env.VAE_PACK_USE_ORIGIN || "").toLowerCase() === "true" &&
-    env.VAE_API_ORIGIN &&
-    env.QUEUE_WEBHOOK_SECRET;
-
-  if (useOrigin) {
-    dbg.log(PHASE.P4_PACK, "delegating to origin webhook");
-    const ok = await webhookToOrigin(message, env);
-    if (ok) {
-      message.ack();
-      return;
-    }
-    dbg.log(PHASE.P4_PACK, "webhook failed — trying edge");
-  }
 
   try {
     dbg.log(PHASE.P4_PACK, "edge build start", { book_id, tier, style });

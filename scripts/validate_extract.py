@@ -10,9 +10,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from server.analyze.schema import BookAnalysis  # noqa: E402
-from server.analyze.validate import validate_extract  # noqa: E402
-from server.playback import library as L  # noqa: E402
+from legacy.server.analyze.schema import BookAnalysis  # noqa: E402
+from legacy.server.analyze.validate import validate_extract  # noqa: E402
+from legacy.server.playback import library as L  # noqa: E402
 
 
 def main() -> None:

@@ -2,7 +2,7 @@
 
 *Where to take the app. Opinionated, sequenced, and grounded in what's already shipped. Read `01_AUDIT_AND_VERDICT.md` first.*
 
-> **⟳ Updated for the July 14 snapshot.** Phase 2 (the expression overhaul) is now **largely shipped** — see below. Phase 0 (consolidation) is **still open and slightly more urgent**: the legacy `server/` was edited again this cycle, so expression changes are now being maintained in two backends. Phase 1 (Simple Mode) is now **implemented** per the `03_` spec: the `uiMode` pref (default `"simple"`) drives `data-ui` on the root, `SimpleLibrary.jsx` and `SimpleSettingsSheet.jsx` are new, `Player.jsx`'s advanced controls (chapter select, gap-nav, illustrations, characters, scrubber, sleep-timer badge) are wrapped in `uiMode === "full"` guards, and the Simple↔Full toggle is reachable and persistent from both modes. `web/src/audio/orchestrator.js` was not touched; the full existing e2e suite (forced to Full Mode) plus a new `simple-mode.spec.js` are green. Phase 3 (character enrichment) is **now built (v1)** — see `docs/CHARACTER_ENRICHMENT.md`: opt-in (`VAE_CHARACTER_ENRICH`, default off), keyless Fandom + MyAnimeList text-attribute lookups feed into image prompts and voice/prosody. It complements rather than replaces `illustration-character-match.js` — that path establishes reference art from the book's *own* embedded plates when present; text enrichment now runs regardless and adds attributes (hair/eye color, outfit, speech register) that embedded plates alone don't carry. Baka-Tsuki support was deferred pending API verification.
+> **⟳ Updated for the July 14 snapshot.** Phase 2 (the expression overhaul) is now **largely shipped** — see below. **Phase 0 (consolidation) is now done**: `server/` has been archived to `legacy/server/` (git history preserved via `git mv`), the origin-proxy fallback (`VAE_API_ORIGIN`, `worker/_shared/proxy-fetch.js`) has been removed entirely from `worker/` rather than merely left unset, the `pipeline-registry.js` mirror comment is fixed, the 34 Python tests that only covered `server/`-internal logic were retired (six remain, covering the unrelated `scripts/local-align-server/` and `scripts/local-image-server/` tools), and the doc drift called out below has been cleaned up. See `docs/ARCHITECTURE.md` for the current state. Phase 1 (Simple Mode) is now **implemented** per the `03_` spec: the `uiMode` pref (default `"simple"`) drives `data-ui` on the root, `SimpleLibrary.jsx` and `SimpleSettingsSheet.jsx` are new, `Player.jsx`'s advanced controls (chapter select, gap-nav, illustrations, characters, scrubber, sleep-timer badge) are wrapped in `uiMode === "full"` guards, and the Simple↔Full toggle is reachable and persistent from both modes. `web/src/audio/orchestrator.js` was not touched; the full existing e2e suite (forced to Full Mode) plus a new `simple-mode.spec.js` are green. Phase 3 (character enrichment) is **now built (v1)** — see `docs/CHARACTER_ENRICHMENT.md`: opt-in (`VAE_CHARACTER_ENRICH`, default off), keyless Fandom + MyAnimeList text-attribute lookups feed into image prompts and voice/prosody. It complements rather than replaces `illustration-character-match.js` — that path establishes reference art from the book's *own* embedded plates when present; text enrichment now runs regardless and adds attributes (hair/eye color, outfit, speech register) that embedded plates alone don't carry. Baka-Tsuki support was deferred pending API verification. Phase 4 (the VoxNovel timing bridge) is **not planned** — VoxNovel's hardware requirements (BookNLP + XTTS v2) make it impractical on the current setup; skip straight to Phase 5 if picking this roadmap back up.
 
 The through-line: this is already a capable engine. "Revolutionizing" it is **not** adding surface area — it's (a) removing the structural debt that makes every change slow, (b) closing the gap between the current flat-reading experience and the "staging a performance" vision the brief actually asks for, and (c) making it usable by someone who is not you. That last one is big enough to get its own document (`03_...`).
 
@@ -13,28 +13,28 @@ Everything here respects the two hard constraints that define this project: **th
 ## Sequencing overview
 
 ```
-Phase 0  Consolidation           ← unblocks everything (2–4 days)
-Phase 1  Simple Mode UI overhaul ← the accessibility mandate (see 03_)   ┐ can overlap
-Phase 2  Expression performance  ← biggest experiential upgrade          ┘ with Phase 1
-Phase 3  Character enrichment    ← the idea you opened this chat with
-Phase 4  VoxNovel timing bridge  ← the highest-value ecosystem play
-Phase 5  Net-new bets            ← optional, high-delight
+Phase 0  Consolidation           ← unblocks everything (2–4 days)              ✅ DONE
+Phase 1  Simple Mode UI overhaul ← the accessibility mandate (see 03_)   ┐ can overlap  ✅ DONE
+Phase 2  Expression performance  ← biggest experiential upgrade          ┘ with Phase 1  ✅ DONE
+Phase 3  Character enrichment    ← the idea you opened this chat with          ✅ DONE (v1)
+Phase 4  VoxNovel timing bridge  ← the highest-value ecosystem play            ⛔ NOT PLANNED — hardware requirements too heavy for this setup
+Phase 5  Net-new bets            ← optional, high-delight                      ← pick up here
 ```
 
 Do Phase 0 first. It is the difference between the roadmap being pleasant and being painful.
 
 ---
 
-## Phase 0 — Consolidation (the unglamorous prerequisite)
+## Phase 0 — Consolidation (the unglamorous prerequisite) — ✅ DONE (July 14)
 
 **Goal:** one backend, one source of truth, a green test suite, honest docs. This is P0-1, P0-2, P1-1, P1-2 from the audit, packaged as one campaign.
 
-1. **Retire `server/`.** Confirm nothing in a *deployed* path imports it (grep for `VAE_API_ORIGIN` usage and whether any production `wrangler.toml` sets it). Move `server/align/forced_aligner.py` → `scripts/local-align-server/forced_aligner.py` (it's the one live consumer). Archive the rest of `server/` to a `legacy-fastapi` git branch or a `legacy/` dir excluded from the default toolchain. Remove the origin-proxy fall-through from `worker.js` once health confirms nothing needs it.
-2. **Kill the "mirrors registry.py" coupling.** After `server/` is gone, `pipeline-registry.js` is simply *the* registry. Delete the mirror comment.
-3. **Green the tests.** Fix/delete `tests/timing.test.mjs` (orphaned `isCheckpoint`). Add a root `npm test` that runs every `tests/*.test.mjs` and `npm --prefix web test`. CI-in-spirit: one command, one green/red.
-4. **De-drift the docs.** Banner the two handoffs as historical *at the guardrail sections specifically*; fix the "keep `/tts` on FastAPI" line; fix the ecosystem doc's stack line. Add a single `docs/ARCHITECTURE.md` that is the *one* current-state doc (the README's "what's here" section, promoted and kept live).
+1. **Retire `server/`.** ✅ Done, with one correction to the plan below: `server/align/forced_aligner.py` was **not** moved to `scripts/local-align-server/` — that premise was wrong. `scripts/local-align-server/` never imported it (it's an unrelated, non-overlapping WhisperX ASR implementation), and `forced_aligner.py`'s only working code path (`ProportionalStubAligner`) just duplicated math the client already does for free; its planned real backends (Aeneas/MMS) were never implemented. Its only live consumer was a UI option ("Forced aligner (local server)," Algorithm 4 in `web/src/timing/registry.js`), which was removed outright. `server/` (all of it, including `forced_aligner.py`) was archived to `legacy/server/` via `git mv` (history preserved). The origin-proxy fall-through was removed from `worker/worker.js` and `worker/api/v1/proxy.js` entirely — `VAE_API_ORIGIN` was already unset in both dev and prod, so this only changed the fallback's status code (503 → plain 404) for paths that were already unreachable.
+2. **Kill the "mirrors registry.py" coupling.** ✅ Done — `pipeline-registry.js`'s header comment updated now that the mirrored file lives under `legacy/`.
+3. **Green the tests.** ✅ Done. `tests/timing.test.mjs`'s orphaned `isCheckpoint` removed, root `npm test` runs every `tests/*.test.mjs` + `npm --prefix web test`. The 34 Python tests that only covered `server/`-internal logic were retired along with the archive move (each had a 1:1 `worker/*.test.mjs` equivalent, or tested only the removed origin-proxy/Algorithm-4 dead code); six remain, covering `scripts/local-align-server/` and `scripts/local-image-server/`, unrelated to `server/`.
+4. **De-drift the docs.** ✅ Done. Both handoffs banner-marked historical; the "keep `/tts` on FastAPI" line and the ecosystem doc's stack line fixed; `docs/ARCHITECTURE.md` added as the one current-state doc. `CLOUDFLARE_BACKEND.md` and `FLY_DEPLOY.md` (both pre-port planning docs whose premises are now fully obsolete) banner-marked historical; `CLOUDFLARE_DEPLOY.md`'s stale FastAPI-fallback sections updated in place since the rest of that doc is still a live deploy guide.
 
-**Effort:** 2–4 focused days. **Risk:** low (mostly deletion + doc edits). **Payoff:** every subsequent phase stops having two possible homes.
+**Effort:** 2–4 focused days (matched estimate). **Payoff:** every subsequent phase stops having two possible homes.
 
 ---
 
@@ -85,7 +85,12 @@ The version that's worth building (and stays on the right side of the `$0` ceili
 
 ---
 
-## Phase 4 — The VoxNovel timing bridge (highest-value ecosystem play)
+## Phase 4 — The VoxNovel timing bridge (highest-value ecosystem play) — ⛔ NOT PLANNED (July 14)
+
+> **Decision:** not pursuing this. VoxNovel's BookNLP + XTTS v2 pipeline needs
+> strong hardware to generate M4B files at a usable speed, and getting that
+> running well is its own significant project. Left below as a design record
+> in case that calculus changes later — jump to Phase 5 for what's next.
 
 From `docs/ECOSYSTEM_INTEGRATION.md`: VoxNovel (your BookNLP + XTTS v2 + M4B audiobook generator) is "the highest-value integration," and Mode B of the orchestrator is *already built to consume real narrated M4B audio*. The only missing piece is the **timing manifest**: `line idx → {start_ms, end_ms}` over the M4B. VoxNovel doesn't emit it yet.
 

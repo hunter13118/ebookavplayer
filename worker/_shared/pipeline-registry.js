@@ -1,5 +1,6 @@
 /**
- * Pipeline registry for edge Worker — mirrors server/pipeline/registry.py.
+ * Pipeline registry for edge Worker — the single source of truth (the legacy
+ * server/pipeline/registry.py it used to mirror now lives under legacy/server/).
  * Config persisted in KV `pipeline:config`; drives freemium chain order.
  */
 import { evaluateCostEfficiency } from "./pipeline-cost-guide.js";

@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from server.images.white_key import (  # noqa: E402
+from legacy.server.images.white_key import (  # noqa: E402
     image_needs_background_purge,
     maybe_purge_sprite_background,
     purge_sprite_background,

@@ -1,9 +1,8 @@
-// ALGORITHM 5 — WhisperX forced-align (local server), client side.
+// WhisperX forced-align (local server), client side.
 //
-// Unlike algorithms 1-3 (pure client-side estimation) and the legacy
-// forced-aligner stub (algorithm 4, a proportional distributor talking to a
-// vestigial Python server), this one does REAL acoustic work: the local
-// align server (scripts/local-align-server/) transcribes what the audiobook
+// Unlike the client-side estimation algorithms (linear, punctuation-aware,
+// moov-atom), this one does REAL acoustic work: the local align server
+// (scripts/local-align-server/) transcribes what the audiobook
 // ACTUALLY says (WhisperX ASR) and fuzzy-matches that against our known
 // line texts, so it's robust to audio/text differences (ad-libbed intros,
 // minor abridgment) rather than assuming word-for-word agreement.

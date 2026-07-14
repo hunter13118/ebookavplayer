@@ -11,10 +11,13 @@ Browser (PWA at /projects/ebookavplayer/)
          ├─ POST /ingest           → R2 + KV + Queue (instant) → Gemini in consumer
          ├─ GET  /ingest/:id       → KV job status (poll)
          ├─ GET  /books, /books/:id → R2 catalog + playback JSON
-         ├─ POST pack/build        → Queue → FastAPI webhook (optional)
-         ├─ GET  pack file         → R2 fast path
-         └─ fallback               → VAE_API_ORIGIN (optional Fly/home)
+         ├─ POST pack/build        → Queue → edge build (buildPackOnEdge)
+         └─ GET  pack file         → R2 fast path
 ```
+
+No origin-proxy fallback exists — every route above has a full edge-native
+implementation. The original FastAPI backend is archived at
+`legacy/server/`, not wired to the Worker in any way.
 
 **Mental model:** HTTP never waits for Gemini. Queue consumer runs 60–120s; client polls.
 
@@ -32,10 +35,6 @@ npm run cf:setup-vae
 
 # GEMINI (if not in env)
 npx wrangler secret put GEMINI_API_KEY
-
-# Optional FastAPI fallback while edge port is incomplete
-npx wrangler secret put VAE_API_ORIGIN
-npx wrangler secret put QUEUE_WEBHOOK_SECRET
 ```
 
 ## Build & deploy
@@ -62,9 +61,11 @@ curl https://hunterthemilkman.com/projects/ebookavplayer/api/ingest/JOB_ID
 # poll until status: "done"
 ```
 
-## FastAPI (optional)
+## FastAPI (retired)
 
-Not required for **edge ingest** or **offline import**. Still useful for full imaging/TTS until Phases 3–4 land.
+Not used by the deployed Worker at all — every phase (ingest, imaging, TTS,
+pack build) now has a full edge-native implementation. The original FastAPI
+backend is archived at `legacy/server/` for reference only.
 
 ## Troubleshooting
 
@@ -76,9 +77,9 @@ Not required for **edge ingest** or **offline import**. Still useful for full im
 | Ingest stuck `queued` | Queue consumer not bound — check `[[queues.consumers]]` in wrangler.toml |
 | `GEMINI_API_KEY not configured` | `wrangler secret put GEMINI_API_KEY` |
 | Ingest `error` with Gemini 429 | Google AI Studio credits depleted — add billing or a fresh API key |
-| 503 on non-ingest routes | Set `VAE_API_ORIGIN` or wait for edge port |
 
-Optional FastAPI R2 mirror (same bucket as Worker):
+Optional local FastAPI (`legacy/server/`) R2 mirror (same bucket as Worker,
+for anyone still running the archived backend locally):
 
 ```env
 R2_ACCOUNT_ID=c41c7b1bb8131ac32f61a61253b928bd

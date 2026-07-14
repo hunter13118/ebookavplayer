@@ -9,9 +9,9 @@ function book(scenes) {
 }
 
 describe("registry", () => {
-  it("registers exactly the five specified algorithms", () => {
+  it("registers exactly the four specified algorithms", () => {
     expect(ALGORITHMS.map((a) => a.id).sort()).toEqual(
-      ["forced-aligner", "linear", "moov-atom", "punctuation", "whisperx"].sort()
+      ["linear", "moov-atom", "punctuation", "whisperx"].sort()
     );
   });
 
@@ -34,7 +34,7 @@ describe("registry", () => {
 
   it("describeAlgorithms strips the run() function (UI-safe descriptors only)", () => {
     const descriptors = describeAlgorithms();
-    expect(descriptors).toHaveLength(5);
+    expect(descriptors).toHaveLength(4);
     for (const d of descriptors) {
       expect(d.run).toBeUndefined();
       expect(typeof d.id).toBe("string");

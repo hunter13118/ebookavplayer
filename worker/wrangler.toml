@@ -12,7 +12,6 @@ port = 8600
 local_protocol = "http"
 
 [vars]
-# VAE_API_ORIGIN = "https://vae-api.example.com"
 # PUBLIC_MEDIA_ORIGIN = "https://hunterthemilkman.com/projects/ebookavplayer/api"
 #   Required for Pollinations image-to-image (must fetch /media/ refs over HTTPS).
 # VAE_EPUB_MAX_IMAGES = "0"  # 0 = unlimited EPUB plate extract; set N to cap.
@@ -20,7 +19,7 @@ local_protocol = "http"
 # POLLINATIONS_I2I_MODEL = "kontext"  # seedream, klein, nanobanana also support refs
 # VAE_CORS_ORIGINS = "https://my-tunnel.trycloudflare.com"
 
-# Encrypted: wrangler secret put GEMINI_API_KEY VAE_API_ORIGIN QUEUE_WEBHOOK_SECRET
+# Encrypted: wrangler secret put GEMINI_API_KEY
 # Local secrets: copy worker/.dev.vars.example → worker/.dev.vars
 
 [[r2_buckets]]

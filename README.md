@@ -9,14 +9,11 @@ See [`visual-audiobook-brief.md`](visual-audiobook-brief.md) for the full design
 
 ## Which backend do I use?
 
-There are **two** backend implementations in this repo. If you only read one
-line from this README, read this one:
-
-> **`worker/` (Cloudflare Workers) is the current, actively developed backend.**
-> `server/` (Python/FastAPI) is an earlier implementation kept for reference
-> and because a few dev tools still import individual modules from it
-> (`server/align/forced_aligner.py`). Don't start with `uvicorn` unless you
-> have a specific reason to — start with `npm run dev:worker`.
+There is **one** backend: `worker/` (Cloudflare Workers) — start with
+`npm run dev:worker`. An earlier Python/FastAPI implementation is archived at
+`legacy/server/`, kept for reference and because a few dev tools still import
+individual modules from it. Don't start it with `uvicorn` unless you have a
+specific reason to.
 
 ## Quick start (current stack)
 
@@ -54,10 +51,11 @@ worker/                 Cloudflare Workers backend (current)
   durable-objects/        job/queue coordination
   wrangler.toml           R2 + KV bindings, dev port
 
-server/                 Legacy FastAPI backend (reference only; see note above)
-  align/forced_aligner.py  still imported by scripts/local-align-server
-  analyze/, epub/, images/, playback/, audio/  original mega-pass pipeline
-  app.py                  /tts, /voices/edge, /books, /ingest
+legacy/server/           Archived FastAPI backend (reference only; see note above)
+  align/forced_aligner.py  dead — backed a removed timing-UI option
+  analyze/, epub/, images/, playback/, audio/  original mega-pass pipeline;
+                           still imported by a few scripts/*.py dev tools
+  app.py                  original /tts, /voices/edge, /books, /ingest routes
 
 web/                     React + Vite client
   src/audio/               orchestrator.js (timing authority), playSpeech.js,

@@ -26,7 +26,7 @@ describe("alignCache", () => {
 
   it("isolates cache entries per algorithm for the same book", async () => {
     await storeAlignManifest("book-1", "whisperx", 1000, sbc, fakeResult);
-    expect(await loadAlignManifest("book-1", "forced-aligner", 1000, sbc)).toBeNull();
+    expect(await loadAlignManifest("book-1", "linear", 1000, sbc)).toBeNull();
   });
 
   it("isolates cache entries per book for the same algorithm", async () => {

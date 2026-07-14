@@ -1,6 +1,7 @@
 # Host checklist — what to verify on your machine
 
-> **This checklist covers the legacy Python/FastAPI backend (`server/`).**
+> **This checklist covers the archived Python/FastAPI backend, now at
+> `legacy/server/` (was `server/` when this doc was written).**
 > For the current Cloudflare Workers stack (`worker/`, `npm run dev:worker`),
 > see [`../SETUP.md`](../SETUP.md) instead. This doc predates the Workers port.
 

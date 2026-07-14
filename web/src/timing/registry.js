@@ -6,7 +6,6 @@
 import { linearSplit, LINEAR_MARKER } from "./linearSplit.js";
 import { punctuationDensity, PUNCTUATION_MARKER } from "./punctuationDensity.js";
 import { moovAtomTiming, MOOV_MARKER } from "./moovAtomScanner.js";
-import { forcedAlignerClient, ALIGNER_MARKER } from "./forcedAlignerClient.js";
 import { whisperxAlignerClient, WHISPERX_MARKER } from "./whisperxAlignerClient.js";
 
 export const DEFAULT_ALGORITHM = "linear";
@@ -38,14 +37,6 @@ export const ALGORITHMS = [
     run: moovAtomTiming,
   },
   {
-    id: "forced-aligner",
-    label: "Forced aligner (local server)",
-    marker: ALIGNER_MARKER,
-    tier: "local-server",
-    blurb: "Frame-perfect acoustic alignment via a local aligner. Best quality; needs the local host.",
-    run: forcedAlignerClient,
-  },
-  {
     id: "whisperx",
     label: "WhisperX forced-align (local, most accurate)",
     marker: WHISPERX_MARKER,
@@ -74,7 +65,7 @@ export function isKnownAlgorithm(id) {
 
 /**
  * Dispatch: run the chosen algorithm with its input bundle.
- * Client algorithms return synchronously; the forced-aligner returns a Promise.
+ * Client algorithms return synchronously; local-server algorithms return a Promise.
  * Always await the result to normalize both.
  *
  * @param {string} id

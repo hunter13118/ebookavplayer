@@ -31,7 +31,7 @@ calls; a full-book mega-pass can exhaust 10k neurons in **minutes**.
 |-------|---------|-----------------|
 | **EPUB extraction** (mega-pass) | **Gemini** (multimodal, 120k+ chars, JSON mode) | **Late fallback only** — `freemium_extract` chain ends with `cloudflare` |
 | **Moment / insert LLM tweaks** | Gemini | Optional small Workers AI call |
-| **Character / BG images** | Gemini → freemium chain | **Primary freemium** — FLUX-1-schnell (`server/images/freemium.py`) |
+| **Character / BG images** | Gemini → freemium chain | **Primary freemium** — FLUX-1-schnell (`worker/_shared/freemium-image.js`; original prototype at `legacy/server/images/freemium.py`) |
 | **Pack audiobook TTS** | Edge TTS (Microsoft, free) | Not Workers AI — Aura TTS would burn neurons |
 | **Offline packs** | Client IndexedDB + optional R2 | No AI |
 

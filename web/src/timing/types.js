@@ -50,7 +50,7 @@
 /**
  * The unified result every algorithm returns, regardless of tier.
  * @typedef {Object} TimingResult
- * @property {string} algorithm  Algorithm id (linear|punctuation|moov-atom|forced-aligner).
+ * @property {string} algorithm  Algorithm id (linear|punctuation|moov-atom|whisperx).
  * @property {string} marker     UI metadata tag (e.g. 'naive-linear-fallback').
  * @property {'line'} unit       Always 'line' in this codebase.
  * @property {number} totalDurationMs

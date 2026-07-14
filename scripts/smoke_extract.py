@@ -34,9 +34,9 @@ def main() -> int:
     if not os.environ.get("GEMINI_API_KEY"):
         print("! GEMINI_API_KEY not set — set it and retry."); return 2
 
-    from server.epub.parse import parse_epub
-    from server.analyze.extract import extract_book
-    from server.images.generate import generate_media, plan_media
+    from legacy.server.epub.parse import parse_epub
+    from legacy.server.analyze.extract import extract_book
+    from legacy.server.images.generate import generate_media, plan_media
 
     print(f"[1/3] parsing {epub} ...")
     book = parse_epub(epub)

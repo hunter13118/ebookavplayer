@@ -1,5 +1,13 @@
 # Fly.io — VAE API host
 
+> **Historical.** The Cloudflare Worker's origin-proxy fallback
+> (`VAE_API_ORIGIN`) has been removed entirely — every route is edge-native
+> now, and there is no wiring left for a Fly-hosted FastAPI origin to plug
+> into. The original FastAPI backend is archived at `legacy/server/` for
+> reference only. This doc is kept for historical record of how the
+> since-retired proxy tier was set up; don't follow it for a current deploy.
+> See [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) for the current architecture.
+
 Hosts the **FastAPI backend** (Gemini ingest, Edge TTS, pack builds). Your
 **portfolio Worker** on Cloudflare proxies to this URL via `VAE_API_ORIGIN`.
 
