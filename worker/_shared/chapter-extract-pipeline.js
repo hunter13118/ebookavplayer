@@ -36,6 +36,7 @@ import { runEdgeImaging, existingMediaFromChapterPacks } from "./edge-imaging.js
 import { countImagingSteps } from "./ingest-progress.js";
 import { normalizeIllustrationMode, applyDirectIllustrations } from "./illustrations.js";
 import { PHASE } from "./phase-debug.js";
+import { isCharacterEnrichEnabled, enrichCharacters, mergeEnrichmentIntoCharacter } from "./character-enrich.js";
 
 async function readJsonR2(env, key) {
   const obj = await env.VAE_PACKS.get(key);
@@ -442,6 +443,33 @@ export async function runCheckpointedExtraction({
     ...mergedAnalysisCharacters,
     ...synthesizeUndeclaredCharacters(mergedAnalysisCharacters, mergedAnalysisScenes, []),
   ];
+
+  // Phase 3 (docs/02_REVOLUTION_ROADMAP.md, docs/CHARACTER_ENRICHMENT.md):
+  // opt-in, best-effort — runs here because this is the first point the
+  // whole-book character roster is final/stable (per-chapter reconcile can
+  // still rewrite ids up to this point), and it runs before the imaging
+  // block below so enriched fields are in place when image prompts build.
+  if (isCharacterEnrichEnabled(env)) {
+    try {
+      const enrichment = await enrichCharacters(env, {
+        seriesTitle: title,
+        characters: analysisCharacters.filter((c) => c.id && c.id !== "narrator"),
+      });
+      if (enrichment.size) {
+        for (let i = 0; i < analysisCharacters.length; i += 1) {
+          const attrs = enrichment.get(analysisCharacters[i].id);
+          if (attrs) analysisCharacters[i] = mergeEnrichmentIntoCharacter(analysisCharacters[i], attrs);
+        }
+        for (const [id, attrs] of enrichment) {
+          if (knownCharacters[id]) knownCharacters[id] = mergeEnrichmentIntoCharacter(knownCharacters[id], attrs);
+        }
+        dbg.log(PHASE.P2_COMPILE, "character enrichment applied", { count: enrichment.size });
+      }
+    } catch (e) {
+      dbg.log(PHASE.P2_COMPILE, "character enrichment failed (non-fatal)", { error: e.message || String(e) });
+    }
+  }
+
   const analysis = {
     book_id, title, author, characters: analysisCharacters, scenes: mergedAnalysisScenes,
     chapters: parsed.chapters.map((c) => ({ index: c.index, title: c.title })),

@@ -3,6 +3,9 @@ import { useEffect, useState } from "react";
 import { AuthGate } from "./lib/portfolioAuth.jsx";
 
 import Library from "./components/Library.jsx";
+import SimpleLibrary from "./components/SimpleLibrary.jsx";
+import AddBookSheet from "./components/AddBookSheet.jsx";
+import SimpleSettingsSheet from "./components/SimpleSettingsSheet.jsx";
 
 import Player from "./components/Player.jsx";
 
@@ -20,7 +23,7 @@ import { startHealthPolling } from "./backends/health.js";
 
 import {
   fetchBook, fetchCatalogMerged, fetchLocalCatalog, mergeCatalog, ensureBookCached, exportBookPackFile,
-  pickPackSaveHandle, needsOfflineCache,
+  pickPackSaveHandle, needsOfflineCache, importOfflinePackFiles,
 } from "./offline/bookSource.js";
 import { shouldRecommendDownload, skipDownloadRecommend } from "./offline/downloadRecommend.js";
 
@@ -45,11 +48,17 @@ export default function App() {
   const [note, setNote] = useState("");
   const [pipelineOpen, setPipelineOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [simpleSettingsOpen, setSimpleSettingsOpen] = useState(false);
+  const [simpleAddOpen, setSimpleAddOpen] = useState(false);
   const [cacheBusy, setCacheBusy] = useState(null);
   const [downloadModal, setDownloadModal] = useState(null);
   const [downloadBusy, setDownloadBusy] = useState(false);
 
   useEffect(() => { document.documentElement.dataset.theme = prefs.theme; }, [prefs.theme]);
+  useEffect(() => { document.documentElement.dataset.ui = prefs.uiMode; }, [prefs.uiMode]);
+  useEffect(() => {
+    document.documentElement.style.setProperty("--simple-font-scale", String(prefs.simpleFontScale || 1));
+  }, [prefs.simpleFontScale]);
 
   useEffect(() => startHealthPolling(), []);
 
@@ -85,18 +94,24 @@ export default function App() {
         if (local.length) {
           setServerOnline(false);
           setCatalog(local);
-          setNote("Server unreachable — showing locally installed offline packs.");
+          setNote(prefs.uiMode === "simple"
+            ? "You're offline right now. You can still open books you've already added."
+            : "Server unreachable — showing locally installed offline packs.");
           return;
         }
         if (!backendConfigured()) {
           setServerOnline(false);
           setCatalog(sampleCatalog());
-          setNote("No backend — embedded demo only. Import an offline pack or connect the server.");
+          setNote(prefs.uiMode === "simple"
+            ? "You're offline right now. You can still open books you've already added."
+            : "No backend — embedded demo only. Import an offline pack or connect the server.");
           return;
         }
         setServerOnline(false);
         setCatalog(sampleCatalog());
-        setNote("Backend unreachable — embedded demo. Import an offline pack for real books.");
+        setNote(prefs.uiMode === "simple"
+          ? "Can't reach your books right now. Check your internet and try again."
+          : "Backend unreachable — embedded demo. Import an offline pack for real books.");
       }
     })();
     return () => { alive = false; };
@@ -118,9 +133,9 @@ export default function App() {
   async function openBook(entry) {
     try {
       if (entry.status === "error") {
-        setNote(
-          `Ingest failed for "${entry.title || entry.book_id}": ${entry.error || "unknown error"}. Upload the EPUB again.`,
-        );
+        setNote(prefs.uiMode === "simple"
+          ? "Something went wrong. Tap to try again."
+          : `Ingest failed for "${entry.title || entry.book_id}": ${entry.error || "unknown error"}. Upload the EPUB again.`);
         return;
       }
 
@@ -139,7 +154,9 @@ export default function App() {
           const list = await fetchCatalogMerged();
           setCatalog(list);
         } catch (e) {
-          setNote(`Couldn't cache "${entry.title}": ${e.message || "unknown error"}`);
+          setNote(prefs.uiMode === "simple"
+            ? "Something went wrong. Tap to try again."
+            : `Couldn't cache "${entry.title}": ${e.message || "unknown error"}`);
           setCacheBusy(null);
           return;
         }
@@ -154,7 +171,9 @@ export default function App() {
       await enterPlayer(entry);
     } catch (e) {
       if (!serverOnline && entry.offline_pack) {
-        setNote(`Couldn't load offline pack for ${entry.title}.`);
+        setNote(prefs.uiMode === "simple"
+          ? "Something went wrong. Tap to try again."
+          : `Couldn't load offline pack for ${entry.title}.`);
         return;
       }
       if (!serverOnline) {
@@ -163,6 +182,12 @@ export default function App() {
         return;
       }
       const processing = entry.status === "processing" || (entry.progress != null && entry.progress < 0.45);
+      if (prefs.uiMode === "simple") {
+        setNote(processing
+          ? "This book is still being prepared. It'll be ready in a few minutes."
+          : "Something went wrong. Tap to try again.");
+        return;
+      }
       setNote(processing
         ? `Still processing "${entry.title}" — see Processing on the library (text ready ~45%).`
         : `Couldn't open ${entry.title}. ${e.message || ""}`.trim());
@@ -243,22 +268,32 @@ export default function App() {
 
         {view === "library"
           ? (
-            <Library
-              catalog={catalog}
-              offline={!serverOnline}
-              serverOnline={serverOnline}
-              onOpen={openBook}
-              onCatalog={setCatalog}
-              onOpenSettings={() => setSettingsOpen(true)}
-              cacheBusy={cacheBusy}
-              onContinueExtraction={handleContinueExtraction}
-            />
+            prefs.uiMode === "simple" ? (
+              <SimpleLibrary
+                catalog={catalog}
+                onOpen={openBook}
+                onAdd={() => setSimpleAddOpen(true)}
+                onOpenSettings={() => setSimpleSettingsOpen(true)}
+              />
+            ) : (
+              <Library
+                catalog={catalog}
+                offline={!serverOnline}
+                serverOnline={serverOnline}
+                onOpen={openBook}
+                onCatalog={setCatalog}
+                onOpenSettings={() => setSettingsOpen(true)}
+                cacheBusy={cacheBusy}
+                onContinueExtraction={handleContinueExtraction}
+              />
+            )
           )
           : (
             <CompareModalProvider bookId={book?.book_id} book={book}>
               <Player book={book} prefs={prefs} setPrefs={setPrefs}
                 offline={playerOffline}
-                onOpenPipeline={serverOnline && backendConfigured() ? openPipeline : null} />
+                onOpenPipeline={serverOnline && backendConfigured() ? openPipeline : null}
+                onOpenSimpleSettings={() => setSimpleSettingsOpen(true)} />
             </CompareModalProvider>
           )}
 
@@ -275,6 +310,23 @@ export default function App() {
         <GlobalSettingsSheet open={settingsOpen} onClose={() => setSettingsOpen(false)}
           prefs={prefs} setPrefs={setPrefs} offline={!serverOnline}
           onOpenPipeline={serverOnline && backendConfigured() ? openPipeline : null} />
+
+        <SimpleSettingsSheet open={simpleSettingsOpen} onClose={() => setSimpleSettingsOpen(false)}
+          prefs={prefs} setPrefs={setPrefs} />
+
+        <AddBookSheet
+          open={simpleAddOpen}
+          simple
+          onClose={() => setSimpleAddOpen(false)}
+          onStarted={async () => {
+            setCatalog(await fetchCatalogMerged().catch(() => catalog));
+          }}
+          onImportPack={async (files) => {
+            const results = await importOfflinePackFiles(files);
+            if (results.imported.length) setCatalog(await fetchCatalogMerged().catch(() => catalog));
+            setSimpleAddOpen(false);
+          }}
+        />
       </div>
     </AuthGate>
   );

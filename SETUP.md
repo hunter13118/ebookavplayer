@@ -204,6 +204,15 @@ This also covers pointing any frontend (including the deployed production
 site) at your local worker via the "local API bridge." Full writeup:
 [docs/LOCAL_LLM_EXTRACTION.md](docs/LOCAL_LLM_EXTRACTION.md).
 
+## Optional: character enrichment (Phase 3)
+
+Off by default. Set `VAE_CHARACTER_ENRICH=true` in root `.env` to have the
+worker look up each named character on Fandom / MyAnimeList after extraction
+and fold canonical attributes (hair/eye color, build, outfit, speech
+register/cadence) into that character's image-gen prompt and voice
+assignment. Keyless, free public APIs only — no signup, no key to manage.
+Full design: [docs/CHARACTER_ENRICHMENT.md](docs/CHARACTER_ENRICHMENT.md).
+
 ## Optional: local WhisperX align server
 
 Backs the `whisperx-local` timing tier ([web/src/timing/whisperxAlignerClient.js](web/src/timing/whisperxAlignerClient.js)):

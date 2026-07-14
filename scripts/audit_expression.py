@@ -26,8 +26,12 @@ DIALOGUE_ISH_KINDS = {"dialogue", "thought"}
 
 # Signals that suggest a line reads as emotional even if tagged "normal" —
 # mirrors the "signals that should almost always produce a non-normal tag"
-# list in EXPRESSION_SENSITIVITY_PLAN.md Phase 1a.
-EXCLAIM_RE = re.compile(r"[!?]{1,}|\?!")
+# list in EXPRESSION_SENSITIVITY_PLAN.md Phase 1a: exclamation points and
+# question marks STACKED with an exclamation ("?!"), not a bare "?" — a plain
+# question is routinely genuinely flat, and matching any "?" here flooded the
+# report with false positives (confirmed against a real 780-line chapter set:
+# ~85% of flagged lines were plain, correctly-"normal" questions).
+EXCLAIM_RE = re.compile(r"!|\?!")
 ALLCAPS_WORD_RE = re.compile(r"\b[A-Z]{3,}\b")
 
 

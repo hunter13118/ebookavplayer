@@ -1,5 +1,13 @@
 # HANDOFF.md — contract for finishing on the host machine
 
+> **Historical.** This is the original MVP handoff (2026-06-17), before the
+> Cloudflare Workers edge port. The repo map, `/tts` contract, and the
+> `audio.edge_tts (server + web playSpeech.js)` stub entry below describe the
+> FastAPI-only topology of that snapshot — TTS and most other routes now run
+> on the edge Worker (`worker/`), not `server/`. Kept for historical record;
+> for current architecture see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+> and [`docs/CLOUDFLARE_BACKEND.md`](docs/CLOUDFLARE_BACKEND.md).
+
 **2026-06-17:** MVP scaffold complete in repo (`e87b143`). Host verification **not
 done** on the owner's Windows machine yet. Start with [`CURSOR_HANDOFF.md`](CURSOR_HANDOFF.md)
 for current status; this file is the full contract.

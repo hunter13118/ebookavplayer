@@ -1,5 +1,11 @@
 # Cursor Handoff (2026-06-17)
 
+> **Historical.** This snapshot predates the Cloudflare Workers edge port. The
+> "Architecture guardrails" section below is kept for record but is stale in
+> one place: TTS now runs on the edge Worker (`worker/api/v1/tts.js`), not
+> FastAPI — see [`docs/CLOUDFLARE_BACKEND.md`](docs/CLOUDFLARE_BACKEND.md) and
+> [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the current state.
+
 **Bucket A: MVP scaffold shipped.** **Bucket B: host verification + polish.**
 
 Read [`visual-audiobook-brief.md`](visual-audiobook-brief.md) for product intent, then
@@ -74,7 +80,9 @@ From [`visual-audiobook-brief.md`](visual-audiobook-brief.md):
 
 - **One Gemini mega-pass per book** — do not split analysis into many calls without updating rate-limit docs.
 - **Client stays dumb** — server compiles playback JSON; orchestrator is the single timing authority.
-- **Edge TTS server-side** — browsers can't set Edge WS headers; keep `/tts` on FastAPI.
+- **Edge TTS server-side** — browsers can't set Edge WS headers; `/tts` now runs
+  on the Cloudflare edge Worker (`worker/api/v1/tts.js`), not FastAPI (this line
+  is historical — see banner at top of file).
 - **Per-character voice routing** — never key voices off sprite screen position.
 - **Progressive ingest** — analysis makes a book playable before images finish; do not block playback on art.
 - **Phase 2 is out of scope** unless asked: offline caching, cave-echo FX, full multi-style swap (`docs/ART_STYLES.md`).

@@ -4,17 +4,14 @@ import { readFileSync } from "node:fs";
 // load timing.js as CJS by stripping `export`
 const src = readFileSync(new URL("../web/src/audio/timing.js", import.meta.url), "utf8")
   .replace(/export function/g, "function") +
-  "\nexport {estimateDurationSec,revealedCount,isCheckpoint,stageLayout,slotXForIndex};";
+  "\nexport {estimateDurationSec,revealedCount,stageLayout,slotXForIndex};";
 const mod = await import("data:text/javascript," + encodeURIComponent(src));
-const { estimateDurationSec, revealedCount, isCheckpoint, stageLayout, slotXForIndex } = mod;
+const { estimateDurationSec, revealedCount, stageLayout, slotXForIndex } = mod;
 
 assert.ok(estimateDurationSec("a b c d e", 1) > 0);
 assert.ok(estimateDurationSec("a b c d e", 2) < estimateDurationSec("a b c d e", 1));
 assert.equal(revealedCount("hello", 0, 1), 0);
 assert.equal(revealedCount("hello", 5, 1), 5);
-assert.equal(isCheckpoint(39, 40), true);
-assert.equal(isCheckpoint(38, 40), false);
-assert.equal(isCheckpoint(5, 0), false);
 const present = [{character_id:"a"},{character_id:"b"},{character_id:"c"},{character_id:"d"}];
 const laid = stageLayout(present, "c", 2);
 assert.equal(laid.find(p=>p.character_id==="c").spotlight, true);

@@ -3,7 +3,12 @@ import { packDownloadResponse, tryPackFromR2 } from "../../_shared/r2-packs.js";
 
 const API_PREFIX = "/projects/ebookavplayer/api";
 
-/** Catch-all proxy: /projects/ebookavplayer/api/* → VAE_API_ORIGIN/* */
+/**
+ * Catch-all fallback for routes with no edge handler.
+ * Proxies to VAE_API_ORIGIN when configured (not currently, in dev or prod —
+ * see proxy-fetch.js); otherwise returns 503. Every real route below has its
+ * own edge handler and only reaches this on an unrecognized path.
+ */
 export async function onRequest({ request, env }) {
   const url = new URL(request.url);
   if (!url.pathname.startsWith(API_PREFIX)) {

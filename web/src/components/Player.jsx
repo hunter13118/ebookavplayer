@@ -90,7 +90,9 @@ function flatten(book) {
 
 
 
-export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline }) {
+export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline, onOpenSimpleSettings }) {
+
+  const uiMode = prefs?.uiMode || "simple";
 
   const [bk, setBk] = useState(book);
 
@@ -1057,7 +1059,7 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
 
       <div className="vae-player-toolbar">
 
-        {chapters.length > 0 && (
+        {uiMode === "full" && chapters.length > 0 && (
 
           <label className="vae-chapter-select-wrap">
 
@@ -1081,7 +1083,7 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
 
         )}
 
-        {orch.syntheticSegments?.length > 0 && (
+        {uiMode === "full" && orch.syntheticSegments?.length > 0 && (
 
           <button type="button" className="vae-toolbar-btn vae-gap-nav-btn" data-testid="open-gap-nav"
 
@@ -1097,13 +1099,13 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
 
         <button type="button" className="vae-toolbar-btn vae-menu-btn" data-testid="open-settings"
 
-          onClick={() => setMenuOpen(true)} aria-label="Settings">
+          onClick={() => (uiMode === "simple" ? onOpenSimpleSettings?.() : setMenuOpen(true))} aria-label="Settings">
 
-          ☰
+          {uiMode === "simple" ? "More" : "☰"}
 
         </button>
 
-        {lines.length > 0 && (
+        {uiMode === "full" && lines.length > 0 && (
 
           <button type="button" className="vae-toolbar-btn vae-illus-btn" data-testid="show-illustration"
 
@@ -1119,7 +1121,7 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
 
         )}
 
-        {lines.length > 0 && (
+        {uiMode === "full" && lines.length > 0 && (
 
           <button type="button" className="vae-toolbar-btn vae-characters-btn" data-testid="show-characters"
 
@@ -1203,6 +1205,7 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
 
           <div className="vae-player-bottom">
 
+          {uiMode === "full" && (
           <div className="vae-progress-wrap">
 
             <input type="range" className="vae-scrub" data-testid="progress-scrub"
@@ -1236,10 +1239,11 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline 
             </div>
 
           </div>
+          )}
 
 
 
-          {sleepTimerRemaining != null && (
+          {uiMode === "full" && sleepTimerRemaining != null && (
             <button type="button" className="vae-sleep-timer-badge" data-testid="sleep-timer-badge"
               onClick={cancelSleepTimer} title="Tap to cancel sleep timer">
               💤 {formatClock(Math.round(sleepTimerRemaining / 1000))}

@@ -23,6 +23,11 @@ For each numbered line below, output ONLY {index, expression, intensity} — not
 expression must be one of: ${CANONICAL_EXPRESSION_BUCKETS.join("|")}.
 Be decisive: "normal" is reserved for genuinely flat, matter-of-fact lines — default to a specific
 emotional read when the line carries any charge (a question, a tease, mild surprise, irritation).
+Some lines carry a bracketed note on a character's established temperament (e.g. "established as
+dry/sarcastic"). Treat that ONLY as a tie-breaker for a line that's genuinely ambiguous either way —
+it does not mean every line from that character carries the trait. A plain greeting, routine
+acknowledgment, or flat factual statement from a "sarcastic" or "excitable" character is still
+"normal"; judge each line on its own words first.
 intensity is 0.0-1.0, independent of the bucket — use the full range, don't cluster everything at 0.5.
 Return exactly: {"lines": [{"index": 0, "expression": "...", "intensity": 0.0}, ...]} — one entry
 per line given, in the same order, nothing else in the response.`;
@@ -50,7 +55,7 @@ function buildRepassPrompt(items, temperamentByCharacter) {
   return items
     .map((it, i) => {
       const temperament = temperamentByCharacter?.[it.character_id];
-      const note = temperament ? ` [${it.character_id} is established as ${temperament} — weight accordingly]` : "";
+      const note = temperament ? ` [${it.character_id} is established as ${temperament} — tie-breaker for ambiguous lines only]` : "";
       return `${i}. (${it.character_id}) ${it.text}${note}`;
     })
     .join("\n");

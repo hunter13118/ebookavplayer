@@ -48,7 +48,14 @@ export async function installAudioStub(page, { clipMs = 40, durationSec = 0.4, p
         const k = window.localStorage.key(i);
         if (k?.startsWith("vae-dl-skip-")) window.localStorage.removeItem(k);
       }
-      for (const [k, v] of prefsEntries) window.localStorage.setItem(k, v);
+      // Only seed defaults/overrides on the first boot of this test session —
+      // a page.reload() within a test must see whatever the app itself wrote
+      // to localStorage (e.g. a Simple/Full toggle), not have it stomped back.
+      if (!window.sessionStorage.getItem("vae-e2e-booted")) {
+        if (!window.localStorage.getItem("vae-ui-mode")) window.localStorage.setItem("vae-ui-mode", "full");
+        for (const [k, v] of prefsEntries) window.localStorage.setItem(k, v);
+        window.sessionStorage.setItem("vae-e2e-booted", "1");
+      }
     } catch {}
     await new Promise((resolve) => {
       const req = indexedDB.deleteDatabase("vae-offline");

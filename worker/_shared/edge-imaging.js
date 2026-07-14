@@ -37,6 +37,15 @@ function characterGenDescription(c) {
   if (Array.isArray(c.appearance_changes) && c.appearance_changes.length) {
     desc += `. Current look: ${c.appearance_changes.join("; ")}`;
   }
+  // Phase 3 character enrichment (character-enrich.js) — canonical fan-wiki
+  // attributes the extraction pass alone may never surface (e.g. a hair
+  // color only ever shown in art, never described in prose).
+  const canon = [];
+  if (c.hair_color) canon.push(`${c.hair_color} hair`);
+  if (c.eye_color) canon.push(`${c.eye_color} eyes`);
+  if (c.build) canon.push(`${c.build} build`);
+  if (c.outfit) canon.push(`wearing ${c.outfit}`);
+  if (canon.length) desc += `. Canonically: ${canon.join(", ")}.`;
   return desc;
 }
 

@@ -27,6 +27,8 @@ export const KEYS = {
   // useful for tuning expression tags outside of dev builds too, but should
   // stay off by default since it's a debugging tool, not a reader feature.
   directorsLog: "vae-directors-log",
+  uiMode: "vae-ui-mode",              // "simple" | "full"
+  simpleFontScale: "vae-simple-font", // "1" default; optional larger-text bump
 };
 
 const NARRATOR_M = "en-US-AndrewMultilingualNeural";
@@ -56,6 +58,8 @@ export function getPrefs() {
     narratorVolume: g(KEYS.narratorVolume, "+0%"),
     performanceMode: g(KEYS.performanceMode, "balanced"),
     directorsLog: g(KEYS.directorsLog, "false") === "true",
+    uiMode: g(KEYS.uiMode, "simple"),
+    simpleFontScale: parseFloat(g(KEYS.simpleFontScale, "1")) || 1,
     fullscreen: false,
   };
 }

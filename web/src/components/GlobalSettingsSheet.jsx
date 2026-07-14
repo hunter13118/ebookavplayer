@@ -206,6 +206,21 @@ export default function GlobalSettingsSheet({
           </button>
         </section>
 
+        <section className="vae-menu-section">
+          <button
+            type="button"
+            className="vae-menu-link"
+            data-testid="use-simple-view"
+            onClick={() => {
+              setPref(KEYS.uiMode, "simple");
+              setPrefs((p) => ({ ...p, uiMode: "simple" }));
+              onClose();
+            }}
+          >
+            Use simple view
+          </button>
+        </section>
+
         {err && <p className="vae-sheet-err">{err}</p>}
       </div>
     </div>

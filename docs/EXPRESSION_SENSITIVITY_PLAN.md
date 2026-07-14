@@ -6,6 +6,26 @@ interrupted-dialogue continuity) are all landed (see file references inline
 below). The cost-gated items (1d/1e's LLM re-pass, 3d's alt-sprite
 generation) ship opt-in, exactly as designed.
 
+**Verified against real production data (2026-07-14):** ran
+`scripts/audit_expression.py` against a fully-extracted 780-line real book
+(`My Quiet Blacksmith Life in Another World: Volume 6`, 13 chapters,
+`ollama-30b`) — **44.5% non-normal, 0/13 chapters flagged flat** (vs. the
+original 8%-with-100%-flat-chapters regression baseline this plan was
+written against). All 16 canonical buckets appear in real output, and
+CSS (`styles.css`)/prosody (`expression-prosody.js`) both have full 1:1
+coverage of the canonical bucket list — the "downstream discards half the
+signal" leak (root cause #4) is confirmed closed. Also found and fixed a
+real bug in the Phase 0 diagnostic itself: `_looks_emotional()`'s
+`EXCLAIM_RE` matched a bare `?`, not just `!`/`?!` as the Phase 1a spec
+actually lists — this flooded the "flat but emotional" report with false
+positives (a plain, correctly-flat question like "Is that right?" doesn't
+mean the line should have been tagged). Fixed to match the spec exactly;
+confirmed against the same book, `flat_but_emotional` count dropped from
+39 to 5 genuine misses. `worker/.dev.vars`'s `VAE_EXPRESSION_REPASS` stays
+unset (the documented recommended default — auto-trigger-only on flagged
+chapters); explicit always-on isn't needed given the auto-trigger is
+clearly firing correctly on real books.
+
 **Update (2026-07-12):** 3d's alt-sprite generation (`generateExpressiveSprites`)
 flipped from off-by-default to **on-by-default** at upload
 (`web/src/components/Uploader.jsx`'s checkbox) — still gated to

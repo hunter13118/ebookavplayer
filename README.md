@@ -43,6 +43,9 @@ Claude Code setup), see **[SETUP.md](SETUP.md)**.
 
 ## What's here
 
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the living current-state
+doc (guardrails, test-running, where things are decided). Quick map:
+
 ```
 worker/                 Cloudflare Workers backend (current)
   worker.js              routes /api/v1/* → handlers

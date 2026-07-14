@@ -1,4 +1,11 @@
-/** Reverse-proxy fetch to the VAE FastAPI origin (Fly, tunnel, home server). */
+/**
+ * Reverse-proxy fetch to a VAE_API_ORIGIN, if one is ever configured.
+ * Currently unused in dev or production (VAE_API_ORIGIN is unset in both
+ * worker/wrangler.toml and the portfolio's wrangler.toml) — every edge route
+ * handles its own request now, so callers only reach this as a dead-end
+ * fallback that returns a 503. Kept as a safety net for re-introducing an
+ * origin server later; not a live proxy tier today.
+ */
 
 export function originBase(env) {
   const raw = env.VAE_API_ORIGIN || "";

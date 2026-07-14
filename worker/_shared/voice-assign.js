@@ -59,13 +59,45 @@ function bucket(gender, age) {
   return "neutral";
 }
 
-function pitchOffset(bkt, idx, age) {
+function pitchOffset(bkt, idx, age, speechRegister) {
   let hz = 0;
   if (idx >= 1) hz += bkt === "male" ? -10 : 8;
   const ageL = String(age || "").toLowerCase();
   if (ageL === "child" || ageL === "young") hz += 6;
   else if (ageL === "old" || ageL === "elderly") hz -= 6;
+  hz += pitchNudgeFromRegister(speechRegister);
   return Math.max(-18, Math.min(18, hz));
+}
+
+// Phase 3 character enrichment (character-enrich.js) — small deterministic
+// keyword maps from the LLM-derived speech_register/cadence free text onto
+// the pitch/rate dials that already exist here. No effect (0) when the
+// enrichment fields are absent, which is the default for every character
+// today (toggle off or no wiki match) — preserves current behavior exactly.
+const REGISTER_PITCH_KEYWORDS = [
+  { re: /\b(deep|gravelly|booming|low|husky)\b/i, hz: -4 },
+  { re: /\b(high|light|airy|bright|shrill)\b/i, hz: 4 },
+];
+
+const CADENCE_RATE_KEYWORDS = [
+  { re: /\b(fast|quick|rapid|brisk|clipped|snappy)\b/i, pct: 8 },
+  { re: /\b(slow|deliberate|measured|unhurried|drawling)\b/i, pct: -8 },
+];
+
+function pitchNudgeFromRegister(speechRegister) {
+  const s = String(speechRegister || "").toLowerCase();
+  for (const { re, hz } of REGISTER_PITCH_KEYWORDS) if (re.test(s)) return hz;
+  return 0;
+}
+
+function rateFromCadence(cadence) {
+  const s = String(cadence || "").toLowerCase();
+  for (const { re, pct } of CADENCE_RATE_KEYWORDS) if (re.test(s)) return pct;
+  return 0;
+}
+
+function rateTag(pct) {
+  return `${pct >= 0 ? "+" : ""}${pct}%`;
 }
 
 export function assignVoices(characters = []) {
@@ -84,12 +116,12 @@ export function assignVoices(characters = []) {
     const idx = used[bkt];
     used[bkt] += 1;
     const voice = pool[idx % pool.length];
-    const pitchHz = pitchOffset(bkt, idx, c.age);
+    const pitchHz = pitchOffset(bkt, idx, c.age, c.speech_register);
     assignments[cid] = {
       character_id: cid,
       voice,
       pitch: pitchHz ? `${pitchHz > 0 ? "+" : ""}${pitchHz}Hz` : "+0Hz",
-      rate: "+0%",
+      rate: rateTag(rateFromCadence(c.cadence)),
     };
   }
   return assignments;
@@ -119,12 +151,12 @@ export function assignVoicesIncremental(newCharacters = [], voiceState) {
     const idx = usedCounts[bkt];
     usedCounts[bkt] += 1;
     const voice = pool[idx % pool.length];
-    const pitchHz = pitchOffset(bkt, idx, c.age);
+    const pitchHz = pitchOffset(bkt, idx, c.age, c.speech_register);
     assignments[cid] = {
       character_id: cid,
       voice,
       pitch: pitchHz ? `${pitchHz > 0 ? "+" : ""}${pitchHz}Hz` : "+0Hz",
-      rate: "+0%",
+      rate: rateTag(rateFromCadence(c.cadence)),
     };
   }
   return { usedCounts, assignments };
