@@ -77,6 +77,26 @@ export function DisplaySettings({
         <span className="vae-checkbox-box" aria-hidden />
         Director&rsquo;s log
       </label>
+      <label className="vae-checkbox">
+        <input type="checkbox" data-testid="ambient-sound-input" checked={prefs.ambientSound}
+          onChange={(e) => upd("ambientSound", KEYS.ambientSound, e.target.checked)} />
+        <span className="vae-checkbox-box" aria-hidden />
+        Ambient scene sound
+      </label>
+      {prefs.ambientSound && (
+        <label className="vae-voice-slider">
+          <span>Ambient volume {Math.round(prefs.ambientVolume * 100)}%</span>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            step={5}
+            data-testid="ambient-volume-input"
+            value={Math.round(prefs.ambientVolume * 100)}
+            onChange={(e) => upd("ambientVolume", KEYS.ambientVolume, parseInt(e.target.value, 10) / 100)}
+          />
+        </label>
+      )}
       {showFullscreen && onToggleFullscreen && (
         <button type="button" className="vae-menu-link" data-testid="toggle-fullscreen"
           onClick={onToggleFullscreen}>

@@ -33,6 +33,10 @@ import { useRegenFeedback } from "../hooks/useRegenFeedback.js";
 
 import { Orchestrator } from "../audio/orchestrator.js";
 import { nextTension } from "../audio/tension.js";
+import {
+  startAmbient, stopAmbient, setAmbientEnabled, setAmbientVolume, setAmbientPlaying,
+} from "../audio/ambientAudio.js";
+import { classifyAmbience } from "../ambientClassifier.js";
 
 import { sleepTimerRemainingMs } from "../audio/timing.js";
 
@@ -681,6 +685,21 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline,
     if (st.syntheticSegment) return;
     setTension((prev) => nextTension(prev, lines[st.index] || null));
   }, [st.index, st.syntheticSegment, scene?.id, lines]);
+
+  // Ambient scene audio: an independent Web Audio chain, entirely decoupled
+  // from the orchestrator's TTS/segment clock (see ambientAudio.js). Starts/
+  // crossfades only on an actual scene change, mirroring the tension effect
+  // above; startAmbient() itself no-ops if the category hasn't changed.
+  const lastAmbientSceneRef = useRef(null);
+  useEffect(() => {
+    if (lastAmbientSceneRef.current === scene?.id) return;
+    lastAmbientSceneRef.current = scene?.id;
+    startAmbient(classifyAmbience(scene));
+  }, [scene?.id]);
+  useEffect(() => { setAmbientEnabled(prefs.ambientSound); }, [prefs.ambientSound]);
+  useEffect(() => { setAmbientVolume(prefs.ambientVolume); }, [prefs.ambientVolume]);
+  useEffect(() => { setAmbientPlaying(st.status === "playing"); }, [st.status]);
+  useEffect(() => () => stopAmbient(), []);
 
   const spotlightId = useMemo(
 

@@ -29,6 +29,10 @@ export const KEYS = {
   directorsLog: "vae-directors-log",
   uiMode: "vae-ui-mode",              // "simple" | "full"
   simpleFontScale: "vae-simple-font", // "1" default; optional larger-text bump
+  // Procedurally-synthesized rain/wind/forest/tavern loop, keyed off scene
+  // title/location (see ambientClassifier.js) — see ambientAudio.js.
+  ambientSound: "vae-ambient-sound",
+  ambientVolume: "vae-ambient-volume",
 };
 
 const NARRATOR_M = "en-US-AndrewMultilingualNeural";
@@ -60,6 +64,8 @@ export function getPrefs() {
     directorsLog: g(KEYS.directorsLog, "false") === "true",
     uiMode: g(KEYS.uiMode, "simple"),
     simpleFontScale: parseFloat(g(KEYS.simpleFontScale, "1")) || 1,
+    ambientSound: g(KEYS.ambientSound, "true") !== "false",
+    ambientVolume: parseFloat(g(KEYS.ambientVolume, "0.35")) || 0.35,
     fullscreen: false,
   };
 }
