@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { resumeIndex } from "../library.js";
+import { getResume, resumeIndex } from "../library.js";
 import { setPref } from "../audio/voicePrefs.js";
 
 /**
@@ -33,8 +33,21 @@ function bookAction(entry) {
     : { kind: "play", label: "Play" };
 }
 
+/** The one book to feature as "Continue reading" — most recently updated,
+ *  in-progress, non-error resume across the whole library. */
+function mostRecentInProgress(books) {
+  const candidates = books
+    .filter((b) => b.status !== "error")
+    .map((b) => ({ book: b, resume: b.resume || getResume(b.book_id) }))
+    .filter(({ resume }) => resume && !resume.completed && (resume.line | 0) > 0);
+  if (!candidates.length) return null;
+  candidates.sort((a, b) => (b.resume.updated || 0) - (a.resume.updated || 0));
+  return candidates[0];
+}
+
 export default function SimpleLibrary({ catalog = [], onOpen, onAdd, onOpenSettings }) {
   const books = catalog.filter(Boolean);
+  const recent = mostRecentInProgress(books);
   const [hintSeen, setHintSeen] = useState(
     () => typeof localStorage !== "undefined" && localStorage.getItem("vae-simple-seen-hint") === "1",
   );
@@ -67,6 +80,24 @@ export default function SimpleLibrary({ catalog = [], onOpen, onAdd, onOpenSetti
         <p className="vae-simple-empty" data-testid="simple-empty">
           You don't have any books yet. Tap "Add a book" to begin.
         </p>
+      )}
+
+      {recent && (
+        <button
+          type="button"
+          className="vae-simple-continue"
+          data-testid="simple-continue-card"
+          onClick={() => onOpen(recent.book)}
+        >
+          <span className="vae-simple-continue-cover" aria-hidden>
+            {recent.book.cover ? <img src={recent.book.cover} alt="" /> : <span className="vae-simple-cover-blank" />}
+          </span>
+          <span className="vae-simple-continue-text">
+            <span className="vae-simple-continue-eyebrow">Continue reading</span>
+            <span className="vae-simple-continue-title">{recent.book.title || "Untitled book"}</span>
+            <span className="vae-simple-continue-chapter">Chapter {recent.resume.chapter || 1}</span>
+          </span>
+        </button>
       )}
 
       <ul className="vae-simple-list">

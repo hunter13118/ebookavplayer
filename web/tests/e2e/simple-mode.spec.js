@@ -25,6 +25,29 @@ test.describe("Simple Mode", () => {
     await expect(processing).toContainText("Getting your book ready");
   });
 
+  test("continue reading card: shows the in-progress book + chapter, opens the player", async ({ page }) => {
+    const withResume = [
+      { ...CATALOG[0], resume: { line: 12, chapter: 2, total: 100, updated: Date.now() } },
+    ];
+    await bootLibrary(page, {
+      backend: { catalog: withResume, detail: SAMPLE_BOOK, packBook: SAMPLE_BOOK },
+      prefs: { uiMode: "simple" },
+    });
+    const card = page.getByTestId("simple-continue-card");
+    await expect(card).toBeVisible();
+    await expect(card).toContainText("Continue reading");
+    await expect(card).toContainText("Chapter 2");
+    await card.click();
+    const skip = page.getByTestId("download-recommend-skip");
+    if (await skip.isVisible({ timeout: 20_000 }).catch(() => false)) await skip.click();
+    await expect(page.getByTestId("player-dock")).toBeVisible();
+  });
+
+  test("no continue reading card when nothing is in progress", async ({ page }) => {
+    await bootLibrary(page, { backend: { catalog: CATALOG }, prefs: { uiMode: "simple" } });
+    await expect(page.getByTestId("simple-continue-card")).toHaveCount(0);
+  });
+
   test("open and play: chapter dropdown and illustration button are absent", async ({ page }) => {
     await bootLibrary(page, {
       backend: { catalog: CATALOG, detail: SAMPLE_BOOK, packBook: SAMPLE_BOOK },
