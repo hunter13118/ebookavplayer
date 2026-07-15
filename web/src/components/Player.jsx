@@ -1169,7 +1169,7 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline,
 
             illustrationFlash={activeFlash.url}
 
-            lineKey={activeFlash.key}
+            lineKey={String(st.index)}
 
             flashActive={flashActive}
 

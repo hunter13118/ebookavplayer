@@ -33,14 +33,15 @@ export default function Stage({
   }));
   const laid = stageLayout(present, speakerId, 2);
   // Expression Sensitivity Plan Phase 3b: on a high-intensity dramatic line,
-  // push in on the whole stage (contrast against idle speaking); yell/angry
-  // additionally get a brief one-shot "impact frame" flash, re-triggered per
-  // line via the lineKey remount below rather than any extra timer state.
+  // push in on the whole stage (contrast against idle speaking); yell/angry/
+  // surprised ("shock") additionally get a brief one-shot "impact frame"
+  // flash, re-triggered per line via the lineKey remount below rather than
+  // any extra timer state.
   const expressionBucket = curExpression ? normalizeExpressionBucket(curExpression) : "normal";
   const intensity = typeof curIntensity === "number" ? curIntensity : 1;
   const threshold = INTENSITY_THRESHOLD[performanceMode] ?? INTENSITY_THRESHOLD.balanced;
   const highIntensity = intensity > threshold && expressionBucket !== "normal";
-  const impactFrame = highIntensity && (expressionBucket === "yell" || expressionBucket === "angry");
+  const impactFrame = highIntensity && (expressionBucket === "yell" || expressionBucket === "angry" || expressionBucket === "surprised");
   const stageCls = [
     "vae-stage",
     pixelFilter ? "vae-pixel-filter" : "",

@@ -1101,7 +1101,8 @@ body { margin: 0; background: var(--bg); color: var(--text);
 [data-ui="simple"] .vae-dock-icon-lg { font-size: 2rem; }
 [data-ui="simple"] .vae-back { min-height: 44px; font-size: 1.1rem; }
 
-/* Motion: respect reduced-motion for any Simple-only animation you add */
+/* Motion: respect reduced-motion everywhere, not just Simple Mode — this also
+   covers Full Mode's expr-* sprite animations and stage push-in/impact-frame. */
 @media (prefers-reduced-motion: reduce) {
-  [data-ui="simple"] * { transition: none !important; animation: none !important; }
+  * { transition: none !important; animation: none !important; }
 }
