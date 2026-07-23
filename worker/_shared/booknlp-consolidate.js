@@ -42,6 +42,32 @@ function isUnnamedId(id) {
   return /^unnamed-/.test(String(id || ""));
 }
 
+// Interjections / onomatopoeia / filler words that BookNLP's entity tagger
+// routinely mis-labels as PROPER NAMES ("Ahh," she said -> a character named
+// "Ahh"), plus a few generic non-name words seen doing the same
+// ("everyone", "vitality"). These recur often enough to clear a line-count
+// bar, so counting alone can't cull them — match by name and always drop.
+// Deliberately conservative: only entries that are never plausibly a real
+// character name. Compared against the slugified character id.
+const NOISE_NAME_SLUGS = new Set([
+  "ahh", "ah", "aha", "ahh-h", "ooh", "oh", "ohh", "ooo", "oooh", "aah", "aaah",
+  "eh", "ehh", "um", "umm", "uh", "uhh", "hm", "hmm", "hmmm", "huh", "er", "err",
+  "ugh", "argh", "gah", "grr", "grrr", "hah", "haha", "heh", "hehe", "ha",
+  "oof", "ow", "owww", "ouch", "yikes", "whoa", "woah", "wow", "woot", "yay",
+  "yaaay", "hooray", "boom", "bam", "pow", "thud", "clang", "whoops", "oops",
+  "phew", "psst", "shh", "shhh", "tsk", "brr", "ew", "eww", "mwa", "muah",
+  "nuh", "nah", "nay", "yep", "yup", "nope", "hey", "heya", "yo", "ok", "okay",
+  "o-god", "oh-god", "pluck", "gulp", "sigh", "gasp", "hiss", "growl", "sob",
+  "everyone", "everybody", "someone", "somebody", "anyone", "nobody",
+  "vitality",
+]);
+
+/** A named character whose name is really an interjection / filler / generic
+ *  word BookNLP mis-tagged as a proper noun. */
+function isNoiseName(id) {
+  return NOISE_NAME_SLUGS.has(String(id || "").toLowerCase());
+}
+
 /** Count spoken lines per character_id across all scenes. */
 function lineCountsByCharacter(scenes) {
   const counts = new Map();
@@ -72,6 +98,7 @@ export function keepCharacterIds(scenes, characters, opts = {}) {
   ]);
   for (const id of ids) {
     if (!id || keep.has(id)) continue;
+    if (isNoiseName(id)) continue; // interjection/filler mis-tagged as a name
     const n = counts.get(id) || 0;
     const min = isUnnamedId(id) ? o.unnamedMinLines : o.namedMinLines;
     if (n >= min) keep.add(id);

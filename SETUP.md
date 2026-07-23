@@ -170,6 +170,11 @@ your own hardware first.
 | Tests fail with "module not found" | Re-run `npm install` at root **and** in `web/` |
 | Web dev server proxy errors | Check `target` in [web/vite.config.js](web/vite.config.js) points at `:8600` |
 | `web/src/timing/whisperxAlignerClient` calls fail | The local align bridge isn't running — see [scripts/local-align-server/server.py](scripts/local-align-server/server.py) (Python, standalone WhisperX ASR server, separate from both the worker and `legacy/server/`) |
+| The align server exits at startup with `SSLCertVerificationError` reaching `huggingface.co` | The MDM intercepts TLS, so the HF model-metadata fetch fails even though the model is already cached locally. Start it with `HF_HUB_OFFLINE=1 .venv/bin/python server.py` — it uses the cached model and skips the network check |
+| The local **image** server (`scripts/local-image-server/server.py`) exits with `ModuleNotFoundError: No module named 'torch'` | It's being launched with a Python that has no `torch` — it needs its own env with `torch`/diffusers installed. This only gates live art *generation*; embedded-image extraction and everything in the reader/character path is worker-side and unaffected |
+| An attached `.m4b` never plays/syncs and there's no error | Fixed — the failure used to be swallowed silently (`m4bStatus.error` was set but never rendered). The player now shows a red banner with a **Retry** button. The usual cause is the align server being down (start it, then Retry) or no align connection configured (add `http://127.0.0.1:7861` in Settings › Backends) |
+| Reader text from a BookNLP-extracted book shows words cut in half (`Badlan|ds`), scattered quote marks, or `�` | Fixed — `_verbatim_span` sliced BookNLP's **character** offsets out of raw UTF-8 **bytes**, so every multibyte char (curly quotes, em-dashes) shifted the window and could split mid-character. It now slices the decoded string. An already-extracted book keeps its old corrupted text until re-ingested |
+| A BookNLP-extracted book proposes ~200 "characters", many gibberish/onomatopoeia | Fixed — `consolidateCharacters` ([worker/_shared/booknlp-consolidate.js](worker/_shared/booknlp-consolidate.js)) culls the roster to the cast that actually carries the book (by whole-book line count, higher bar for anonymous `unnamed-*` buckets) and drops interjections mis-tagged as names, reassigning dropped speakers' lines to the narrator. Runs at finalize for the BookNLP path only. Thresholds are tunable in that module |
 | A book with `VAE_BOOKNLP_URL` set stalls or falls straight through to the LLM path | The local BookNLP server isn't running, or crashed on this chapter — check `scripts/local-booknlp-server/server.py`'s logs; the pipeline treats a BookNLP failure as "fall back to the LLM from here," not a hard error, so the book still finishes, just without the mechanical pass past that point |
 | `.env` edits don't take effect in `dev:worker` | You're editing `worker/.dev.vars` directly — edit root `.env` instead, `sync-dev-vars.mjs` regenerates it |
 | Character merge doesn't persist | Confirm the KV binding in [worker/wrangler.toml:31](worker/wrangler.toml#L31) is configured |
@@ -232,14 +237,18 @@ is 3.14, so the align server gets its own **3.12** venv via `uv`:
 cd scripts/local-align-server
 UV_SYSTEM_CERTS=1 uv venv --python 3.12 .venv
 UV_SYSTEM_CERTS=1 uv pip install --python .venv/bin/python whisperx fastapi "uvicorn[standard]" python-multipart
-.venv/bin/python server.py
+HF_HUB_OFFLINE=1 .venv/bin/python server.py
 # GET /health, POST /align (whisperx-local timing), POST /transcribe (M4B-first) on :7861
 ```
 
 `UV_SYSTEM_CERTS=1` is required on this machine — the MDM intercepts TLS, so uv
-must trust the macOS keychain root. The `libtorchcodec` warning on startup is
-harmless (WhisperX decodes via the ffmpeg CLI). Add `http://127.0.0.1:7861` as a
-connection in Settings > Backends.
+must trust the macOS keychain root. `HF_HUB_OFFLINE=1` on the **run** command is
+required for the same reason: once the ASR model is cached, the startup
+model-metadata fetch to `huggingface.co` still fails TLS verification and would
+abort the server (`SSLCertVerificationError`) — offline mode uses the cache and
+skips that check. The `libtorchcodec` warning on startup is harmless (WhisperX
+decodes via the ffmpeg CLI). Add `http://127.0.0.1:7861` as a connection in
+Settings > Backends.
 
 Tested by [tests/test_local_align_server.py](tests/test_local_align_server.py).
 

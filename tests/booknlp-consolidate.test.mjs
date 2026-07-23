@@ -25,37 +25,55 @@ function linesFor(id, n, kind = "dialogue") {
       ...linesFor("narrator", 50, "narration"),
       ...linesFor("sylphy", 20),
       ...linesFor("unnamed-0", 30),   // anonymous but clearly a real speaker
-      ...linesFor("ahh", 1),          // onomatopoeia mis-tagged as a name
+      ...linesFor("orin", 1),         // named singleton — below the named bar
       ...linesFor("unnamed-143", 1),  // one-off unnamed noise
-      ...linesFor("gah", 2),          // named, 2 lines — clears the named bar
+      ...linesFor("reg", 2),          // named, 2 lines — clears the named bar
     ],
   }];
   const characters = {
     narrator: { name: "Narrator" },
     sylphy: { name: "Sylphy" },
     "unnamed-0": { name: "Unnamed Character 0" },
-    ahh: { name: "Ahh" },
+    orin: { name: "Orin" },
     "unnamed-143": { name: "Unnamed Character 143" },
-    gah: { name: "Gah" },
+    reg: { name: "Reg" },
   };
 
   const { characters: kept, scenes: out, keptIds, droppedIds } = consolidateCharacters(characters, scenes);
 
-  // narrator (always), sylphy (named>=2), unnamed-0 (unnamed>=6), gah (named>=2) survive.
-  assert.deepEqual(new Set(Object.keys(kept)), new Set(["narrator", "sylphy", "unnamed-0", "gah"]));
-  // "ahh" (1 line, named) and "unnamed-143" (1 line, unnamed<6) are dropped.
-  assert.deepEqual(new Set(droppedIds), new Set(["ahh", "unnamed-143"]));
+  // narrator (always), sylphy (named>=2), unnamed-0 (unnamed>=6), reg (named>=2) survive.
+  assert.deepEqual(new Set(Object.keys(kept)), new Set(["narrator", "sylphy", "unnamed-0", "reg"]));
+  // "orin" (1 line, named<2) and "unnamed-143" (1 line, unnamed<6) are dropped.
+  assert.deepEqual(new Set(droppedIds), new Set(["orin", "unnamed-143"]));
   assert.ok(keptIds.includes("unnamed-0"), "high-volume unnamed protagonist must survive");
 
   // Dropped speakers' lines are reassigned to narration, text preserved.
   const flat = out[0].lines;
-  const ahhLine = flat.find((l) => l.text === "ahh line 0");
-  assert.equal(ahhLine.character_id, "narrator");
-  assert.equal(ahhLine.kind, "narration");
-  assert.equal(ahhLine.text, "ahh line 0", "text is never rewritten");
+  const orinLine = flat.find((l) => l.text === "orin line 0");
+  assert.equal(orinLine.character_id, "narrator");
+  assert.equal(orinLine.kind, "narration");
+  assert.equal(orinLine.text, "orin line 0", "text is never rewritten");
   // Kept speakers untouched.
   assert.ok(flat.some((l) => l.character_id === "sylphy" && l.kind === "dialogue"));
   assert.ok(flat.some((l) => l.character_id === "unnamed-0" && l.kind === "dialogue"));
+}
+
+// ── Interjections mis-tagged as names are always dropped ─────────────────────
+// BookNLP labels "Ahh," / "Boom!" as PROPER NAMES; they recur enough to clear
+// the line-count bar, so they must be culled by name, not just by count.
+{
+  const scenes = [{
+    lines: [
+      ...linesFor("ahh", 10),   // clears named bar on count, but it's noise
+      ...linesFor("boom", 5),
+      ...linesFor("everyone", 8),
+      ...linesFor("sylphy", 3),
+    ],
+  }];
+  const { characters } = consolidateCharacters(
+    { ahh: {}, boom: {}, everyone: {}, sylphy: {} }, scenes,
+  );
+  assert.deepEqual(Object.keys(characters), ["sylphy"], "only the real name survives");
 }
 
 // ── Unnamed bar is higher than named bar ─────────────────────────────────────
