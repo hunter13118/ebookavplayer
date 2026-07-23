@@ -18,12 +18,23 @@ initLocalApiBridgeFromUrl();
 
 const publishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 
-createRoot(document.getElementById("root")).render(
-  <ErrorBoundary>
-    <PortfolioClerkProvider publishableKey={publishableKey}>
-      <React.StrictMode>
-        <App />
-      </React.StrictMode>
-    </PortfolioClerkProvider>
-  </ErrorBoundary>,
-);
+// Dev-only: ?karaoke-demo drops straight into the M4B-first karaoke reader
+// harness (src/reader/KaraokeDemo.jsx) instead of the app, for verifying the
+// reader against a real transcript. Guarded by DEV so it never ships.
+if (import.meta.env.DEV && typeof location !== "undefined" && location.search.includes("karaoke-demo")) {
+  import("./reader/KaraokeDemo.jsx").then(({ default: KaraokeDemo }) => {
+    createRoot(document.getElementById("root")).render(
+      <ErrorBoundary><KaraokeDemo /></ErrorBoundary>,
+    );
+  });
+} else {
+  createRoot(document.getElementById("root")).render(
+    <ErrorBoundary>
+      <PortfolioClerkProvider publishableKey={publishableKey}>
+        <React.StrictMode>
+          <App />
+        </React.StrictMode>
+      </PortfolioClerkProvider>
+    </ErrorBoundary>,
+  );
+}

@@ -1,0 +1,212 @@
+/* M4B-first minimal karaoke reader. Full-screen, self-paginating, audio-clock
+   driven. Colors come from the app theme tokens (styles.css :root). */
+
+.vae-kr {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+  --kr-font: 28px;
+  --kr-read: var(--text);
+  --kr-dim: var(--muted);
+}
+
+.vae-kr-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--box-border);
+}
+.vae-kr-title {
+  flex: 1;
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.vae-kr-exit {
+  background: transparent;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+.vae-kr-font { display: flex; gap: 6px; }
+.vae-kr-font button {
+  background: transparent;
+  border: 1px solid var(--box-border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+.vae-kr-font button:hover { border-color: var(--accent); color: var(--accent); }
+
+/* The page. overflow:hidden — content is paginated to fit, never scrolled. */
+.vae-kr-stage {
+  flex: 1;
+  overflow: hidden;
+  padding: 5vh 8vw;
+}
+
+/* Shared by real page lines and the offscreen measurer, so heights match.
+   padding-bottom (not margin) is the inter-sentence gap, so getBoundingClientRect
+   includes it in the measured stacked height. */
+.vae-kr-line {
+  margin: 0;
+  padding: 0 0 0.55em 0;
+  font-size: var(--kr-font);
+  line-height: 1.65;
+  font-weight: 400;
+  color: var(--kr-dim);
+  transition: color 220ms ease;
+}
+.vae-kr-stage .vae-kr-line { cursor: pointer; }
+
+/* A sentence already narrated: fully legible. */
+.vae-kr-line.is-read { color: var(--kr-read); }
+
+/* The active sentence: words revealed individually. Base = dim; spoken words
+   snap to read color; the active word is a left-to-right karaoke wipe. */
+.vae-kr-line.is-active { color: var(--kr-dim); }
+.kr-w { transition: color 160ms ease; }
+.vae-kr-line.is-active .kr-w.spoken { color: var(--kr-read); }
+.vae-kr-line.is-active .kr-w.active {
+  color: transparent;
+  background-image: linear-gradient(
+    90deg,
+    var(--accent) 0%,
+    var(--accent) var(--wipe, 0%),
+    var(--kr-dim) var(--wipe, 0%),
+    var(--kr-dim) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+
+/* Audio-only content the align server heard but that isn't in the book's
+   text (see ReaderView's syntheticSegment prop) — flows inline with the
+   paginated paragraphs (shares .vae-kr-line's box model/measurement) but
+   dimmed + italic so it still reads as "the narration diverged here",
+   never hidden, for exactly as long as it's the actively-playing segment. */
+.vae-kr-gap {
+  font-style: italic;
+  color: var(--accent);
+  opacity: 0.72;
+}
+
+/* Offscreen measurer: identical column width (set in JS) & font, hidden. */
+.vae-kr-measure {
+  position: absolute;
+  top: 0;
+  left: -99999px;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* Embedded reader (inside Player, as one of the view modes). Fills the stage
+   region; playback controls come from the surrounding Player chrome. */
+.vae-reader {
+  position: relative;
+  /* Definite height so procedural pagination has a box to fit, independent of
+     whether the parent lays out as flex or block (the cinematic Stage it
+     replaces is a fixed 16:9 box, not a flex fill). */
+  height: min(72vh, 760px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+  --kr-font: 28px;
+  --kr-read: var(--text);
+  --kr-dim: var(--muted);
+  overflow: hidden;
+  border-radius: 12px;
+}
+/* Dimmed scene art behind the text — a nice touch, toggleable in settings. */
+.vae-reader-bg {
+  position: absolute;
+  inset: 0;
+  opacity: 0.16;
+  filter: saturate(0.85);
+  z-index: 0;
+  pointer-events: none;
+}
+.vae-reader::after {
+  /* Legibility scrim over the dimmed art. */
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(var(--bg), transparent 30%, transparent 70%, var(--bg));
+  opacity: 0.6;
+  z-index: 0;
+  pointer-events: none;
+}
+.vae-reader .vae-kr-stage { position: relative; z-index: 1; }
+.vae-reader-font {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  z-index: 2;
+  display: flex;
+  gap: 6px;
+}
+.vae-reader-font button {
+  background: var(--box);
+  border: 1px solid var(--box-border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 3px 8px;
+  cursor: pointer;
+  font-size: 0.78rem;
+}
+.vae-reader-font button:hover { border-color: var(--accent); color: var(--accent); }
+
+.vae-kr-controls {
+  border-top: 1px solid var(--box-border);
+  padding: 10px 16px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.vae-kr-scrubrow { display: flex; align-items: center; gap: 10px; }
+.vae-kr-time { font-size: 0.72rem; color: var(--muted); font-variant-numeric: tabular-nums; min-width: 3ch; }
+.vae-kr-scrub { flex: 1; accent-color: var(--accent); height: 6px; cursor: pointer; }
+
+.vae-kr-btnrow { display: flex; align-items: center; justify-content: center; gap: 14px; }
+.vae-kr-btn {
+  background: transparent;
+  border: 1px solid var(--box-border);
+  color: var(--text);
+  border-radius: 10px;
+  min-width: 44px;
+  height: 40px;
+  cursor: pointer;
+  font-size: 1rem;
+}
+.vae-kr-btn:hover { border-color: var(--accent); color: var(--accent); }
+.vae-kr-play {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+  min-width: 56px;
+  box-shadow: 0 4px 18px rgba(139, 123, 255, 0.35);
+}
+.vae-kr-play:hover { color: #fff; }
+.vae-kr-speed {
+  background: transparent;
+  border: 1px solid var(--box-border);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 0.78rem;
+}
+.vae-kr-speed:hover { border-color: var(--accent); color: var(--accent); }
+.vae-kr-page { font-size: 0.75rem; color: var(--muted); min-width: 4ch; text-align: center; }

@@ -84,4 +84,36 @@ assert.equal(playback.characters.mei.illustration_ref, 1);
   assert.equal(applied.cover, "/media/x/illustrations/img_000.png");
 }
 
+// front_matter_refs/back_matter_refs (cover/gallery art before the book
+// starts, trailing junk art after it ends — see matchIllustrationsToChapters
+// in chapter-extract-pipeline.js) resolve to real URLs the same way
+// character/scene refs do, with no line/chapter attachment at all.
+{
+  const fbAnalysis = {
+    illustration_urls: analysis.illustration_urls,
+    characters: [], scenes: [],
+    front_matter_refs: [0, 1],
+    back_matter_refs: [1],
+  };
+  const playback4 = { characters: {}, scenes: [] };
+  const { playback: applied, counts } = applyDirectIllustrations(playback4, fbAnalysis, analysis.illustration_urls);
+  assert.deepEqual(applied.front_matter, [
+    { url: "/media/x/illustrations/img_000.png" },
+    { url: "/media/x/illustrations/img_001.png" },
+  ]);
+  assert.deepEqual(applied.back_matter, [{ url: "/media/x/illustrations/img_001.png" }]);
+  assert.equal(counts.front_matter, 2);
+  assert.equal(counts.back_matter, 1);
+}
+
+// No refs at all -> no front_matter/back_matter fields, not empty arrays
+// (keeps the compiled book JSON lean for the vastly more common case of no
+// front/back-matter art).
+{
+  const playback5 = { characters: {}, scenes: [] };
+  const { playback: applied } = applyDirectIllustrations(playback5, { characters: [], scenes: [] }, analysis.illustration_urls);
+  assert.equal(applied.front_matter, undefined);
+  assert.equal(applied.back_matter, undefined);
+}
+
 console.log("illustration-refs: ok");

@@ -17,25 +17,58 @@ const CHAPTER_TITLE_RE =
 const CHAPTER_NUM_RE =
   /^(?:chapter|ch\.?|part|book|section)\s*([\dIVXLCDM]+)/i;
 
+// Loose "this reads like real book content" signal — no number required
+// (unlike CHAPTER_TITLE_RE), so it also matches "Epilogue: ..." — the same
+// keyword set isFrontMatter's own third check uses to keep a numberless
+// Prologue/Epilogue out of front matter.
+const CHAPTER_LIKE_RE = /chapter|prologue|epilogue|part|book|section|interlude|preface/i;
+
+// Common named HTML entities EPUBs actually use in body prose (typographic
+// punctuation, non-breaking space) — decodeHtmlEntities() below also handles
+// numeric entities (&#160; / &#x2019; etc.) generically via String.fromCodePoint.
+const NAMED_ENTITIES = {
+  nbsp: " ", amp: "&", lt: "<", gt: ">", quot: '"', apos: "'",
+  mdash: "—", ndash: "–", hellip: "…",
+  ldquo: "“", rdquo: "”", lsquo: "‘", rsquo: "’",
+};
+
+/** Decode HTML/XML entities — named (nbsp, mdash, ...), decimal (&#160;),
+ *  and hex (&#x2019;). Left undecoded, these leak into extracted text as
+ *  literal "&#160;"-style junk — harmless-ish when only an LLM ever reads
+ *  the text (it silently normalizes past it), but directly visible to a
+ *  reader once mechanical-script.js shows this text verbatim with no LLM
+ *  pass in between. Safe to run AFTER all real HTML tags are already
+ *  stripped (stripHtml calls this last) — a decoded entity can't be
+ *  mistaken for a tag by that point. */
+function decodeHtmlEntities(s) {
+  return String(s || "").replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g, (whole, body) => {
+    if (body[0] === "#") {
+      const code = body[1] === "x" || body[1] === "X"
+        ? parseInt(body.slice(2), 16)
+        : parseInt(body.slice(1), 10);
+      if (!Number.isFinite(code)) return whole;
+      try { return String.fromCodePoint(code); } catch { return whole; }
+    }
+    return Object.prototype.hasOwnProperty.call(NAMED_ENTITIES, body) ? NAMED_ENTITIES[body] : whole;
+  });
+}
+
 function stripHtml(html) {
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, "")
-    .replace(/<style[\s\S]*?<\/style>/gi, "")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/(p|div|h[1-6]|li|blockquote)>/gi, "\n\n")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/[ \t　]+/g, " ")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  return decodeHtmlEntities(
+    html
+      .replace(/<script[\s\S]*?<\/script>/gi, "")
+      .replace(/<style[\s\S]*?<\/style>/gi, "")
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/(p|div|h[1-6]|li|blockquote)>/gi, "\n\n")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/[ \t　]+/g, " ")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim(),
+  );
 }
 
 function decodeXml(s) {
-  return String(s || "")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'");
+  return decodeHtmlEntities(s);
 }
 
 function firstTag(xml, tag) {
@@ -242,6 +275,27 @@ function buildChaptersFromSpine(files, orderedPaths) {
   return chapters;
 }
 
+/**
+ * Trailing junk (a "Newsletter"/ad/afterword page a publisher tacks on after
+ * the real story ends) isn't front matter — isFrontMatter() only fires on
+ * short/untitled pages, and back-matter blurbs are often long enough (or
+ * titled enough) to slip through and become a fake final "chapter" sent
+ * through real LLM extraction. Pops entries off the END of `chapters` whose
+ * title doesn't look chapter-like, stopping at the first one that does (or
+ * once only one real chapter would be left, so a book can never be emptied
+ * entirely by this). Mirrors front matter: text is discarded (never sent to
+ * extraction), only `spine_path` survives — image matching still needs it to
+ * know which images are "after the book's real content ends."
+ */
+function splitBackMatter(chapters) {
+  const kept = [...chapters];
+  const backMatter = [];
+  while (kept.length > 1 && !CHAPTER_LIKE_RE.test(kept[kept.length - 1].title || "")) {
+    backMatter.unshift(kept.pop());
+  }
+  return { chapters: kept, backMatterChapters: backMatter };
+}
+
 function formatBodyText(chapters) {
   return chapters
     .map((c) => `## Chapter ${c.index}: ${c.title}\n${c.text}`)
@@ -280,6 +334,10 @@ export function extractEpubText(bytes, { maxChars } = {}) {
     chapters = [{ index: 1, title: "Full text", text: chunks.join("\n\n") }];
   }
 
+  const backMatterSplit = splitBackMatter(chapters);
+  chapters = backMatterSplit.chapters;
+  const backMatterChapters = backMatterSplit.backMatterChapters;
+
   let body = formatBodyText(chapters).slice(0, cap);
   if (!body) throw new Error("epub: no readable text found");
 
@@ -304,6 +362,11 @@ export function extractEpubText(bytes, { maxChars } = {}) {
     // spine position. See matchIllustrationsToChapters in
     // chapter-extract-pipeline.js.
     orderedPaths,
+    // Trailing junk (publisher newsletter/ad page, "About the Author" if it
+    // slips past isFrontMatter's short-text check) split off the end of
+    // `chapters` — see splitBackMatter(). Text is discarded like front
+    // matter's; only spine_path matters, for back-matter image matching.
+    backMatterChapters,
   };
 }
 

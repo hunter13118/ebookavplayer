@@ -134,8 +134,15 @@ export async function mergeCatalog(serverList) {
     if (prev) {
       const merged = { ...prev, ...e, offline_pack: true, server_available: true };
       if (!e.cover && prev.cover) merged.cover = prev.cover;
-      if (!e.title && prev.title) merged.title = prev.title;
-      if (!e.author && prev.author) merged.author = prev.author;
+      // Server is authoritative for title/author, same reasoning as
+      // status/stage/progress below — a locally-cached offline pack's title
+      // is a snapshot from whenever it was last built, and must never mask a
+      // server-side rename. Confirmed live: renaming a book appeared to "not
+      // persist" because this merge previously let the offline pack's stale
+      // cached title win on every catalog refresh, including the one that
+      // fires immediately after the rename itself.
+      if (prev.title) merged.title = prev.title;
+      if (prev.author) merged.author = prev.author;
       // bookFromLocalPack() hardcodes status/stage/progress to "this cached
       // copy is ready to play offline" — true about the pack, not about the
       // book's actual server-side extraction state. Without this, any book
@@ -199,6 +206,24 @@ export async function fetchBook(bookId, opts = {}) {
     if (local?.book) {
       await activatePackForBook(bookId);
       await warmOfflineMedia(local);
+      // A book still mid formal-extraction (e.g. an m4b-first upload whose
+      // background /ingest-text run hasn't compiled yet) returns a near-empty
+      // stub server-side ({error, book_id, status:"processing"} — no scenes
+      // at all). Spreading that over the local pack would erase the transcript
+      // lines the local pack already has, permanently showing "Preparing this
+      // book..." even though the device has the full text right now. Prefer
+      // the local pack's content until the remote copy has actually compiled
+      // at least one real chapter — not just while status is "processing":
+      // formal extraction can also STALL (e.g. a missing/misconfigured
+      // provider key — see worker/.dev.vars's EXTRACT_SKIP_GEMINI) and sit at
+      // status "partial"/"error" with zero chapters_ready indefinitely. An
+      // m4b-first local pack's raw transcript is strictly more useful than
+      // that stuck state, so keep showing it either way.
+      const remoteHasRealContent = (remote.chapters_ready ?? 0) > 0;
+      if (remote.status === "processing"
+        || (local.pack_origin === "m4b-first" && !remoteHasRealContent)) {
+        return bookFromLocalPack(local);
+      }
       return {
         ...remote,
         voice_overrides: remote.voice_overrides || local.voices || {},

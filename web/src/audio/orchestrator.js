@@ -6,7 +6,7 @@ import {
   speakLine, speakLinesViaEdge, stopAllSpeech, setEdgePlaybackRate,
 } from "./playSpeech.js";
 import {
-  isSharedAudioLoaded, playSharedSegment, playSharedContinuous, stopSharedAudio,
+  isSharedAudioLoaded, playSharedContinuous, stopSharedAudio,
   getSharedAudioCurrentTimeMs, getSharedAudioDurationMs, setSharedAudioPlaybackRate,
   seekSharedAudioMs, isSharedAudioBuffering, onSharedAudioBufferingChange,
 } from "./sharedAudioSource.js";
@@ -56,7 +56,7 @@ export class Orchestrator {
     if (speed != null) {
       this.speed = speed;
       setEdgePlaybackRate(speed);
-      if (this._isAcousticMode() && isSharedAudioLoaded()) setSharedAudioPlaybackRate(speed);
+      if (this._hasSharedTimeline()) setSharedAudioPlaybackRate(speed);
     }
     if (autoAdvance != null) this.autoAdvance = autoAdvance;
     if (voiceOverrides !== undefined) this.voiceOverrides = voiceOverrides;
@@ -64,6 +64,20 @@ export class Orchestrator {
     // playback-integration milestone (when a precomputed timeline overrides
     // estimateDurationSec). Inert today, so playback behavior is unchanged.
     if (timingAlgorithm != null) this.timingAlgorithm = timingAlgorithm;
+  }
+
+  /**
+   * Sync the book's lines into the orchestrator WITHOUT starting/touching
+   * playback — call this whenever the book's flattened lines are ready
+   * (mount, book refresh), independent of whether play() has ever run.
+   * Without this, this.lines stays [] (its constructor default) until the
+   * user's first play() call, so seek()/rewind()/next() — which all clamp
+   * against this.lines.length — clamp to 0 no matter the target: the
+   * progress bar looked broken (every seek silently snapped back to line 0)
+   * for a book the user hadn't started playing yet.
+   */
+  setLines(lines) {
+    this.lines = lines || [];
   }
 
   /**
@@ -105,6 +119,16 @@ export class Orchestrator {
     return this.timelineMeta && this.timelineMeta.strategy === "acoustic";
   }
 
+  /** True whenever a precomputed timeline is loaded AND a shared local m4b is
+   *  attached — the condition for using the real-audio-clock (continuous)
+   *  playback engine, regardless of which timing algorithm produced the
+   *  timeline. `_isAcousticMode()`/`timelineMeta.strategy` stays pure
+   *  metadata (still useful for labeling which algorithm produced the
+   *  timing) — this is the one used to pick the playback engine. */
+  _hasSharedTimeline() {
+    return !!(this.lineTimings && isSharedAudioLoaded());
+  }
+
   _emit(extra = {}) {
     // While a gap is active, render it as narrator dialogue instead of the
     // (frozen) real line at this.index — DialogueBox already knows how to
@@ -113,9 +137,11 @@ export class Orchestrator {
     const line = synthetic
       ? { character_id: "narrator", kind: "narration", text: synthetic.text }
       : (this.lines[this.index] || null);
-    // Real audio clock, only meaningful in Mode B — null lets the UI fall
-    // back to the character-count estimate everywhere else.
-    const acoustic = this._isAcousticMode() && isSharedAudioLoaded();
+    // Real audio clock, only meaningful when the continuous playback engine
+    // is driving — null lets the UI fall back to the character-count
+    // estimate everywhere else (TTS/silent playback, which have no real
+    // audio file to read a position from).
+    const liveClock = this._hasSharedTimeline();
     this.onState({
       status: this.status,
       index: this.index,
@@ -125,9 +151,9 @@ export class Orchestrator {
       revealed: extra.revealed != null ? extra.revealed
         : (line ? line.text.length : 0),
       syntheticSegment: synthetic || null,
-      currentTimeMs: acoustic ? getSharedAudioCurrentTimeMs() : null,
-      durationMs: acoustic ? getSharedAudioDurationMs() : null,
-      buffering: acoustic && this.buffering,
+      currentTimeMs: liveClock ? getSharedAudioCurrentTimeMs() : null,
+      durationMs: liveClock ? getSharedAudioDurationMs() : null,
+      buffering: liveClock && this.buffering,
       ...extra,
     });
   }
@@ -163,12 +189,8 @@ export class Orchestrator {
     this.status = "playing";
     this._emit({ revealed: 0 });
 
-    if (this.lineTimings && isSharedAudioLoaded()) {
-      if (this._isAcousticMode()) {
-        await this._playMediaElementClock(startIndex);
-      } else {
-        await this._playSharedAudio(startIndex);
-      }
+    if (this._hasSharedTimeline()) {
+      await this._playMediaElementClock(startIndex);
       return;
     }
 
@@ -254,51 +276,15 @@ export class Orchestrator {
     this._finish();
   }
 
-  // Shared audiobook: play real [startMs,endMs) segments out of the single
-  // attached .m4b (sharedAudioSource) instead of synthesizing/fetching TTS,
-  // using the timeline injected via setTimeline(). Loop structure mirrors
-  // _playSilent (handles both auto-advance and click-through in one pass)
-  // since both are just "what happens after one line's audio finishes".
-  async _playSharedAudio(startIndex) {
-    for (let i = startIndex; i < this.lines.length; i += 1) {
-      if (this.status !== "playing") return;
-      this.index = i;
-      const line = this.lines[i];
-      this._emit({ revealed: 0 });
-      const timing = this.lineTimings[i];
-      let failInfo = null;
-      if (timing) {
-        // eslint-disable-next-line no-await-in-loop
-        await new Promise((resolve) => {
-          playSharedSegment(timing.startMs, timing.endMs, this.speed, {
-            onStart: (durSec) => this._runTypewriter(line.text, durSec),
-            onError: (e) => { failInfo = { lineIndex: i, line, error: e }; },
-            onEnd: () => resolve(),
-          });
-        });
-      } else {
-        // Defensive: a line outside the precomputed timeline (book/lines
-        // changed since it was computed) — degrade to a silent estimate for
-        // just this one line instead of failing the whole playback.
-        const dur = estimateDurationSec(line.text, this.speed);
-        this._runTypewriter(line.text, dur);
-        // eslint-disable-next-line no-await-in-loop
-        await new Promise((r) => setTimeout(r, (dur + 0.04) * 1000));
-      }
-      if (this.status !== "playing") return;
-      if (failInfo) { this._fail(failInfo); return; }
-      this._emit({ revealed: line.text.length });
-      if (!this.autoAdvance) { this.status = "paused"; this._emit(); return; }
-    }
-    this._finish();
-  }
-
-  // Mode B (acoustic timeline): play the shared audio file CONTINUOUSLY
-  // instead of chopping it into per-line seek-and-stop segments. A single
+  // Play the shared audio file CONTINUOUSLY for the whole session — a single
   // rAF loop reads the real playhead and maps it back to a line index via
   // lineAt(), driving both auto-advance and typewriter reveal off the same
-  // real clock the audio is actually on — instead of an estimated per-line
-  // duration timer (Mode A's approach, still used by the other 4 algorithms).
+  // real clock the audio is actually on, instead of an estimated per-line
+  // duration timer. Used for every timing algorithm once a shared m4b is
+  // loaded (see _hasSharedTimeline()) — an earlier per-line seek-and-stop
+  // path existed here for non-acoustic algorithms but was removed: seeking
+  // on every line plus a blind wall-clock stop timer caused audio to cut off
+  // early whenever a seek stalled on buffering (see sharedAudioSource.js).
   _mergedTimingEntries() {
     const cache = this._lineTimingIndexCache;
     if (!cache || cache.linesSrc !== this.lineTimings || cache.gapsSrc !== this.syntheticSegments) {
@@ -350,8 +336,10 @@ export class Orchestrator {
    * be set the last time a frame actually ran — which, after rAF sat
    * suspended for a while, could be many lines/minutes behind the audio's
    * real (still-advancing) position.
-   * Returns false if playback paused as a side effect (a click-through
-   * boundary hold), true if the caller should keep ticking.
+   * This engine (the continuous acoustic clock) never click-through-pauses
+   * on a boundary — `autoAdvance` only gates the per-line TTS engine
+   * (`play()`'s `_playAuto`/`_playSingle` choice). A real audio file plays
+   * straight through regardless of that setting; always returns true.
    */
   _resolvePosition(currentMs) {
     // Re-fetched every call (cheap: cached unless extendTimeline() just
@@ -363,30 +351,22 @@ export class Orchestrator {
 
     if (entry && entry.lineIndex == null) {
       // On a gap — this.index deliberately does not change (see the
-      // constructor comment on activeSynthetic).
+      // constructor comment on activeSynthetic). `leading` records whether
+      // this gap plays BEFORE this.index's own line has started (true at a
+      // book's leading intro bumper, where index is still pinned to line 0
+      // but line 0 hasn't been heard yet) vs. after it (the usual mid-book
+      // gap) — the reader view needs this to splice the gap paragraph on
+      // the correct side of the pinned line.
       if (this.activeSynthetic?.syntheticId !== entry.syntheticId) {
-        this.activeSynthetic = entry;
+        const lineStartMs = this.lineTimings?.[this.index]?.startMs ?? Infinity;
+        this.activeSynthetic = { ...entry, leading: entry.startMs < lineStartMs };
         this._emit({ revealed: entry.text.length });
-        if (!this.autoAdvance) {
-          // Click-through: hold at the gap the same way a real line
-          // boundary holds — next() resumes the clock past it.
-          this.pause();
-          return false;
-        }
       }
       return true;
     }
     if (this.activeSynthetic) this.activeSynthetic = null; // left the gap — resume real-line tracking
 
     if (entry && entry.lineIndex !== this.index) {
-      if (!this.autoAdvance) {
-        // Click-through: hold at the line boundary — don't advance index
-        // until the user calls next(), matching _playSharedAudio's pause.
-        const line = this.lines[this.index];
-        this._emit({ revealed: line ? line.text.length : 0 });
-        this.pause();
-        return false;
-      }
       this.index = entry.lineIndex;
       this._emit({ revealed: 0 });
     }
@@ -435,7 +415,7 @@ export class Orchestrator {
    *  uses, so a single call jumps straight to wherever the audio actually
    *  is now, in one step, instead of waiting for/needing per-frame catch-up. */
   resyncDisplay() {
-    if (this.status === "playing" && this._isAcousticMode() && isSharedAudioLoaded()) {
+    if (this.status === "playing" && this._hasSharedTimeline()) {
       this._resolvePosition(getSharedAudioCurrentTimeMs());
     }
   }
@@ -489,15 +469,17 @@ export class Orchestrator {
     }
   }
 
-  /** Manual next line (click-through advance / skip). */
+  /** Manual next line (click-through advance / skip, TTS engine only — the
+   *  continuous acoustic engine never click-through-pauses, but a user can
+   *  still manually pause() while a gap happens to be active). */
   next(steps = 1) {
     if (this.activeSynthetic) {
-      // Paused mid-gap: this.index is frozen at the last real line, so an
-      // index-based seek target doesn't apply here — just let the acoustic
-      // clock continue forward past the gap, same as tapping through any
-      // other line boundary. Gaps are only ever reached via forward
-      // continuous playback in v1 (never a seek/rewind target), so this is
-      // the one place that needs to know about them explicitly.
+      // Manually paused mid-gap: this.index is frozen at the last real
+      // line, so an index-based seek target doesn't apply here — just let
+      // the acoustic clock continue forward past the gap, same as tapping
+      // through any other line boundary. Gaps are only ever reached via
+      // forward continuous playback in v1 (never a seek/rewind target), so
+      // this is the one place that needs to know about them explicitly.
       this.resume();
       return;
     }
@@ -509,7 +491,7 @@ export class Orchestrator {
 
   resume() {
     if (this.status === "playing") return;
-    if (this._isAcousticMode() && this.lineTimings && isSharedAudioLoaded()) {
+    if (this._hasSharedTimeline()) {
       this._resumeMediaElementClock();
     } else {
       this.play(this.lines, this.index);

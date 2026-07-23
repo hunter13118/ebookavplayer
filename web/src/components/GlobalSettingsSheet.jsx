@@ -207,6 +207,30 @@ export default function GlobalSettingsSheet({
         </section>
 
         <section className="vae-menu-section">
+          <h3>Audiobook sync</h3>
+          <p className="vae-sheet-hint">
+            Which backend runs speech-to-text — for M4B-first uploads and WhisperX
+            audiobook sync (per-book fine-tuning stays in that book's own Settings).
+          </p>
+          <label className="vae-sheet-field">
+            Align server
+            <span className="vae-select-wrap">
+              <select className="vae-select" data-testid="select-align-connection-global"
+                value={prefs.alignConnectionId}
+                onChange={(e) => {
+                  setPref(KEYS.alignConnectionId, e.target.value);
+                  setPrefs((p) => ({ ...p, alignConnectionId: e.target.value }));
+                }}>
+                <option value="">Choose a connection…</option>
+                {connections.filter((c) => c.baseUrl).map((c) => (
+                  <option key={c.id} value={c.id}>{c.label}</option>
+                ))}
+              </select>
+            </span>
+          </label>
+        </section>
+
+        <section className="vae-menu-section">
           <button
             type="button"
             className="vae-menu-link"

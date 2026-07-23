@@ -125,7 +125,59 @@ web/src/offline/
   m4bStore.js             — persists the attached .m4b Blob + filename (IndexedDB)
 ```
 
-## Playback consumption (landed)
+## Resuming an interrupted alignment (Algorithm 4)
+
+A page refresh or crash mid-alignment used to mean re-running the ENTIRE
+WhisperX pass from 0ms on every reopen — `alignCache.js`'s partial manifest
+was only ever used as an instant-playback baseline estimate, never to
+actually skip already-aligned audio. `/align` (server.py) now accepts an
+optional `resume_ms` form field, and the client is responsible for BOTH
+halves of resuming correctly:
+
+- Trim `slidesByChapter` down to only the lines NOT already in the cached
+  manifest's `lineTimings` before calling `whisperxAlignerClient` — the
+  aligner matches audio against `lines` starting from ITS OWN index 0, so
+  sending the full book while skipping audio via `resume_ms` would match
+  mid-book audio against the beginning of the book text.
+- Pass `resume_ms` itself, checkpointed via `alignCache.js`'s `processedMs`
+  field (updated on every chunk via `onChapterProgress`, not just chunks that
+  resolved a new line — a long gap/intro can advance the audio clock with
+  nothing new to show for it).
+
+Player.jsx's `applyM4bTimeline` does this filtering and owns the checkpoint;
+see its `remainingSlidesByChapter`/`resumeMs`/`persistProgress` local
+variables. The FINAL merge always comes from the accumulated
+`accLineTimings`/`accSynthetic` maps, not from the last request's own return
+value — a resumed request only ever covers the trimmed remaining lines, so
+its raw result alone is missing everything an earlier session resolved.
+
+`readNdjson` in both `whisperxAlignerClient.js` and `transcribeClient.js`
+awaits each row's callbacks in order before processing the next streamed
+line — `onLinesReady`/`onGapsReady`/`onChapterProgress` all write the SAME
+local pack/alignCache record, and letting two rows' writes race was a real
+bug: a stale read-modify-write could silently revert an already-saved line
+or drop the resume checkpoint entirely, indistinguishable from "resume just
+doesn't work."
+
+## Gaps are always shown, never hidden (ReaderView)
+
+WhisperX align detects **gaps** — audio the server heard that has no
+counterpart in the book's extracted lines at all (a publisher bumper like
+"This is Audible.", an ad-libbed intro, a spoken chapter title). The
+orchestrator already tracked these (`syntheticSegment`/`activeSynthetic`)
+and the cinematic Stage view rendered them correctly, but `ReaderView.jsx`
+(the `viewMode: "reader"` karaoke view) had no wiring for them at all — its
+pagination and word-reveal are purely index-based over the static book
+`lines` array, with no concept of a transient gap "pseudo-line." The result:
+a gap's audio would play with literally nothing on screen matching it.
+
+Fixed by passing `syntheticSegment` through to `ReaderView` and rendering it
+as a dimmed, italicized banner (`.vae-kr-gap` in reader.css) OUTSIDE the
+paginated stage — the stage is a precisely-measured, `overflow:hidden` page,
+so slotting an unaccounted-for paragraph into that flow risked landing past
+the page's fitted content and getting silently clipped, exactly the "hide
+it" this exists to avoid. The banner is always visible for as long as the
+gap is the active segment; never gated behind a modal or a settings toggle.
 
 A user attaches one local `.m4b` via Settings → Audiobook sync ("Attach .m4b"). The
 file is stored in IndexedDB (`m4bStore.js`, reusing the offline-pack blob store) so it

@@ -58,6 +58,19 @@ function illustrationCaption(text) {
   return t.length > 72 ? `${t.slice(0, 72).trim()}…` : t;
 }
 
+/** Carry BookNLP's confidence-proxy flags (see booknlp-script.js /
+ * scripts/local-booknlp-server/server.py) through onto the compiled line —
+ * the reader ignores these entirely (same as it already ignores
+ * character_id), but a future low-confidence-resolution pass or review UI
+ * needs them on the FINAL compiled line, not just the pre-compile analysis. */
+function applyConfidenceFields(lineOut, sourceLine) {
+  if (sourceLine?.attribution_source) lineOut.attribution_source = sourceLine.attribution_source;
+  if (sourceLine?.low_confidence_speaker) {
+    lineOut.low_confidence_speaker = true;
+    lineOut.confidence_reason = sourceLine.confidence_reason;
+  }
+}
+
 /** Apply the playback line from media.inserts and analysis line flags. */
 function applyInsertFields(lineOut, sourceLine, lineIdx, media) {
   const insertUrl = media?.inserts?.[String(lineIdx)];
@@ -143,6 +156,7 @@ export function compilePlayback(analysis, {
           intensity: line.intensity ?? 0.5,
         };
         applyInsertFields(lineOut, line, idx, media);
+        applyConfidenceFields(lineOut, line);
         lines.push(lineOut);
       }
     }
@@ -185,6 +199,12 @@ export function compilePlayback(analysis, {
     stage: "done",
     progress: 1,
     scenes,
+    // Carried through from analysis.text_source (see book-extract-pipeline.js)
+    // so the client can show whether this book's text is real EPUB prose or
+    // just the m4b-first ASR transcript (docs/M4B_FIRST_FLOW.md). "epub"
+    // covers every book compiled before this field existed — the m4b-first
+    // flow is the only caller that ever sets anything else.
+    text_source: analysis.text_source || "epub",
   };
   if (media?.inserts && Object.keys(media.inserts).length) {
     out.inserts = { ...media.inserts };
@@ -292,6 +312,7 @@ export function compileChapterPlayback(chapterAnalysis, {
           intensity: line.intensity ?? 0.5,
         };
         applyInsertFields(lineOut, line, idx, null);
+        applyConfidenceFields(lineOut, line);
         lines.push(lineOut);
       }
     }
@@ -474,5 +495,12 @@ export function enrichPlaybackFromAnalysis(playback, analysis, { narrator_gender
     cover: playback.cover ?? fresh.cover,
     voice_overrides: playback.voice_overrides ?? fresh.voice_overrides,
     resume: playback.resume ?? fresh.resume,
+    // Baked in once by applyDirectIllustrations (initial compile, or an
+    // illustration-character-match re-run) — compilePlayback() itself has no
+    // idea about front/back-matter art, so a plain recompile would otherwise
+    // silently drop it on every GET after the first, same reasoning as
+    // `cover` above.
+    front_matter: playback.front_matter ?? fresh.front_matter,
+    back_matter: playback.back_matter ?? fresh.back_matter,
   };
 }

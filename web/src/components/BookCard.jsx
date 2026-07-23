@@ -1,10 +1,22 @@
+import { useState } from "react";
 import CoverThumb from "./CoverThumb.jsx";
+import ProviderSelect from "./ProviderSelect.jsx";
 import { readingFraction } from "../library.js";
 import { catalogSources } from "../offline/catalogSources.js";
+import { SERVER_ID } from "../backends/connections.js";
 
 export default function BookCard({
-  entry, onOpen, onContinueExtraction, selectMode = false, selected = false, caching = false, connections,
+  entry, onOpen, onContinueExtraction, onRename, selectMode = false, selected = false, caching = false, connections,
 }) {
+  // "Continue extraction" used to always resume with whatever provider the
+  // ORIGINAL (stalled) job's checkpoint recorded (worker's
+  // resolveResumeProvider falls back to checkpoint.provider_used when no
+  // explicit preferProvider is passed) — so a book stuck because e.g. Gemini
+  // has no API key configured would just keep retrying Gemini forever, with
+  // no way for the user to redirect it to a working local model. Let the
+  // user pick the provider this retry should use.
+  const [continueProvider, setContinueProvider] = useState("auto");
+  const connection = connections?.find((c) => c.id === (entry.connection_id || SERVER_ID)) || connections?.[0];
   const pct = Math.min(100, Math.round((entry.progress || 0) * 100));
   const prog = Math.min(1, Math.max(0, entry.progress ?? 0));
   const partial = entry.status === "partial";
@@ -29,7 +41,7 @@ export default function BookCard({
             data-testid="card-select" aria-hidden />
         )}
         {caching && (
-          <span className="vae-card-caching" data-testid="card-caching">Caching…</span>
+          <span className="vae-card-caching" data-testid="card-caching">Getting ready…</span>
         )}
         <div className="vae-cover" data-testid="cover">
           <CoverThumb
@@ -81,14 +93,24 @@ export default function BookCard({
           </div>
         )}
       </button>
-      {partial && onContinueExtraction && (
-        <button
-          type="button"
-          className="vae-card-continue"
-          data-testid="card-continue-extraction"
-          onClick={(e) => { e.stopPropagation(); onContinueExtraction(entry); }}
-        >
-          Continue extraction ({entry.chapters_ready ?? 0}/{entry.total_chapters ?? "?"})
+      {partial && onContinueExtraction && !entry.active_job_id && (
+        <div className="vae-card-continue-row" onClick={(e) => e.stopPropagation()}>
+          <ProviderSelect lane="extract" connection={connection} value={continueProvider}
+            onChange={setContinueProvider} testId="card-continue-provider" className="vae-select-sm" />
+          <button
+            type="button"
+            className="vae-card-continue"
+            data-testid="card-continue-extraction"
+            onClick={() => onContinueExtraction(entry, continueProvider)}
+          >
+            Continue extraction ({entry.chapters_ready ?? 0}/{entry.total_chapters ?? "?"})
+          </button>
+        </div>
+      )}
+      {onRename && (
+        <button type="button" className="vae-card-rename" data-testid="card-rename"
+          onClick={(e) => { e.stopPropagation(); onRename(entry); }}>
+          Rename
         </button>
       )}
     </div>

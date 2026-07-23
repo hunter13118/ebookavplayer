@@ -2,7 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 
 import {
   fetchEdgeVoices, reExtractBook, runExpressionRepass, subscribeJobEvents, jobEventToStatus, saveVoiceOverrides,
+  attachEpubToBook, renameBook,
 } from "../api.js";
+
+import { KEYS, setPref } from "../audio/voicePrefs.js";
 
 import { getActiveConnection } from "../backends/connections.js";
 
@@ -53,6 +56,12 @@ export default function PlayerMenu({
   const [extractBusy, setExtractBusy] = useState(false);
 
   const [expressionRepassBusy, setExpressionRepassBusy] = useState(false);
+
+  const [epubBusy, setEpubBusy] = useState(false);
+
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
+  const [renameBusy, setRenameBusy] = useState(false);
 
   const [err, setErr] = useState("");
 
@@ -240,6 +249,59 @@ export default function PlayerMenu({
     }
   }
 
+  // Attach a real EPUB to a book that started without one (e.g. m4b-first —
+  // docs/M4B_FIRST_FLOW.md). Reuses the exact same job (POST /ingest with
+  // existing_book_id) and job-tracking dance as re-extract above — the worker
+  // treats this as a normal re-ingest onto the same book_id, so the same
+  // ProcessingBar/job-events UI already covers it, no new plumbing needed.
+  async function handleAttachEpub(ev) {
+    const file = ev.target.files?.[0];
+    ev.target.value = "";
+    if (!file) return;
+    if (!window.confirm(
+      `Attach this EPUB to "${book.title}"? This re-extracts the whole book from the EPUB's real text `
+      + "(replacing the current version) and pulls in any illustrations it contains.",
+    )) return;
+    setEpubBusy(true);
+    setErr("");
+    try {
+      const { job_id: jobId } = await attachEpubToBook(book.book_id, file, {
+        title: book.title, artStyle: book.art_style,
+      });
+      onJobStarted?.(jobId);
+      await pollJob(jobId);
+      await onRefresh?.();
+    } catch (e) {
+      setErr(e?.message || "Could not attach EPUB.");
+    } finally {
+      setEpubBusy(false);
+    }
+  }
+
+  function openRename() {
+    setRenameValue(book?.title || "");
+    setRenameOpen(true);
+  }
+
+  async function handleSaveRename() {
+    const title = renameValue.trim();
+    if (!title || title === book?.title) {
+      setRenameOpen(false);
+      return;
+    }
+    setRenameBusy(true);
+    setErr("");
+    try {
+      await renameBook(book.book_id, title);
+      await onRefresh?.();
+      setRenameOpen(false);
+    } catch (e) {
+      setErr(e?.message || "Could not rename book.");
+    } finally {
+      setRenameBusy(false);
+    }
+  }
+
   // Extraction has a real, durable pin (book.extract_provider) — picking a
   // different explicit provider re-pins the book, so confirm first. "auto"
   // and a first-ever extraction (no existing pin) skip the confirm.
@@ -280,7 +342,16 @@ export default function PlayerMenu({
 
         </header>
 
-
+        <section className="vae-menu-section">
+          <button type="button" className="vae-menu-link" data-testid="use-simple-view"
+            onClick={() => {
+              setPref(KEYS.uiMode, "simple");
+              setPrefs((p) => ({ ...p, uiMode: "simple" }));
+              onClose();
+            }}>
+            Use simple view
+          </button>
+        </section>
 
         {!offline && (
 
@@ -318,6 +389,43 @@ export default function PlayerMenu({
                 {expressionRepassBusy ? "Re-tagging expressions…" : "Re-tag expressions"}
 
               </button>
+
+              <span className="vae-sheet-hint" data-testid="text-source-indicator">
+                {book?.text_source === "m4b_transcript"
+                  ? "Text source: audio transcript (no EPUB attached yet)"
+                  : "Text source: EPUB ✓"}
+              </span>
+
+              {renameOpen ? (
+                <>
+                  <label className="vae-sheet-field">
+                    Book title
+                    <input type="text" className="vae-input" data-testid="rename-book-input"
+                      value={renameValue} onChange={(e) => setRenameValue(e.target.value)}
+                      disabled={renameBusy} autoFocus />
+                  </label>
+                  <button type="button" className="vae-menu-link" data-testid="rename-book-save"
+                    disabled={renameBusy || !renameValue.trim()} onClick={handleSaveRename}>
+                    {renameBusy ? "Saving…" : "Save"}
+                  </button>
+                  <button type="button" className="vae-menu-link" data-testid="rename-book-cancel"
+                    disabled={renameBusy} onClick={() => setRenameOpen(false)}>
+                    Cancel
+                  </button>
+                </>
+              ) : (
+                <button type="button" className="vae-menu-link" data-testid="rename-book"
+                  disabled={disabled} onClick={openRename}>
+                  Rename…
+                </button>
+              )}
+
+              <label className="vae-menu-link" data-testid="attach-epub">
+                {epubBusy ? "Attaching EPUB…" : "Attach EPUB…"}
+                <input type="file" accept=".epub,application/epub+zip" hidden
+                  data-testid="attach-epub-input" onChange={handleAttachEpub}
+                  disabled={disabled || extractBusy || epubBusy} />
+              </label>
 
               <button type="button" className="vae-menu-link" data-testid="open-replace"
 

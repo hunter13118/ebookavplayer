@@ -7,6 +7,7 @@ import {
   onAudioManifestGet,
 } from "./api/v1/proxy.js";
 import { onIngestPost } from "./api/v1/ingest.js";
+import { onIngestTextPost } from "./api/v1/ingest-text.js";
 import {
   onReExtractPost,
   onExpressionRepassPost,
@@ -26,6 +27,7 @@ import {
   onIllustrationsBackfillPost,
   onExternalRefsGet,
   onExternalRefsPatch,
+  onBookTitlePatch,
 } from "./api/v1/book-actions.js";
 import { onBooksGet, onBookGet, onBookDelete } from "./api/v1/books.js";
 import { onMediaGet } from "./api/v1/media.js";
@@ -132,6 +134,13 @@ export async function handleEbookavplayerApi(request, env, ctx) {
     return notFound();
   }
 
+  const ingestText = path.match(/^\/books\/([^/]+)\/ingest-text$/);
+  if (method === "POST" && ingestText) {
+    const edge = await onIngestTextPost({ request, env, bookId: ingestText[1] });
+    if (edge) return edge;
+    return notFound();
+  }
+
   const genMedia = path.match(/^\/books\/([^/]+)\/generate-media$/);
   if (method === "POST" && genMedia) {
     const edge = await onGenerateMediaPost({ request, env, bookId: genMedia[1] });
@@ -205,6 +214,13 @@ export async function handleEbookavplayerApi(request, env, ctx) {
   const characterRename = path.match(/^\/books\/([^/]+)\/characters\/rename$/);
   if (method === "PATCH" && characterRename) {
     const edge = await onCharacterRenamePatch({ request, env, bookId: characterRename[1] });
+    if (edge) return edge;
+    return notFound();
+  }
+
+  const bookTitle = path.match(/^\/books\/([^/]+)\/title$/);
+  if (method === "PATCH" && bookTitle) {
+    const edge = await onBookTitlePatch({ request, env, bookId: bookTitle[1] });
     if (edge) return edge;
     return notFound();
   }
@@ -385,6 +401,8 @@ export async function handleEbookavplayerApi(request, env, ctx) {
     const kvReady = Boolean(env.VAE_JOBS);
     const { getConfig } = await import("./_shared/pipeline-registry.js");
     const { evaluateCostEfficiency, attrLlmFromEnv } = await import("./_shared/pipeline-cost-guide.js");
+    const { booknlpBaseUrl } = await import("./_shared/booknlp-client.js");
+    const { isAnnotateEnabled } = await import("./_shared/annotate-extract.js");
     const cfg = kvReady ? await getConfig(env) : {};
     const cost = evaluateCostEfficiency(cfg, env);
     return Response.json({
@@ -394,6 +412,12 @@ export async function handleEbookavplayerApi(request, env, ctx) {
       edge_tts: true,
       extract_skip_gemini: String(env.EXTRACT_SKIP_GEMINI || "true").toLowerCase() === "true",
       attr_llm: attrLlmFromEnv(env),
+      // Whether the mechanical (BookNLP) and annotate-in-place enrichment
+      // tiers are configured server-side — surfaced so the upload UI can
+      // show/enable their per-job toggles (Uploader.jsx) without needing any
+      // new browser-reachable connection, unlike the align server.
+      booknlp_available: Boolean(booknlpBaseUrl(env)),
+      annotate_available: isAnnotateEnabled(env),
       cost_efficient: cost.matching,
       cost_guide: {
         label: cost.preset.label,

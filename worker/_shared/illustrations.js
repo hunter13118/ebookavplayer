@@ -109,5 +109,27 @@ export function applyDirectIllustrations(playback, analysis, illustrationUrls) {
     counts.cover = 1;
   }
 
+  // Art with no chapter/line to attach to at all — the cover/gallery/title
+  // page before the book's real text starts, and trailing junk (a publisher
+  // newsletter) after it ends. Raw indices (analysis.front_matter_refs/
+  // back_matter_refs — see matchIllustrationsToChapters in
+  // chapter-extract-pipeline.js) resolved fresh every call, same as every
+  // other ref here, so a recompile (enrichPlaybackFromAnalysis) never goes
+  // stale.
+  const resolveRefs = (refs) => (refs || [])
+    .map((ref) => catalogUrl(illustrationUrls, ref))
+    .filter(Boolean)
+    .map((url) => ({ url }));
+  const frontMatter = resolveRefs(analysis?.front_matter_refs);
+  const backMatter = resolveRefs(analysis?.back_matter_refs);
+  if (frontMatter.length) {
+    playback.front_matter = frontMatter;
+    counts.front_matter = frontMatter.length;
+  }
+  if (backMatter.length) {
+    playback.back_matter = backMatter;
+    counts.back_matter = backMatter.length;
+  }
+
   return { playback, counts };
 }

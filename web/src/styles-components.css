@@ -24,6 +24,10 @@
 .vae-btn:hover:not(:disabled) { filter: brightness(1.1); border-color: var(--accent); }
 .vae-btn:active:not(:disabled) { filter: brightness(.95); }
 .vae-btn:disabled { opacity: .5; cursor: not-allowed; }
+/* .vae-btn-file wraps a hidden file input in a <label> — :disabled only
+   matches form controls, not the label itself, so a disabled-looking file
+   "button" needs an explicit class instead. */
+.vae-btn-disabled { opacity: .5; cursor: not-allowed; pointer-events: none; }
 .vae-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .vae-btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }

@@ -25,3 +25,6 @@ worker/.wrangler/
 test_assets/m4b-sync-drop/
 scripts/local-image-server/debug/
 smoke_out/freemium_probe/runs/
+
+# dev-only karaoke reader harness asset
+web/public/__karaoke_demo__.m4b

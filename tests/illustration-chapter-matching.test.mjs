@@ -79,7 +79,7 @@ const epubExtract = extractEpubImages(bytes, {});
 assert.equal(parsed.chapters.length, 3, "prologue, chapter1, chapter2 — plate pages filtered out");
 assert.ok(parsed.orderedPaths.length > parsed.chapters.length, "orderedPaths keeps the plate pages chapters filtered out");
 
-const byChapterPos = matchIllustrationsToChapters(parsed.orderedPaths, parsed.chapters, epubExtract.imageMeta);
+const { byChapterPos } = matchIllustrationsToChapters(parsed.orderedPaths, parsed.chapters, epubExtract.imageMeta);
 
 // insert1 sits between prologue and chapter1 — attaches to chapter1 (the
 // chapter it precedes).
@@ -90,9 +90,36 @@ assert.ok(byChapterPos.get(ch1Pos)?.length === 1, "insert1's plate should attach
 const ch2Pos = parsed.chapters.findIndex((c) => /chapter2\.xhtml$/.test(c.spine_path));
 assert.ok(byChapterPos.get(ch2Pos)?.length === 1, "insert2's plate should attach to chapter2");
 
-// bonus1 is trailing back-matter with no following chapter — stays
-// unmatched rather than guessed at.
+// bonus1's own page never had real prose, so it was never a `chapters`
+// candidate for splitBackMatter to pop in the first place (empty
+// backMatterChapters here) — falls through to the old "no following
+// chapter, stays unmatched" behavior, unchanged.
 const totalMatched = [...byChapterPos.values()].reduce((n, arr) => n + arr.length, 0);
 assert.equal(totalMatched, 2, "only the two plates with a following chapter should match; trailing back-matter plate stays unmatched");
+
+// Front/back-matter bucketing (new): a plate BEFORE the first real chapter
+// buckets as front matter instead of folding into chapter 0, and a plate at
+// or after a REAL popped-back-matter chapter (e.g. a Newsletter page —
+// epub-text.js's splitBackMatter) buckets as back matter instead of being
+// silently dropped.
+{
+  const frontImageMeta = [{ index: 0, sourcePath: "OEBPS/prologue-cover.xhtml", textContext: "" }];
+  const fakeOrderedPaths = ["OEBPS/prologue-cover.xhtml", ...parsed.orderedPaths, "OEBPS/newsletter.xhtml"];
+  const fakeBackMatterChapters = [{ title: "Newsletter", spine_path: "OEBPS/newsletter.xhtml" }];
+  const backImageMeta = [{ index: 1, sourcePath: "OEBPS/newsletter.xhtml", textContext: "" }];
+
+  const result = matchIllustrationsToChapters(
+    fakeOrderedPaths, parsed.chapters, [...frontImageMeta, ...epubExtract.imageMeta, ...backImageMeta],
+    fakeBackMatterChapters,
+  );
+  assert.equal(result.frontMatter.length, 1, "plate before chapter 0 buckets as front matter");
+  assert.equal(result.frontMatter[0].index, 0);
+  assert.equal(result.backMatter.length, 1, "plate at/after a popped back-matter chapter buckets as back matter");
+  assert.equal(result.backMatter[0].index, 1);
+  // The two real interleaved plates still match their chapters as before —
+  // front/back bucketing doesn't disturb the existing per-chapter logic.
+  const stillMatched = [...result.byChapterPos.values()].reduce((n, arr) => n + arr.length, 0);
+  assert.equal(stillMatched, 2);
+}
 
 console.log("illustration-chapter-matching: ok");

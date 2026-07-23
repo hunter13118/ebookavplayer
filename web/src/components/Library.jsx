@@ -5,7 +5,7 @@ import BannerStack from "./BannerStack.jsx";
 import CollapsibleSection from "./CollapsibleSection.jsx";
 import { bannersFromCatalog } from "../banners.js";
 import {
-  fetchCatalog, backendConfigured, subscribeJobEvents, jobEventToStatus, cancelProcessing,
+  fetchCatalog, backendConfigured, subscribeJobEvents, jobEventToStatus, cancelProcessing, ingestBook,
 } from "../api.js";
 import {
   fetchCatalogMerged, importOfflinePackFiles, scanLinkedPackFolder, getLinkedFolderInfo,
@@ -26,6 +26,7 @@ import {
 
 export default function Library({
   catalog, onOpen, onCatalog, offline, serverOnline, onOpenSettings, cacheBusy, onContinueExtraction,
+  onRenameBook, onUploadM4b, m4bUpload,
 }) {
   const [items, setItems] = useState(catalog || []);
   const [connections, setConnections] = useState(() => listConnections());
@@ -33,6 +34,7 @@ export default function Library({
   const [dropMsg, setDropMsg] = useState("");
   const [pendingJobs, setPendingJobs] = useState([]);
   const [addOpen, setAddOpen] = useState(false);
+  const [epubUpload, setEpubUpload] = useState({ busy: false, fileName: "", error: "" });
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState(() => new Set());
   const [activeShelf, setActiveShelf] = useState(ALL_SHELF_ID);
@@ -156,6 +158,23 @@ export default function Library({
     }));
     return () => { for (const u of unsubs) u(); };
   }, [offline, jobWatchKey]);
+
+  // Owns the actual ingestBook() POST + its busy/error state, rather than
+  // Uploader.jsx owning it locally — that way closing the "Add to library"
+  // sheet mid-upload (AddBookSheet unmounts Uploader) can't silently drop an
+  // error or hide the in-progress state. Mirrors the m4bUpload pattern one
+  // level up in App.jsx.
+  async function handleEpubUpload(file, opts) {
+    setEpubUpload({ busy: true, fileName: file.name, error: "" });
+    try {
+      const res = await ingestBook(file, opts);
+      handleStarted(res, file, opts.connection?.id);
+      setEpubUpload({ busy: false, fileName: "", error: "" });
+      setAddOpen(false);
+    } catch (e) {
+      setEpubUpload({ busy: false, fileName: "", error: e.message || "Upload failed — is the backend running?" });
+    }
+  }
 
   function handleStarted(res, file, connectionId) {
     const id = res.book_id;
@@ -337,6 +356,7 @@ export default function Library({
         entry={b}
         onOpen={handleCardOpen}
         onContinueExtraction={onContinueExtraction}
+        onRename={onRenameBook}
         selectMode={selectMode}
         selected={selected.has(b.book_id)}
         caching={cacheBusy === b.book_id}
@@ -443,6 +463,17 @@ export default function Library({
         </div>
       )}
 
+      {epubUpload.busy && (
+        <div className="vae-lib-cache-banner" data-testid="epub-upload-busy">
+          Uploading {epubUpload.fileName || "book"}…
+        </div>
+      )}
+      {epubUpload.error && (
+        <div className="vae-lib-toast vae-lib-toast-err" data-testid="epub-upload-err">
+          {epubUpload.error}
+        </div>
+      )}
+
       {banners.length > 0 && <div className="vae-lib-banners"><BannerStack banners={banners} bookId="library" /></div>}
       <IngestActivity jobs={ingestActivityJobs} onDone={handleJobDone} />
 
@@ -486,7 +517,10 @@ export default function Library({
       <AddBookSheet
         open={addOpen}
         onClose={() => setAddOpen(false)}
-        onStarted={handleStarted}
+        onUploadEpub={handleEpubUpload}
+        epubUpload={epubUpload}
+        onUploadM4b={onUploadM4b}
+        m4bUpload={m4bUpload}
         onImportPack={async (files) => {
           const results = await importOfflinePackFiles(files);
           if (results.imported.length) await refreshCatalog();

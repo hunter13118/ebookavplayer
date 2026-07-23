@@ -32,6 +32,7 @@ import { useCompareModal } from "../hooks/compareModalContext.jsx";
 import { useRegenFeedback } from "../hooks/useRegenFeedback.js";
 
 import { Orchestrator } from "../audio/orchestrator.js";
+import ReaderView from "../reader/ReaderView.jsx";
 import { nextTension } from "../audio/tension.js";
 import {
   startAmbient, stopAmbient, setAmbientEnabled, setAmbientVolume, setAmbientPlaying,
@@ -65,6 +66,7 @@ import {
 } from "../chapterNav.js";
 
 import { buildSlidesByChapter, computeTimelineFromM4b } from "../timing/index.js";
+import { m4bFirstTimelineFromBook } from "../timing/m4bFirstTimeline.js";
 
 import { getConnection } from "../backends/connections.js";
 
@@ -94,9 +96,15 @@ function flatten(book) {
 
 
 
-export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline, onOpenSimpleSettings }) {
+export default function Player({
+  book, prefs, setPrefs, offline, onOpenPipeline, onOpenSimpleSettings,
+}) {
 
   const uiMode = prefs?.uiMode || "simple";
+  // Which view renders the book. All modes consume the same orchestrator state,
+  // so switching is a crossfade, not a reload (docs/VIEW_MODES.md). "spotlight"
+  // (middle mode) joins the cycle in the next slice.
+  const viewMode = prefs?.viewMode || "cinematic";
 
   const [bk, setBk] = useState(book);
 
@@ -386,7 +394,11 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline,
 
   const orch = orchRef.current;
 
-
+  // Keep orch.lines current independent of whether play() has ever run — see
+  // setLines()'s comment: without this, seeking before the first play (e.g.
+  // dragging the progress bar on a freshly-opened book) silently clamped to
+  // line 0 because the orchestrator's own line count was still empty.
+  useEffect(() => { orch.setLines(lines); }, [orch, lines]);
 
   useEffect(() => {
 
@@ -453,22 +465,27 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline,
     // A fully-resolved manifest from a prior run of this same (unchanged)
     // book + m4b — use it directly, no need for the progressive dance below.
     const cached = await loadAlignManifest(bk.book_id, "whisperx", blob.size, slidesByChapter);
-    if (cached) {
+    if (cached?.complete) {
       loadSharedAudio(blob);
-      orch.setTimeline(cached.lineTimings, cached.meta, cached.syntheticSegments);
+      orch.setTimeline(cached.result.lineTimings, cached.result.meta, cached.result.syntheticSegments);
       setM4bStatus({ attached: true, busy: false, fileName: fileName || null, error: null, progress: null });
       return;
     }
 
-    // No cache: play immediately on an instant client-side estimate (the
-    // same "linear" split algorithm 1 uses — a proportional character-count
-    // guess, no acoustics, no network), then refine it live in place as the
-    // local align server streams real per-line timings back a chunk at a
-    // time — usually starting within seconds, well before the whole book
-    // finishes aligning. See whisperxAlignerClient.js / server.py.
-    const estimate = await computeTimelineFromM4b({ blob, slidesByChapter, algorithmId: "linear" });
+    // No COMPLETE cache: play immediately on a baseline timeline, then refine
+    // it live in place as the local align server streams real per-line
+    // timings back a chunk at a time — usually starting within seconds, well
+    // before the whole book finishes aligning. See whisperxAlignerClient.js /
+    // server.py. If a PARTIAL manifest survives from an earlier session (the
+    // tab closed/reloaded mid-alignment on a long book — see
+    // alignCache.js's storeAlignManifest doc comment), that's already-real
+    // acoustic timing for however much got done, so it's a strictly better
+    // starting baseline than the crude linear character-count guess; only
+    // fall back to that guess when there's nothing cached at all.
+    const estimate = cached?.result
+      || await computeTimelineFromM4b({ blob, slidesByChapter, algorithmId: "linear" });
     loadSharedAudio(blob);
-    orch.setTimeline(estimate.lineTimings, { ...estimate.meta, strategy: "acoustic" });
+    orch.setTimeline(estimate.lineTimings, { ...estimate.meta, strategy: "acoustic" }, cached?.result?.syntheticSegments);
     setM4bStatus({
       attached: true, busy: false, fileName: fileName || null, error: null, aligning: true, progress: null,
     });
@@ -477,21 +494,69 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline,
     const bookIdAtStart = bk.book_id;
     const isStale = () => activeBookIdRef.current !== bookIdAtStart;
 
+    // Resuming: only send the local align server the lines it hasn't already
+    // resolved, and pick up the audio at the checkpointed offset instead of
+    // 0ms — sending the full book while skipping audio would match mid-book
+    // audio against the START of the book text (see whisperxAlignerClient.js).
+    // Without this, every reload re-ran the ENTIRE alignment from scratch —
+    // the actual bug behind "it just restarts every time I refresh."
+    const alreadyResolved = new Set(Object.keys(cached?.result?.lineTimings || {}).map(Number));
+    // Independent of alreadyResolved.size: a chunk can advance the audio
+    // clock without resolving any NEW line at all (e.g. a long gap/intro
+    // before the first matched line), so processedMs can be checkpointed
+    // even with zero resolved lines yet.
+    const resumeMs = cached?.processedMs || 0;
+    const remainingSlidesByChapter = alreadyResolved.size
+      ? slidesByChapter
+        .map((ch) => ({ ...ch, slides: ch.slides.filter((s) => !alreadyResolved.has(s.lineIndex)) }))
+        .filter((ch) => ch.slides.length)
+      : slidesByChapter;
+
+    // Accumulates across chunks so each incremental save below is the full
+    // picture so far, not just the latest chunk — mirrors what the
+    // orchestrator's own extendTimeline() merge already does internally, and
+    // is also the AUTHORITATIVE final state (see the .then() below): a
+    // resumed request only ever covers remainingSlidesByChapter, so its own
+    // return value alone is missing everything resolved in an earlier run.
+    let accLineTimings = { ...(cached?.result?.lineTimings || {}) };
+    let accSynthetic = [...(cached?.result?.syntheticSegments || [])];
+    let lastProcessedMs = resumeMs;
+    // Preserve the ORIGINAL lead-in from the first-ever run — a resumed
+    // request's own lead_in_ms is meaningless (computed from ITS first
+    // anchor, somewhere mid-book, not the top of the file). Only this one
+    // field carries over; everything else in a merged meta object should
+    // reflect the latest run.
+    const origLeadInMs = cached?.result?.meta?.lead_in_ms;
+    const persistProgress = () => storeAlignManifest(bk.book_id, "whisperx", blob.size, slidesByChapter, {
+      lineTimings: accLineTimings,
+      meta: origLeadInMs != null ? { ...estimate.meta, lead_in_ms: origLeadInMs } : estimate.meta,
+      syntheticSegments: accSynthetic,
+    }, { complete: false, processedMs: lastProcessedMs });
+
     computeTimelineFromM4b({
-      blob, slidesByChapter, algorithmId: "whisperx", connection,
-      onChapterProgress: (processedMs, totalMs) => {
+      blob, slidesByChapter: remainingSlidesByChapter, algorithmId: "whisperx", connection, resumeMs,
+      onChapterProgress: async (processedMs, totalMs) => {
         if (isStale()) return;
+        lastProcessedMs = processedMs;
         setM4bStatus((s) => ({ ...s, aligning: true, progress: { chapter: processedMs, total: totalMs } }));
         setAlignEventLog((log) => [...log, {
           ts: Date.now(), type: "progress",
           text: `Transcribed ${Math.round(processedMs / 60000)}/${Math.round(totalMs / 60000)} min`,
           phase: "aligning", progress: totalMs ? processedMs / totalMs : 0,
         }].slice(-120));
+        await persistProgress();
       },
-      onLinesReady: (partial) => { if (!isStale()) orch.extendTimeline(partial); },
-      onGapsReady: (gaps) => {
+      onLinesReady: async (partial) => {
+        if (isStale()) return;
+        orch.extendTimeline(partial);
+        accLineTimings = { ...accLineTimings, ...partial };
+        await persistProgress();
+      },
+      onGapsReady: async (gaps) => {
         if (isStale()) return;
         orch.extendTimeline(null, gaps);
+        accSynthetic = [...accSynthetic, ...gaps];
+        await persistProgress();
         setAlignEventLog((log) => [...log, {
           ts: Date.now(), type: "gap",
           text: `Found ${gaps.length} narrator aside${gaps.length === 1 ? "" : "s"} not in the ebook`,
@@ -500,10 +565,17 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline,
       },
     }).then(async (finalResult) => {
       if (isStale()) return;
-      // Authoritative final merge (covers any line the chunked stream never
-      // reached, e.g. right at the tail) + persist for next time.
-      orch.setTimeline(finalResult.lineTimings, finalResult.meta, finalResult.syntheticSegments);
-      await storeAlignManifest(bk.book_id, "whisperx", blob.size, slidesByChapter, finalResult);
+      // Authoritative final merge — accLineTimings/accSynthetic already carry
+      // everything (finalResult itself only covers remainingSlidesByChapter
+      // on a resumed run, so using it alone would drop everything an earlier
+      // session already resolved).
+      const finalMeta = origLeadInMs != null
+        ? { ...finalResult.meta, lead_in_ms: origLeadInMs }
+        : finalResult.meta;
+      orch.setTimeline(accLineTimings, finalMeta, accSynthetic);
+      await storeAlignManifest(bk.book_id, "whisperx", blob.size, slidesByChapter, {
+        lineTimings: accLineTimings, meta: finalMeta, syntheticSegments: accSynthetic,
+      }, { complete: true });
       if (isStale()) return;
       setM4bStatus((s) => ({ ...s, aligning: false, progress: null }));
     }).catch((e) => {
@@ -535,7 +607,42 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline,
 
   }, [bk.book_id, applyM4bTimeline]);
 
+  // Retry loading/aligning the ALREADY-STORED .m4b (the error banner's Retry
+  // button) — the common case is a transient failure the user can now fix
+  // without re-uploading: the local align server was down/unreachable when the
+  // book first opened (e.g. not started yet), and is up now. Re-runs the same
+  // stored-blob path the mount effect uses.
+  const retryM4bLoad = useCallback(async () => {
+    setM4bStatus((s) => ({ ...s, busy: true, error: null }));
+    try {
+      const blob = await loadM4b(bk.book_id);
+      if (!blob) {
+        setM4bStatus({ attached: false, busy: false, fileName: null, error: null });
+        return;
+      }
+      const fileName = await loadM4bName(bk.book_id);
+      const known = m4bFirstTimelineFromBook(bk);
+      if (known) {
+        loadSharedAudio(blob);
+        orch.setTimeline(known.lineTimings, known.meta);
+        setM4bStatus({ attached: true, busy: false, fileName: fileName || null, error: null, progress: null });
+        return;
+      }
+      await applyM4bTimeline(blob, fileName);
+    } catch (e) {
+      setM4bStatus((s) => ({ ...s, busy: false, error: e?.message || "Failed to load the attached audiobook" }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bk.book_id, applyM4bTimeline, orch]);
 
+  // Combined epub+m4b upload (AddBookSheet.jsx/Uploader.jsx): the m4b picked
+  // alongside the epub is stored durably (storeM4b) by App.jsx's
+  // handleEpubUpload the moment the book is minted — no separate wiring
+  // needed here. The loadM4b-on-mount effect below (keyed on bk.book_id)
+  // already restores ANY previously-stored .m4b and recomputes its timeline
+  // whenever this book opens, whether that's seconds later (fresh upload)
+  // or after the extraction queue was busy and the user opened it later —
+  // even across a reload, since the blob lives in IndexedDB, not React state.
 
   const handleRemoveM4b = useCallback(async () => {
 
@@ -588,11 +695,31 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline,
 
         if (cancelled) return;
 
+        // M4B-first books (docs/M4B_FIRST_FLOW.md) carry their own EXACT
+        // per-line timing straight from the /transcribe step — skip the
+        // 4-algorithm estimate/alignment dance real "attach a .m4b to an
+        // existing book" flows need; we already know precisely where each
+        // line sits in the file, no guessing or re-transcription required.
+        const known = m4bFirstTimelineFromBook(bk);
+        if (known) {
+          loadSharedAudio(blob);
+          orch.setTimeline(known.lineTimings, known.meta);
+          setM4bStatus({ attached: true, busy: false, fileName: fileName || null, error: null, progress: null });
+          return;
+        }
+
         await applyM4bTimeline(blob, fileName);
 
-      } catch {
+      } catch (e) {
 
-        // No persisted .m4b for this book, or it failed to load/scan.
+        // blob/fileName are already known to exist at this point (the early
+        // `!blob` return above is the "nothing stored" case) — reaching here
+        // means the stored .m4b failed to scan or align, which is a real
+        // failure worth surfacing rather than leaving the listener wondering
+        // why their attached audiobook silently never plays.
+        if (!cancelled) {
+          setM4bStatus((s) => ({ ...s, busy: false, error: e?.message || "Failed to load the attached audiobook" }));
+        }
 
       }
 
@@ -606,6 +733,17 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline,
 
 
 
+  // Keyed ONLY on bk.book_id — not lines.length — so this fires once per
+  // book open (including first mount) and never again just because content
+  // grew in place. lines.length changes on every 2-second background poll
+  // while a book is still enriching (BookNLP/annotate/LLM), so keying on it
+  // used to yank a live listener's position back to a freshly recomputed
+  // "resume point" on every single background chapter completion. Safe to
+  // key on book_id alone specifically because the mechanical baseline
+  // guarantees `lines` only ever GROWS once it exists (see
+  // chapter-extract-pipeline.js's scenesByChapterPos fix) — the current
+  // position index never becomes invalid as more content streams in, so
+  // there's nothing to recompute.
   useEffect(() => {
 
     const start = resumeIndex(bk.book_id, lines.length, bk.resume);
@@ -616,7 +754,9 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline,
 
     setSt((s) => ({ ...s, index: start, revealed: 0, status: "idle" }));
 
-  }, [bk.book_id, lines.length, bk.resume]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+
+  }, [bk.book_id]);
 
 
 
@@ -977,6 +1117,37 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline,
 
   };
 
+  // Reader "tap a line to resume from that spot" — seek AND start playing from
+  // the tapped line. (Distinct from the future gutter "generate image" action,
+  // which lives on its own control so a resume tap can never trigger a
+  // generation — see docs/VIEW_MODES.md.)
+  const resumeFromLine = (index) => {
+    dismissFlash();
+    if (prefs.sleepTimerMinutes > 0 && !sleepTimerStartedAt) setSleepTimerStartedAt(Date.now());
+    orch.play(lines, Math.max(0, Math.min(index, lines.length - 1)));
+  };
+
+  // Cycle the view mode (crossfade handled in CSS via the keyed wrapper). Only
+  // implemented modes are in the cycle; "spotlight" is added next slice.
+  const VIEW_CYCLE = ["cinematic", "reader"];
+  const VIEW_META = {
+    cinematic: { icon: "🎬", label: "Cinematic" },
+    spotlight: { icon: "💬", label: "Spotlight" },
+    reader: { icon: "📖", label: "Reader" },
+  };
+  const cycleView = () => {
+    const i = VIEW_CYCLE.indexOf(viewMode);
+    const next = VIEW_CYCLE[(i + 1) % VIEW_CYCLE.length] || "cinematic";
+    setPref(KEYS.viewMode, next);
+    setPrefs((p) => ({ ...p, viewMode: next }));
+  };
+
+  const changeReaderFont = (delta) => {
+    const next = Math.max(16, Math.min(64, (prefs.readerFontSizePx || 28) + delta));
+    setPref(KEYS.readerFontSizePx, next);
+    setPrefs((p) => ({ ...p, readerFontSizePx: next }));
+  };
+
   const showIllustration = (url, { manual = false, lineIdx = null } = {}) => {
 
     if (!url) return;
@@ -1074,6 +1245,36 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline,
         </>
       )}
 
+      {/* An attached .m4b that failed to load/align used to fail SILENTLY —
+          the error was captured in m4bStatus.error but never rendered, so a
+          listener whose audiobook never synced (e.g. the local align server
+          was down, or no align connection is configured) had no idea why and
+          would just re-upload it. Surface it as a dismissable, actionable
+          banner so the "it skipped the m4b" case is visible and fixable. */}
+      {m4bStatus.error && (
+        <div className="vae-m4b-error" role="alert" data-testid="m4b-error">
+          <span className="vae-m4b-error-text">
+            Audiobook didn’t sync{m4bStatus.fileName ? ` (${m4bStatus.fileName})` : ""}: {m4bStatus.error}
+          </span>
+          <button
+            type="button"
+            className="vae-m4b-error-retry"
+            data-testid="m4b-error-retry"
+            onClick={() => { retryM4bLoad(); }}
+          >
+            Retry
+          </button>
+          <button
+            type="button"
+            className="vae-m4b-error-dismiss"
+            aria-label="Dismiss"
+            onClick={() => setM4bStatus((s) => ({ ...s, error: null }))}
+          >
+            ×
+          </button>
+        </div>
+      )}
+
 
 
       <div className="vae-player-toolbar">
@@ -1115,6 +1316,15 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline,
         )}
 
         <div className="vae-toolbar-spacer" />
+
+        {lines.length > 0 && (
+          <button type="button" className="vae-toolbar-btn vae-view-toggle" data-testid="view-toggle"
+            data-view={viewMode} onClick={cycleView}
+            title={`View: ${VIEW_META[viewMode]?.label} — tap to switch`}
+            aria-label={`Switch view (currently ${VIEW_META[viewMode]?.label})`}>
+            {VIEW_META[viewMode]?.icon}
+          </button>
+        )}
 
         <button type="button" className="vae-toolbar-btn vae-menu-btn" data-testid="open-settings"
 
@@ -1170,6 +1380,19 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline,
 
         <>
 
+          <div className="vae-viewport" key={viewMode} data-view={viewMode}>
+
+          {viewMode === "reader" ? (
+            <ReaderView lines={lines} sceneOf={sceneOf} activeIndex={st.index} revealed={st.revealed}
+              scene={scene} fontSizePx={prefs.readerFontSizePx}
+              dimBackground={prefs.readerDimBackground}
+              syntheticSegment={st.syntheticSegment}
+              frontMatter={bk.front_matter} backMatter={bk.back_matter} finished={st.status === "done"}
+              illustrationUrl={activeFlash.url} flashActive={flashActive} flashDismissSignal={flashDismissSignal}
+              onFlashDone={onFlashDone} onDismissFlash={dismissFlash}
+              onSeekLine={resumeFromLine} onChangeFontSize={changeReaderFont} />
+          ) : (
+
           <Stage scene={scene} characters={bk.characters} speakerId={spotlightId}
 
             lineSprites={lineSprites}
@@ -1215,6 +1438,9 @@ export default function Player({ book, prefs, setPrefs, offline, onOpenPipeline,
               performanceMode={prefs.performanceMode} tension={tension} enabled={prefs.directorsLog} />
 
           </Stage>
+
+          )}
+          </div>
 
           {st.buffering && (
             <div className="vae-buffering-badge" data-testid="buffering-badge">

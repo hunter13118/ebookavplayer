@@ -67,6 +67,23 @@ def test_chunk_bounds_uses_a_small_first_window_then_the_regular_size():
     ]
 
 
+def test_chunk_bounds_resumes_from_an_offset_skipping_the_first_window():
+    # A resumed run has already covered [0, resume_ms) in a prior call — it
+    # should pick up with regular-size chunks from resume_ms, not repeat the
+    # short first-chunk warmup (see checkpointM4bFirstProgress on the client).
+    orig_first, orig_regular = local_align_server.FIRST_CHUNK_MS, local_align_server.CHUNK_MS
+    try:
+        local_align_server.FIRST_CHUNK_MS = 3 * 60 * 1000
+        local_align_server.CHUNK_MS = 10 * 60 * 1000
+        bounds = _chunk_bounds(25 * 60 * 1000, resume_ms=13 * 60 * 1000)
+    finally:
+        local_align_server.FIRST_CHUNK_MS, local_align_server.CHUNK_MS = orig_first, orig_regular
+    assert bounds == [
+        (13 * 60 * 1000, 23 * 60 * 1000),
+        (23 * 60 * 1000, 25 * 60 * 1000),
+    ]
+
+
 def test_isolated_common_word_overlap_with_intro_does_not_create_a_false_anchor():
     """The exact real-world scenario found against a real audiobook: a
     publisher intro shares "this"/"is" with an unrelated first line, but
@@ -210,6 +227,27 @@ def test_feed_advances_cursor_so_later_chunks_only_search_the_remaining_tail():
     assert aligner.cursor == 12
 
 
+def test_resume_with_a_truncated_remaining_lines_list_preserves_original_idx():
+    """A resumed /align call (see docs/M4B_FIRST_FLOW.md's align-resume
+    section) sends only the lines NOT already resolved in the caller's
+    cached manifest — line 0 here stands in for one already resolved by an
+    earlier, now-discarded run. The aligner must not renumber what's left:
+    each emitted row's idx has to be the ORIGINAL book idx (1, not 0), so the
+    client can merge results back into its existing lineTimings by that same
+    key. Word timestamps are absolute file-position seconds (matching
+    _transcribe_chunk's real offset_s behavior for a chunk starting at
+    resume_ms), not relative to this call's audio."""
+    remaining_lines = [{"idx": 1, "text": "eta theta iota kappa lambda mu"}]
+    aligner = IncrementalAligner(remaining_lines, total_ms=20_000)
+
+    words = ["eta", "theta", "iota", "kappa", "lambda", "mu"]
+    # Absolute timestamps starting well past 0 — as if this chunk began at a
+    # real resume_ms offset, not at the top of the file.
+    resolved = aligner.feed([word(w, 500 + i, 500 + i + 0.5) for i, w in enumerate(words)], chunk_duration_ms=240_000)
+    assert [ln["idx"] for ln in resolved["lines"]] == [1]
+    assert resolved["lines"][0]["start_ms"] == 500_000
+
+
 def test_a_chunk_with_no_reliable_match_advances_nothing_and_emits_nothing():
     """A chunk that's pure silence/unrelated audio (e.g. mid-book dead air)
     must not corrupt state — the next chunk should still be able to resolve
@@ -282,6 +320,38 @@ def test_a_long_coincidental_match_far_ahead_in_a_big_book_is_rejected_as_implau
     # plausible narration pace, however cleanly the phrase happened to match.
     assert 2 not in resolved_idxs
     assert aligner.cursor < 3000  # nowhere near line 2's position (past the filler)
+
+
+def test_a_short_coincidental_match_reachable_only_via_the_lookahead_floor_is_rejected():
+    """Regression for the "player jumps to a random spot" bug: a match block
+    long enough to pass MIN_ANCHOR_BLOCK_WORDS (6) but found well beyond what
+    this chunk's OWN elapsed real time could plausibly justify — reachable
+    only because MIN_LOOKAHEAD_WORDS's floor (or a dry spell) inflated the
+    search window — must now clear the stricter STRICT_ANCHOR_BLOCK_WORDS bar
+    instead. Unlike the test above (a match far outside even the inflated
+    window, rejected by the window bound itself), this one lands INSIDE the
+    window — before this fix, nothing rejected it."""
+    filler = " ".join(["filler"] * 194)
+    lines = [
+        {"idx": 0, "text": "real spoken content here right now"},  # 6 words, positions 0-5
+        {"idx": 1, "text": filler},  # positions 6-199
+        {"idx": 2, "text": "the man walked slowly and quietly across"},  # 7 words, position 200
+    ]
+    aligner = IncrementalAligner(lines, total_ms=6 * 60 * 60 * 1000)
+
+    # 10 real seconds of audio -> real_pace_bound = int(10 * 4) = 40 words,
+    # well short of line 2's position (200) — but MIN_LOOKAHEAD_WORDS (400)
+    # still puts it inside the search window.
+    asr_words = [word(w, i * 0.5, i * 0.5 + 0.4) for i, w in enumerate(
+        ["real", "spoken", "content", "here", "right", "now",
+         "the", "man", "walked", "slowly", "and", "quietly", "across"],
+    )]
+    resolved = aligner.feed(asr_words, chunk_duration_ms=10_000)["lines"]
+
+    resolved_idxs = [ln["idx"] for ln in resolved]
+    assert 0 in resolved_idxs  # the genuine, near-cursor content still resolves
+    assert 2 not in resolved_idxs  # the far-but-in-window coincidence does not
+    assert aligner.cursor <= 10  # nowhere near line 2's position (200)
 
 
 # --------------------------------------------------------------------------- #
@@ -442,3 +512,43 @@ def test_a_dangling_insert_is_held_until_a_later_chunks_anchor_brackets_it():
     assert [ln["idx"] for ln in result2["lines"]] == [1]
     assert len(result2["gaps"]) == 1
     assert result2["gaps"][0]["text"] == "hey listener this bonus scene was recorded later"
+
+
+# ── M4B-first /transcribe: sentence grouping (_words_to_sentences) ────────────
+_words_to_sentences = local_align_server._words_to_sentences
+
+
+def test_words_to_sentences_splits_on_terminal_punctuation():
+    # start/end are whole-file SECONDS (as _transcribe_chunk emits); the helper
+    # converts to ms and groups into sentences at .!?
+    words = [
+        word("First", 0.0, 0.3), word("one.", 0.3, 0.6),
+        word("Second", 1.0, 1.3), word("two!", 1.3, 1.6),
+    ]
+    lines = _words_to_sentences(words, start_idx=0)
+    assert [ln["text"] for ln in lines] == ["First one.", "Second two!"]
+    assert lines[0]["idx"] == 0 and lines[1]["idx"] == 1
+    assert lines[0]["start_ms"] == 0 and lines[0]["end_ms"] == 600
+    assert lines[0]["words"] == [["First", 0, 300], ["one.", 300, 600]]
+
+
+def test_words_to_sentences_keeps_closing_quote_with_the_sentence():
+    words = [word('"Stop', 0.0, 0.3), word('now!"', 0.3, 0.6), word("Next", 1.0, 1.3), word("line.", 1.3, 1.6)]
+    lines = _words_to_sentences(words, start_idx=0)
+    assert [ln["text"] for ln in lines] == ['"Stop now!"', "Next line."]
+
+
+def test_words_to_sentences_emits_trailing_fragment_without_terminal_punctuation():
+    # A chunk can end mid-sentence; the dangling words still become a line so no
+    # transcript is dropped (the next chunk simply starts a new sentence).
+    words = [word("Trailing", 0.0, 0.3), word("words", 0.3, 0.6), word("here", 0.6, 0.9)]
+    lines = _words_to_sentences(words, start_idx=7)
+    assert len(lines) == 1
+    assert lines[0]["idx"] == 7
+    assert lines[0]["text"] == "Trailing words here"
+
+
+def test_words_to_sentences_indexes_from_start_idx():
+    words = [word("A.", 0.0, 0.1), word("B.", 0.2, 0.3)]
+    lines = _words_to_sentences(words, start_idx=40)
+    assert [ln["idx"] for ln in lines] == [40, 41]

@@ -12,7 +12,7 @@ import {
 } from "./bookSource.js";
 import { buildTestPackZip, minimalBook } from "./testPackFixtures.js";
 import { importPackZip, buildPackZipBytes } from "./packIo.js";
-import { clearAllPacksForTests, getInstalledPack } from "./packStore.js";
+import { clearAllPacksForTests, getInstalledPack, savePackRecord } from "./packStore.js";
 
 vi.mock("../api.js", () => ({
   apiUrl: (p) => p,
@@ -59,7 +59,7 @@ describe("bookSource", () => {
     expect(rec.book_id).toBe("pack-test");
   });
 
-  it("mergeCatalog combines server and local entries", async () => {
+  it("mergeCatalog combines server and local entries, server title wins", async () => {
     const book = minimalBook({ book_id: "merged", title: "Merged Local" });
     await importPackZip(buildTestPackZip({ book }));
     fetchCatalog.mockResolvedValueOnce([
@@ -70,8 +70,28 @@ describe("bookSource", () => {
     const hit = merged.find((e) => e.book_id === "merged");
     expect(hit.offline_pack).toBe(true);
     expect(hit.server_available).toBe(true);
-    expect(hit.title).toBe("Merged Local");
+    // Server is authoritative for title — a locally-cached offline pack's
+    // title is a snapshot from whenever it was last built, and must never
+    // mask a server-side rename (see the regression test below for the
+    // specific bug this covers).
+    expect(hit.title).toBe("Merged Remote");
     expect(merged.some((e) => e.book_id === "remote-only")).toBe(true);
+  });
+
+  it("mergeCatalog: a server-side rename is never masked by a stale locally-cached title", async () => {
+    // Regression test for a real bug found live: renaming a book via the UI
+    // appeared to "not persist" because mergeCatalog let the offline pack's
+    // stale cached title (from whenever it was last built) win over the
+    // fresh server title on every catalog refresh — including the one that
+    // fires immediately after the rename itself.
+    const book = minimalBook({ book_id: "renamed-book", title: "Old Title Before Rename" });
+    await importPackZip(buildTestPackZip({ book }));
+    fetchCatalog.mockResolvedValueOnce([
+      { book_id: "renamed-book", title: "New Title After Rename", progress: 1, status: "ready" },
+    ]);
+    const merged = await mergeCatalog(await fetchCatalog());
+    const hit = merged.find((e) => e.book_id === "renamed-book");
+    expect(hit.title).toBe("New Title After Rename");
   });
 
   it("fetchLocalCatalog lists installed packs", async () => {
@@ -94,6 +114,94 @@ describe("bookSource", () => {
     expect(book.inserts["0"]).toContain("insert_0.png");
     expect(book.offline_pack.tier).toBe("visual");
     expect(fetchBookRemote).toHaveBeenCalledWith("pack-test", {});
+  });
+
+  it("fetchBook keeps local pack content while remote is still processing (formal extraction not compiled yet)", async () => {
+    // Regression: an m4b-first upload's local pack already has full transcript
+    // lines the moment STT finishes, but the server-side /ingest-text job
+    // (scenes/characters extraction) can take much longer. While it's still
+    // running, GET /books/:id returns a near-empty stub ({error, book_id,
+    // status:"processing"} — no scenes at all). Spreading that over the local
+    // pack used to erase the transcript, permanently showing "Preparing this
+    // book..." even though the device already had readable content.
+    await importPackZip(buildTestPackZip());
+    fetchBookRemote.mockResolvedValueOnce({
+      book_id: "pack-test",
+      status: "processing",
+    });
+    const book = await fetchBook("pack-test");
+    expect(book.title).toBe("Pack Test Book");
+    expect(book.scenes?.length).toBeGreaterThan(0);
+    expect(book.status).toBe("ready");
+  });
+
+  it("fetchBook keeps an m4b-first local transcript when formal extraction has STALLED, not just while processing", async () => {
+    // Regression: formal extraction doesn't only sit at status "processing"
+    // while it works — it can also stall out (e.g. a missing/misconfigured
+    // provider key) and settle at status "partial"/"error" with zero
+    // chapters_ready, indefinitely. That used to fall through to "spread the
+    // remote over local", replacing the m4b-first pack's real transcript
+    // with the stalled extraction's near-empty scenes.
+    await savePackRecord({
+      pack_id: "m4b-pack-test::m4b-first",
+      book_id: "m4b-pack-test",
+      title: "M4B First Book",
+      author: "",
+      tier: TIER_VISUAL,
+      style: null,
+      audio_engine: null,
+      manifest: { format: "vae-offline-pack", format_version: 1, book_id: "m4b-pack-test" },
+      book: minimalBook({ book_id: "m4b-pack-test", title: "M4B First Book" }),
+      voices: {},
+      media_index: {},
+      audio_manifest: [],
+      blob_paths: [],
+      pack_origin: "m4b-first",
+      installed_at: 0,
+      size_bytes: 0,
+    });
+    fetchBookRemote.mockResolvedValueOnce({
+      book_id: "m4b-pack-test",
+      status: "partial",
+      stage: "extracting",
+      chapters_ready: 0,
+      total_chapters: 12,
+      scenes: [],
+    });
+    const book = await fetchBook("m4b-pack-test");
+    expect(book.title).toBe("M4B First Book");
+    expect(book.scenes?.length).toBeGreaterThan(0);
+  });
+
+  it("fetchBook prefers the remote copy once an m4b-first book's formal extraction has produced real chapters", async () => {
+    await savePackRecord({
+      pack_id: "m4b-pack-ready::m4b-first",
+      book_id: "m4b-pack-ready",
+      title: "M4B First Book",
+      author: "",
+      tier: TIER_VISUAL,
+      style: null,
+      audio_engine: null,
+      manifest: { format: "vae-offline-pack", format_version: 1, book_id: "m4b-pack-ready" },
+      book: minimalBook({ book_id: "m4b-pack-ready", title: "M4B First Book" }),
+      voices: {},
+      media_index: {},
+      audio_manifest: [],
+      blob_paths: [],
+      pack_origin: "m4b-first",
+      installed_at: 0,
+      size_bytes: 0,
+    });
+    fetchBookRemote.mockResolvedValueOnce({
+      book_id: "m4b-pack-ready",
+      title: "Formally Extracted",
+      status: "partial",
+      chapters_ready: 3,
+      total_chapters: 12,
+      scenes: [{ id: "s1", lines: [] }],
+    });
+    const book = await fetchBook("m4b-pack-ready");
+    expect(book.title).toBe("Formally Extracted");
   });
 
   it("fetchBook preferLocal skips server", async () => {

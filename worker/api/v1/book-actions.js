@@ -229,15 +229,21 @@ export async function onIllustrationCharacterMatchPost({ request, env, bookId })
   return json({ job_id: jobId, book_id: bookId, status: "queued" });
 }
 
-/** POST /books/:id/continue-extract — resume a stalled/partial book from its checkpoint. */
+/** POST /books/:id/continue-extract — resume a stalled/partial book from its
+ *  checkpoint, or (no checkpoint exists — e.g. every chapter failed before
+ *  the first one ever completed, so nothing was checkpointed yet) just start
+ *  a fresh extraction. runCheckpointedExtraction already handles an absent
+ *  checkpoint correctly (falls back to emptyCheckpoint()); the only reason to
+ *  special-case it here is prefer_provider — a book stuck because its ONLY
+ *  provider attempt so far (e.g. Gemini with no API key configured) never
+ *  got past chapter 1 needs a way to retry with a DIFFERENT provider, and
+ *  that's exactly what this endpoint is for. Previously 404ing here left the
+ *  user with no way to retry such a book at all. */
 export async function onContinueExtractPost({ request, env, bookId }) {
   if (!edgeJobsEnabled(env)) return null;
 
   const checkpoint = await getCheckpoint(env, bookId);
-  if (!checkpoint) {
-    return json({ error: "no checkpoint for this book — nothing to resume" }, 404);
-  }
-  if (checkpoint.next_chapter_idx >= checkpoint.total_chapters) {
+  if (checkpoint && checkpoint.next_chapter_idx >= checkpoint.total_chapters) {
     return json({ error: "book already fully extracted" }, 400);
   }
   if (!(await loadStoredEpubBytes(env, bookId))) {
@@ -262,8 +268,10 @@ export async function onContinueExtractPost({ request, env, bookId }) {
     book_id: bookId,
     kind: "continue-extract",
     status: "queued",
-    progress: checkpoint.chapters_done.length / Math.max(checkpoint.total_chapters, 1),
-    detail: `Resuming at chapter ${checkpoint.next_chapter_idx + 1}/${checkpoint.total_chapters}`,
+    progress: checkpoint ? checkpoint.chapters_done.length / Math.max(checkpoint.total_chapters, 1) : 0,
+    detail: checkpoint
+      ? `Resuming at chapter ${checkpoint.next_chapter_idx + 1}/${checkpoint.total_chapters}`
+      : "Starting script extraction",
     stage: "queued",
   };
   await putJob(env, "ingest", jobId, job);
@@ -292,8 +300,8 @@ export async function onContinueExtractPost({ request, env, bookId }) {
     job_id: jobId,
     book_id: bookId,
     status: "queued",
-    resuming_from_chapter: checkpoint.next_chapter_idx,
-    total_chapters: checkpoint.total_chapters,
+    resuming_from_chapter: checkpoint ? checkpoint.next_chapter_idx : 0,
+    total_chapters: checkpoint ? checkpoint.total_chapters : null,
     prefer_provider: preferProvider,
   });
 }
@@ -471,6 +479,45 @@ const POST_EXTRACTION_JOB_KINDS = new Set([
   "imaging-regen", "expression-sprites", "expression-repass",
   "illustration-character-match", "moment-generate",
 ]);
+
+/** PATCH /books/:id/title — rename a book's display title. Title lives in
+ * three places today (KV `book:{id}` index's `meta.title`, `books/{id}.json`'s
+ * `playback.title`, `books/{id}.analysis.json`'s `analysis.title`), kept in
+ * sync only opportunistically elsewhere (catalog-cover.js's
+ * enrichCatalogMetaFromPlayback copies playback -> KV, but only when KV's
+ * title is empty, never overwrites, no reverse sync) — this is the one place
+ * that updates all three together on an explicit user rename. Mirrors
+ * characters.js's onCharacterRenamePatch's load/mutate/save shape. */
+export async function onBookTitlePatch({ request, env, bookId }) {
+  if (!env.VAE_PACKS) return null;
+
+  let body = {};
+  try { body = await request.json(); } catch { /* empty */ }
+  const title = String(body?.title || "").trim();
+  if (!title) return json({ error: "expected { title }" }, 400);
+
+  const axObj = await env.VAE_PACKS.get(`books/${bookId}.analysis.json`);
+  const pbObj = await env.VAE_PACKS.get(`books/${bookId}.json`);
+  if (!axObj && !pbObj) return json({ error: "no such book" }, 404);
+
+  if (pbObj) {
+    const playback = await pbObj.json();
+    playback.title = title;
+    await env.VAE_PACKS.put(`books/${bookId}.json`, JSON.stringify(playback, null, 2), {
+      httpMetadata: { contentType: "application/json" },
+    });
+  }
+  if (axObj) {
+    const analysis = await axObj.json();
+    analysis.title = title;
+    await env.VAE_PACKS.put(`books/${bookId}.analysis.json`, JSON.stringify(analysis, null, 2), {
+      httpMetadata: { contentType: "application/json" },
+    });
+  }
+  await putBookIndex(env, bookId, { title });
+
+  return json({ ok: true, title });
+}
 
 /**
  * POST /books/:id/cancel-processing — stop treating a stuck/in-flight job as

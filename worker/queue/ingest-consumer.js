@@ -11,7 +11,7 @@ async function touchBookProgress(env, bookId, patch) {
 export async function handleIngestMessage(message, env) {
   const {
     job_id, book_id, art_style, narrator_gender, dry_run, generate_art, generate_expressive_sprites,
-    byo_mode, illustration_mode, prefer_provider,
+    byo_mode, illustration_mode, prefer_provider, use_booknlp, use_annotate,
   } = message.body;
   const dbg = createPhaseLogger(env, "ingest", job_id);
   const wantArt = generate_art !== false && !dry_run && !byo_mode;
@@ -60,6 +60,8 @@ export async function handleIngestMessage(message, env) {
       generate_expressive_sprites,
       byo_mode,
       prefer_provider,
+      use_booknlp,
+      use_annotate,
       report,
       dbg,
     });

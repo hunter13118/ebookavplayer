@@ -281,13 +281,46 @@ MAX_WORDS_PER_SECOND = float(os.environ.get("ALIGN_MAX_WORDS_PER_SECOND", "4"))
 # Floor so a very short/quiet chunk still gets a reasonable search window.
 MIN_LOOKAHEAD_WORDS = int(os.environ.get("ALIGN_MIN_LOOKAHEAD_WORDS", "400"))
 
+# Hard ceiling on how far elapsed_since_advance_ms alone is allowed to grow
+# the lookahead window. Without this, a long dry spell (several consecutive
+# chunks that fail to match anything — a hard-to-transcribe stretch, or the
+# Whisper mis-segmentation bug above) inflates the window toward "most of the
+# book," and a coincidental MIN_ANCHOR_BLOCK_WORDS-sized match on an ordinary
+# repeated phrase (found in practice: a book's random spot getting "jumped
+# to" mid-playback) becomes reachable purely because the window got large,
+# not because the narration plausibly raced there. Once cursor advances past
+# a false anchor it never reverts (see feed()'s `self.cursor = max(...)`), so
+# everything between the true position and the false one gets bogus
+# interpolated timings — this bounds the blast radius of that failure mode.
+# ~90 minutes of narration at MAX_WORDS_PER_SECOND's pace — generous enough
+# for a real, long dry spell to still resync normally, but not "anywhere in a
+# 10-hour audiobook."
+MAX_LOOKAHEAD_WORDS = int(os.environ.get("ALIGN_MAX_LOOKAHEAD_WORDS", "20000"))
 
-def _chunk_bounds(total_ms: int) -> list[tuple[int, int]]:
+# Stricter block-size floor for an anchor whose position is only reachable
+# because of MIN_LOOKAHEAD_WORDS's floor or dry-spell inflation — i.e. beyond
+# what the chunk's OWN elapsed real time (no floor, no cap) could plausibly
+# justify. A normal-pace anchor keeps MIN_ANCHOR_BLOCK_WORDS's bar; one found
+# only via a generously inflated window needs a longer, higher-confidence
+# run before being trusted — the same reasoning MIN_ANCHOR_BLOCK_WORDS's own
+# comment gives for why 6 beats 3 (coincidental exact matches get
+# exponentially rarer as block length grows), applied a second time
+# specifically to the "found suspiciously far away" case.
+STRICT_ANCHOR_BLOCK_WORDS = int(os.environ.get("ALIGN_STRICT_ANCHOR_BLOCK_WORDS", "10"))
+
+
+def _chunk_bounds(total_ms: int, resume_ms: int = 0) -> list[tuple[int, int]]:
     """[(start_ms, end_ms), ...] covering the whole file — small first
-    window, then the regular chunk size for everything after it."""
+    window, then the regular chunk size for everything after it.
+    `resume_ms` skips straight to the regular chunk size starting at that
+    offset (a resumed run has no need for the short first-chunk warmup)."""
     bounds = []
-    start_ms = 0
-    size_ms = FIRST_CHUNK_MS
+    if resume_ms > 0:
+        start_ms = min(resume_ms, total_ms)
+        size_ms = CHUNK_MS
+    else:
+        start_ms = 0
+        size_ms = FIRST_CHUNK_MS
     while start_ms < total_ms:
         end_ms = min(start_ms + size_ms, total_ms)
         bounds.append((start_ms, end_ms))
@@ -554,11 +587,11 @@ class IncrementalAligner:
         # Bound the search to a plausible lookahead — see MAX_WORDS_PER_SECOND's
         # comment. Grows with elapsed_since_advance_ms so a chunk following one
         # or more chunks that failed to match anything still gets a fair,
-        # proportionally larger window rather than being starved.
-        max_lookahead = max(
-            MIN_LOOKAHEAD_WORDS,
-            int(self.elapsed_since_advance_ms / 1000 * MAX_WORDS_PER_SECOND),
-        )
+        # proportionally larger window rather than being starved — but capped
+        # at MAX_LOOKAHEAD_WORDS so a long enough dry spell can't inflate it to
+        # "most of the book" (see that constant's comment).
+        real_pace_bound = int(self.elapsed_since_advance_ms / 1000 * MAX_WORDS_PER_SECOND)
+        max_lookahead = min(MAX_LOOKAHEAD_WORDS, max(MIN_LOOKAHEAD_WORDS, real_pace_bound))
         remaining = remaining_all[:max_lookahead]
 
         asr_tokens = [_normalize_words(w["word"])[0] if _normalize_words(w["word"]) else "" for w in asr_words]
@@ -570,12 +603,18 @@ class IncrementalAligner:
         # book line like "In this world, there is a forest...") as it is to
         # be a genuine anchor. A real spoken match to real book content
         # reliably matches several consecutive words in a row; isolated
-        # single/double-word hits are noise, not signal.
+        # single/double-word hits are noise, not signal. A block only
+        # reachable because MIN_LOOKAHEAD_WORDS's floor or a dry spell
+        # inflated the window past what this chunk's OWN elapsed time could
+        # plausibly justify (real_pace_bound, uncapped/unfloored) needs a
+        # longer, STRICT_ANCHOR_BLOCK_WORDS run instead — see that constant's
+        # comment for why "found suspiciously far away" deserves a higher bar.
         new_anchors: list[tuple[int, str, float, float]] = []
         last_anchor_local_idx = -1
         first_block_b: int | None = None
         for block in matcher.get_matching_blocks():
-            if block.size < MIN_ANCHOR_BLOCK_WORDS:
+            required = MIN_ANCHOR_BLOCK_WORDS if block.a <= real_pace_bound else STRICT_ANCHOR_BLOCK_WORDS
+            if block.size < required:
                 continue
             if first_block_b is None:
                 first_block_b = block.b
@@ -658,7 +697,7 @@ class IncrementalAligner:
         }
 
 
-def _align_stream(m4b_path: str, lines: list[dict]) -> Iterator[str]:
+def _align_stream(m4b_path: str, lines: list[dict], resume_ms: int = 0) -> Iterator[str]:
     try:
         total_ms = _probe_duration_ms(m4b_path)
         aligner = IncrementalAligner(lines, total_ms)
@@ -670,7 +709,7 @@ def _align_stream(m4b_path: str, lines: list[dict]) -> Iterator[str]:
                 "meta": {"asr_device": ASR_DEVICE, "align_device": ALIGN_DEVICE, **aligner.meta()},
             }) + "\n"
 
-        for start_ms, end_ms in _chunk_bounds(total_ms):
+        for start_ms, end_ms in _chunk_bounds(total_ms, resume_ms):
             try:
                 asr_words = _transcribe_chunk(m4b_path, start_ms, end_ms)
             except Exception:  # one bad window must not abort the whole run
@@ -695,16 +734,147 @@ def _align_stream(m4b_path: str, lines: list[dict]) -> Iterator[str]:
 
 
 @app.post("/align")
-async def align(m4b: UploadFile = File(...), lines: str = Form(...)):
+async def align(m4b: UploadFile = File(...), lines: str = Form(...), resume_ms: int = Form(0)):
+    # Resuming an interrupted alignment (a refresh/crash mid-book — see
+    # docs/M4B_FIRST_FLOW.md's "Resuming an interrupted transcription", the
+    # same client-side checkpoint pattern applies here): the CALLER is
+    # responsible for trimming `lines` down to only the lines NOT already
+    # resolved in its cached manifest before sending — the aligner's word
+    # indexing is relative to whatever `lines` it's given, so a truncated
+    # list naturally starts matching against audio from resume_ms onward
+    # with no extra bookkeeping needed here.
     lines_parsed = json.loads(lines)
     with tempfile.NamedTemporaryFile(suffix=".m4b", delete=False) as tmp:
         tmp.write(await m4b.read())
         m4b_path = tmp.name
-    log.info("aligning %s line(s) from %s", len(lines_parsed), m4b.filename)
-    return StreamingResponse(_align_stream(m4b_path, lines_parsed), media_type="application/x-ndjson")
+    if resume_ms > 0:
+        log.info("resuming alignment of %s remaining line(s) from %s at %sms", len(lines_parsed), m4b.filename, resume_ms)
+    else:
+        log.info("aligning %s line(s) from %s", len(lines_parsed), m4b.filename)
+    return StreamingResponse(
+        _align_stream(m4b_path, lines_parsed, resume_ms=resume_ms), media_type="application/x-ndjson",
+    )
+
+
+# ── M4B-first transcription (no known script) ────────────────────────────────
+# Powers the M4B-first flow (docs/M4B_FIRST_FLOW.md): the audiobook is the ONLY
+# input, so there's nothing to fuzzy-match against — we just transcribe the
+# whole file and hand back the raw word-timed transcript, grouped into
+# sentences. That transcript IS the book text: it drives the minimal karaoke
+# reader immediately, and later gets fed to the normal extraction pipeline as
+# `body_text` to retro-generate scenes/characters.
+#
+# Contract is deliberately engine-agnostic (the ASR happens to be WhisperX
+# today; an MLX backend can replace _transcribe_chunk later without any client
+# change):
+#
+#   POST /transcribe   multipart form: m4b (the whole audiobook file)
+#   -> streamed NDJSON, one row per processed time-window plus a final marker:
+#      {"status":"chunk",
+#       "lines":[{"idx":int,"text":str,"start_ms":int,"end_ms":int,
+#                 "words":[[word,start_ms,end_ms], ...]}, ...],
+#       "processed_ms":int, "total_ms":int,
+#       "meta":{"asr_device":str,"align_device":str,"model":str}}
+#      {"status":"done","line_count":int,"total_ms":int,"meta":{...}}
+#    `lines` on a "chunk" row are only the sentences newly transcribed in THAT
+#    window (globally-indexed, contiguous), so a client can render them the
+#    moment they arrive instead of waiting for "done" — same incremental
+#    contract as /align.
+
+# A sentence ends on .!? (or … ), allowing trailing closing quotes/brackets so
+# `stones."` or `now!"` close the sentence rather than starting the next one on
+# the quote. Word tokens from WhisperX carry their own trailing punctuation.
+_SENT_END_RE = re.compile(r"[.!?…][\"'”’)\]]*$")
+
+
+def _words_to_sentences(words: list[dict], start_idx: int) -> list[dict]:
+    """Group a flat, time-ordered word stream (whole-file seconds, from
+    _transcribe_chunk) into sentence lines carrying per-word ms timings. The
+    reader boldens the active sentence and typewriters word-by-word off these
+    timings; the vaepack and retro-extraction both consume `text`."""
+    lines: list[dict] = []
+    cur: list[dict] = []
+
+    def flush():
+        nonlocal cur
+        if not cur:
+            return
+        text = " ".join(w["word"].strip() for w in cur).strip()
+        if not text:
+            cur = []
+            return
+        lines.append({
+            "text": text,
+            "start_ms": round(cur[0]["start"] * 1000),
+            "end_ms": round(cur[-1]["end"] * 1000),
+            "words": [[w["word"].strip(), round(w["start"] * 1000), round(w["end"] * 1000)] for w in cur],
+        })
+        cur = []
+
+    for w in words:
+        cur.append(w)
+        if _SENT_END_RE.search(w["word"].strip()):
+            flush()
+    flush()  # trailing fragment with no terminal punctuation is still a line
+
+    for i, ln in enumerate(lines):
+        ln["idx"] = start_idx + i
+    return lines
+
+
+def _transcribe_stream(m4b_path: str, resume_ms: int = 0, resume_idx: int = 0) -> Iterator[str]:
+    try:
+        total_ms = _probe_duration_ms(m4b_path)
+        next_idx = resume_idx
+        for start_ms, end_ms in _chunk_bounds(total_ms, resume_ms):
+            try:
+                asr_words = _transcribe_chunk(m4b_path, start_ms, end_ms)
+            except Exception:  # one bad window must not abort the whole run
+                log.exception("transcription failed for window %sms-%sms", start_ms, end_ms)
+                asr_words = []
+            new_lines = _words_to_sentences(asr_words, next_idx)
+            next_idx += len(new_lines)
+            yield json.dumps({
+                "status": "chunk", "lines": new_lines,
+                "processed_ms": end_ms, "total_ms": total_ms,
+                "meta": {"asr_device": ASR_DEVICE, "align_device": ALIGN_DEVICE, "model": ASR_MODEL},
+            }) + "\n"
+
+        yield json.dumps({
+            "status": "done", "line_count": next_idx, "total_ms": total_ms,
+            "meta": {"asr_device": ASR_DEVICE, "align_device": ALIGN_DEVICE, "model": ASR_MODEL},
+        }) + "\n"
+    except Exception as e:
+        log.exception("full-book transcription failed")
+        yield json.dumps({"status": "error", "error": str(e)}) + "\n"
+    finally:
+        Path(m4b_path).unlink(missing_ok=True)
+
+
+@app.post("/transcribe")
+async def transcribe(m4b: UploadFile = File(...), resume_ms: int = Form(0), resume_idx: int = Form(0)):
+    with tempfile.NamedTemporaryFile(suffix=".m4b", delete=False) as tmp:
+        tmp.write(await m4b.read())
+        m4b_path = tmp.name
+    if resume_ms > 0:
+        log.info("resuming transcription (M4B-first) %s at %sms (idx %s)", m4b.filename, resume_ms, resume_idx)
+    else:
+        log.info("transcribing (M4B-first) %s", m4b.filename)
+    return StreamingResponse(
+        _transcribe_stream(m4b_path, resume_ms=resume_ms, resume_idx=resume_idx),
+        media_type="application/x-ndjson",
+    )
 
 
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("ALIGN_SERVER_PORT", "7861")))
+    # 0.0.0.0 (not 127.0.0.1) so a phone/other device on the same LAN can
+    # reach this for the M4B-first flow (docs/M4B_FIRST_FLOW.md) — matches
+    # vite.config.js's server.host:true for the same reason. This is a local
+    # dev tool (no auth), so anyone on the LAN can reach it; fine for a home
+    # network, override via ALIGN_SERVER_HOST if that's ever a concern.
+    host = os.environ.get("ALIGN_SERVER_HOST", "0.0.0.0")
+    port = int(os.environ.get("ALIGN_SERVER_PORT", "7861"))
+    log.info("starting on %s:%s (set ALIGN_SERVER_HOST=127.0.0.1 to restrict to this machine only)", host, port)
+    uvicorn.run(app, host=host, port=port)

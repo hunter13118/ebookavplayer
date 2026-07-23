@@ -74,7 +74,7 @@ export async function fetchEdgeVoices(locale) {
 
 export async function ingestBook(file, {
   artStyle = "anime", narratorGender = "male", dryRun = false, generateArt = true, byoMode = false,
-  generateExpressiveSprites = false, preferProvider = "auto", connection,
+  generateExpressiveSprites = false, preferProvider = "auto", useBooknlp = true, useAnnotate = true, connection,
 } = {}) {
   const fd = new FormData();
   fd.append("file", file);
@@ -85,8 +85,56 @@ export async function ingestBook(file, {
   fd.append("byo_mode", byoMode ? "true" : "false");
   fd.append("generate_expressive_sprites", generateExpressiveSprites ? "true" : "false");
   fd.append("prefer_provider", preferProvider || "auto");
+  fd.append("use_booknlp", useBooknlp ? "true" : "false");
+  fd.append("use_annotate", useAnnotate ? "true" : "false");
   const res = await fetch(apiUrl("/ingest", connection), { method: "POST", body: fd });
   if (!res.ok) throw new Error(`ingest: HTTP ${res.status}`);
+  return res.json();
+}
+
+// M4B-first "formal extraction" trigger (docs/M4B_FIRST_FLOW.md) — runs the
+// normal scenes/characters/dialogue extraction over an already-transcribed
+// M4B's text. bookId must match the book's existing local-only pack
+// (m4bFirstBooks.js) so the result upgrades it in place.
+export async function ingestBookText(bookId, { title, bodyText, artStyle = "anime", connection } = {}) {
+  const res = await fetch(apiUrl(`/books/${encodeURIComponent(bookId)}/ingest-text`, connection), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ title, body_text: bodyText, art_style: artStyle }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `ingest-text: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+// Attach a real EPUB to a book that doesn't have one yet (e.g. an m4b-first
+// audiobook-only upload, docs/M4B_FIRST_FLOW.md) — re-runs the SAME
+// checkpointed extraction /ingest uses, targeted at the EXISTING book_id
+// instead of minting a new one, so real chapter boundaries + any embedded
+// illustrations replace the STT-derived text. `title` preserves the book's
+// current catalog title (otherwise the worker would fall back to the epub's
+// filename) — see worker/api/v1/ingest.js's `existing_book_id` handling.
+export async function attachEpubToBook(bookId, file, {
+  title, artStyle = "anime", narratorGender = "male", useBooknlp = true, useAnnotate = true, connection,
+} = {}) {
+  const fd = new FormData();
+  fd.append("file", file);
+  fd.append("existing_book_id", bookId);
+  if (title) fd.append("title", title);
+  fd.append("art_style", artStyle);
+  fd.append("narrator_gender", narratorGender);
+  fd.append("dry_run", "false");
+  fd.append("generate_art", "true");
+  fd.append("prefer_provider", "auto");
+  fd.append("use_booknlp", useBooknlp ? "true" : "false");
+  fd.append("use_annotate", useAnnotate ? "true" : "false");
+  const res = await fetch(apiUrl("/ingest", connection), { method: "POST", body: fd });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `attach epub: HTTP ${res.status}`);
+  }
   return res.json();
 }
 
@@ -559,6 +607,17 @@ export async function renameCharacter(bookId, { id, name }) {
     signal: AbortSignal.timeout(12000),
   });
   if (!res.ok) throw new Error(`character rename: HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function renameBook(bookId, title) {
+  const res = await fetch(apiUrl(`/books/${encodeURIComponent(bookId)}/title`), {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ title }),
+    signal: AbortSignal.timeout(12000),
+  });
+  if (!res.ok) throw new Error(`book rename: HTTP ${res.status}`);
   return res.json();
 }
 

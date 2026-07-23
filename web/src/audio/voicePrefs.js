@@ -28,6 +28,13 @@ export const KEYS = {
   // stay off by default since it's a debugging tool, not a reader feature.
   directorsLog: "vae-directors-log",
   uiMode: "vae-ui-mode",              // "simple" | "full"
+  // Which view renders the playing book — all three consume the same
+  // orchestrator state (see docs/VIEW_MODES.md), so switching is a crossfade,
+  // not a reload. cinematic = full cast + dialogue; spotlight = speaking sprite
+  // + bubble over the scene bg (middle mode); reader = minimal paginated text.
+  viewMode: "vae-view-mode",          // "cinematic" | "spotlight" | "reader"
+  readerFontSizePx: "vae-reader-font-px",       // procedural pagination font size
+  readerDimBackground: "vae-reader-dim-bg",     // dim scene art behind reader text
   simpleFontScale: "vae-simple-font", // "1" default; optional larger-text bump
   // Procedurally-synthesized rain/wind/forest/tavern loop, keyed off scene
   // title/location (see ambientClassifier.js) — see ambientAudio.js.
@@ -63,6 +70,9 @@ export function getPrefs() {
     performanceMode: g(KEYS.performanceMode, "balanced"),
     directorsLog: g(KEYS.directorsLog, "false") === "true",
     uiMode: g(KEYS.uiMode, "simple"),
+    viewMode: g(KEYS.viewMode, "cinematic"),
+    readerFontSizePx: parseInt(g(KEYS.readerFontSizePx, "28"), 10) || 28,
+    readerDimBackground: g(KEYS.readerDimBackground, "true") !== "false",
     simpleFontScale: parseFloat(g(KEYS.simpleFontScale, "1")) || 1,
     ambientSound: g(KEYS.ambientSound, "true") !== "false",
     ambientVolume: parseFloat(g(KEYS.ambientVolume, "0.35")) || 0.35,

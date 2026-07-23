@@ -37,6 +37,13 @@ const TIMELINE = {
   2: { startMs: 200, endMs: 300, durationMs: 100 },
 };
 
+// Every timing algorithm that produces a lineTimings Record plays back the
+// SAME way once a shared local .m4b is loaded: continuously, via a single
+// rAF loop that reads the real audio clock (orchestrator._hasSharedTimeline()
+// gates this — it no longer depends on timelineMeta.strategy === "acoustic").
+// An earlier per-line seek-and-stop path existed for non-acoustic algorithms
+// but was removed (see sharedAudioSource.js's file comment) — it caused
+// audio to cut off early whenever a seek stalled on buffering.
 describe("Orchestrator shared-audio (.m4b) playback", () => {
   beforeEach(() => {
     loadSharedAudio(new Blob([new Uint8Array(1000)], { type: "audio/mp4" }));
@@ -55,73 +62,6 @@ describe("Orchestrator shared-audio (.m4b) playback", () => {
     await orch.play([LINES[0]], 0);
     await waitForStatus(orch, (s) => ["playing", "done", "paused"].includes(s));
     orch.stop();
-  });
-
-  it("auto-advances through every line via real shared-audio segments and finishes", async () => {
-    const orch = new Orchestrator();
-    orch.configure({ autoAdvance: true });
-    orch.setTimeline(TIMELINE);
-    const seenIndexes = [];
-    orch.onState = (s) => { if (s.status === "playing") seenIndexes.push(s.index); };
-    let ended = false;
-    orch.onEnd = () => { ended = true; };
-
-    await orch.play(LINES, 0);
-    await waitForStatus(orch, (s) => s === "done");
-
-    expect(ended).toBe(true);
-    expect(new Set(seenIndexes)).toEqual(new Set([0, 1, 2]));
-  });
-
-  it("click-through mode (autoAdvance=false) plays exactly one line then pauses", async () => {
-    const orch = new Orchestrator();
-    orch.configure({ autoAdvance: false });
-    orch.setTimeline(TIMELINE);
-
-    await orch.play(LINES, 0);
-    await waitForStatus(orch, (s) => s === "paused");
-
-    expect(orch.index).toBe(0);
-    expect(orch.status).toBe("paused");
-  });
-
-  it("next() advances exactly one line at a time in click-through mode", async () => {
-    const orch = new Orchestrator();
-    orch.configure({ autoAdvance: false });
-    orch.setTimeline(TIMELINE);
-
-    await orch.play(LINES, 0);
-    await waitForStatus(orch, (s) => s === "paused");
-    expect(orch.index).toBe(0);
-
-    orch.next();
-    await waitForStatus(orch, (s) => s === "paused");
-    expect(orch.index).toBe(1);
-  });
-
-  it("degrades gracefully for a line missing from the timeline instead of crashing", async () => {
-    const orch = new Orchestrator();
-    orch.configure({ autoAdvance: true, speed: 4 }); // speed up the silent-estimate fallback
-    orch.setTimeline({ 0: TIMELINE[0] }); // line 1 and 2 deliberately absent
-    let ended = false;
-    orch.onEnd = () => { ended = true; };
-
-    await orch.play(LINES, 0);
-    await waitForStatus(orch, (s) => s === "done", 5000);
-    expect(ended).toBe(true);
-  });
-
-  it("pause() halts shared-audio playback without throwing and the orchestrator does not advance further", async () => {
-    const orch = new Orchestrator();
-    orch.configure({ autoAdvance: true });
-    // A deliberately long segment so we can pause mid-flight.
-    orch.setTimeline({ 0: { startMs: 0, endMs: 5000, durationMs: 5000 } });
-
-    const playDone = orch.play([LINES[0]], 0);
-    await new Promise((r) => setTimeout(r, 10));
-    expect(() => orch.pause()).not.toThrow();
-    await playDone;
-    expect(orch.status).toBe("paused");
   });
 
   it("setTimeline(null) reverts to non-shared-audio playback even if a blob is still loaded", async () => {
@@ -146,7 +86,7 @@ describe("Orchestrator shared-audio (.m4b) playback", () => {
   });
 });
 
-describe("Orchestrator Mode B (acoustic timeline, continuous shared-audio clock)", () => {
+describe("Orchestrator continuous shared-audio playback (real audio clock)", () => {
   beforeEach(() => {
     loadSharedAudio(new Blob([new Uint8Array(1000)], { type: "audio/mp4" }));
   });
@@ -156,19 +96,17 @@ describe("Orchestrator Mode B (acoustic timeline, continuous shared-audio clock)
     vi.restoreAllMocks();
   });
 
-  it("plays continuously via playSharedContinuous (never per-line playSharedSegment) when meta.strategy is 'acoustic'", async () => {
+  it("plays continuously via playSharedContinuous whenever a shared timeline is loaded, with or without an 'acoustic' strategy label", async () => {
     const continuousSpy = vi.spyOn(sharedAudioSource, "playSharedContinuous");
-    const segmentSpy = vi.spyOn(sharedAudioSource, "playSharedSegment");
     const orch = new Orchestrator();
     orch.configure({ autoAdvance: true });
-    orch.setTimeline(TIMELINE, { strategy: "acoustic" });
+    orch.setTimeline(TIMELINE); // no meta.strategy — used to fall back to a removed per-line path
 
     await orch.play(LINES, 0);
     await waitForStatus(orch, (s) => s === "done");
 
     expect(continuousSpy).toHaveBeenCalledTimes(1);
     expect(continuousSpy.mock.calls[0][0]).toBe(0); // seeks to line 0's startMs
-    expect(segmentSpy).not.toHaveBeenCalled();
   });
 
   it("starting mid-book seeks to the start line's own startMs, not 0", async () => {
@@ -182,20 +120,10 @@ describe("Orchestrator Mode B (acoustic timeline, continuous shared-audio clock)
     orch.stop();
   });
 
-  it("falls back to Mode A (per-line playSharedSegment) when no meta.strategy is set", async () => {
-    const continuousSpy = vi.spyOn(sharedAudioSource, "playSharedContinuous");
+  it("pause() halts playback in place without resetting the real playhead", async () => {
     const orch = new Orchestrator();
     orch.configure({ autoAdvance: true });
-    orch.setTimeline(TIMELINE); // no meta -> Mode A, unchanged behavior
-    await orch.play(LINES, 0);
-    await waitForStatus(orch, (s) => s === "done");
-    expect(continuousSpy).not.toHaveBeenCalled();
-  });
-
-  it("pause() halts Mode B playback in place without resetting the real playhead", async () => {
-    const orch = new Orchestrator();
-    orch.configure({ autoAdvance: true });
-    orch.setTimeline({ 0: { startMs: 0, endMs: 100000, durationMs: 100000 } }, { strategy: "acoustic" });
+    orch.setTimeline({ 0: { startMs: 0, endMs: 100000, durationMs: 100000 } });
 
     const playDone = orch.play([LINES[0]], 0);
     await waitFor(3); // stay well inside FakeAudio's fixed 15ms auto-end window
@@ -211,7 +139,7 @@ describe("Orchestrator Mode B (acoustic timeline, continuous shared-audio clock)
     const continuousSpy = vi.spyOn(sharedAudioSource, "playSharedContinuous");
     const orch = new Orchestrator();
     orch.configure({ autoAdvance: true });
-    orch.setTimeline({ 0: { startMs: 0, endMs: 100000, durationMs: 100000 } }, { strategy: "acoustic" });
+    orch.setTimeline({ 0: { startMs: 0, endMs: 100000, durationMs: 100000 } });
 
     const playDone = orch.play([LINES[0]], 0);
     await waitFor(3);
@@ -231,7 +159,7 @@ describe("Orchestrator Mode B (acoustic timeline, continuous shared-audio clock)
     const continuousSpy = vi.spyOn(sharedAudioSource, "playSharedContinuous");
     const orch = new Orchestrator();
     orch.configure({ autoAdvance: true });
-    orch.setTimeline({ 0: { startMs: 0, endMs: 100000, durationMs: 100000 } }, { strategy: "acoustic" });
+    orch.setTimeline({ 0: { startMs: 0, endMs: 100000, durationMs: 100000 } });
 
     const playDone = orch.play([LINES[0]], 0);
     await waitFor(3);
@@ -244,18 +172,18 @@ describe("Orchestrator Mode B (acoustic timeline, continuous shared-audio clock)
     await playDone;
   });
 
-  it("configure({speed}) does not touch the shared audio element outside acoustic mode", () => {
+  it("configure({speed}) does not touch the shared audio element when no shared timeline is loaded", () => {
     const rateSpy = vi.spyOn(sharedAudioSource, "setSharedAudioPlaybackRate");
     const orch = new Orchestrator();
-    orch.setTimeline(TIMELINE); // no meta.strategy -> Mode A
+    orch.setTimeline(null);
     orch.configure({ speed: 1.5 });
     expect(rateSpy).not.toHaveBeenCalled();
   });
 
-  it("_emit() reports the real audio clock (currentTimeMs/durationMs) in acoustic mode", () => {
+  it("_emit() reports the real audio clock (currentTimeMs/durationMs) whenever a shared timeline is loaded", () => {
     const orch = new Orchestrator();
     orch.lines = LINES;
-    orch.setTimeline(TIMELINE, { strategy: "acoustic" });
+    orch.setTimeline(TIMELINE);
     seekSharedAudioMs(123);
     let seen = null;
     orch.onState = (s) => { seen = s; };
@@ -265,10 +193,10 @@ describe("Orchestrator Mode B (acoustic timeline, continuous shared-audio clock)
     expect(seen.durationMs).toBeCloseTo(250, 0); // FakeAudio's fixed test duration (0.25s)
   });
 
-  it("_emit() reports null currentTimeMs/durationMs outside acoustic mode", () => {
+  it("_emit() reports null currentTimeMs/durationMs when no shared timeline is loaded", () => {
     const orch = new Orchestrator();
     orch.lines = LINES;
-    orch.setTimeline(TIMELINE); // Mode A
+    orch.setTimeline(null);
     let seen = null;
     orch.onState = (s) => { seen = s; };
     orch._emit();
@@ -280,7 +208,7 @@ describe("Orchestrator Mode B (acoustic timeline, continuous shared-audio clock)
   it("surfaces buffering state changes from the shared audio element, and re-emits immediately", () => {
     const orch = new Orchestrator();
     orch.lines = LINES;
-    orch.setTimeline(TIMELINE, { strategy: "acoustic" });
+    orch.setTimeline(TIMELINE);
     const el = globalThis.__lastFakeAudio;
     const seen = [];
     orch.onState = (s) => seen.push(s.buffering);
@@ -294,10 +222,10 @@ describe("Orchestrator Mode B (acoustic timeline, continuous shared-audio clock)
     expect(seen.at(-1)).toBe(false);
   });
 
-  it("reports buffering: false outside acoustic mode even if the element is waiting", () => {
+  it("reports buffering: false when no shared timeline is loaded, even if the element is waiting", () => {
     const orch = new Orchestrator();
     orch.lines = LINES;
-    orch.setTimeline(TIMELINE); // Mode A
+    orch.setTimeline(null);
     const el = globalThis.__lastFakeAudio;
     el.onwaiting();
     let seen = null;
@@ -308,12 +236,12 @@ describe("Orchestrator Mode B (acoustic timeline, continuous shared-audio clock)
     el.onplaying(); // reset shared module state so it doesn't leak into later tests
   });
 
-  it("resyncDisplay() forces a fresh emit while playing in acoustic mode — catches up a display left stale by a suspended rAF loop (e.g. a backgrounded tab)", () => {
+  it("resyncDisplay() forces a fresh emit while playing — catches up a display left stale by a suspended rAF loop (e.g. a backgrounded tab)", () => {
     const orch = new Orchestrator();
     orch.lines = LINES;
     orch.index = 1;
     orch.status = "playing";
-    orch.setTimeline(TIMELINE, { strategy: "acoustic" });
+    orch.setTimeline(TIMELINE);
     seekSharedAudioMs(4321);
     let seen = null;
     orch.onState = (s) => { seen = s; };
@@ -327,7 +255,7 @@ describe("Orchestrator Mode B (acoustic timeline, continuous shared-audio clock)
     const orch = new Orchestrator();
     orch.lines = LINES;
     orch.status = "paused";
-    orch.setTimeline(TIMELINE, { strategy: "acoustic" });
+    orch.setTimeline(TIMELINE);
     let called = false;
     orch.onState = () => { called = true; };
     orch.resyncDisplay();
@@ -335,11 +263,11 @@ describe("Orchestrator Mode B (acoustic timeline, continuous shared-audio clock)
     expect(called).toBe(false);
   });
 
-  it("resyncDisplay() is a no-op outside acoustic mode", () => {
+  it("resyncDisplay() is a no-op when no shared timeline is loaded", () => {
     const orch = new Orchestrator();
     orch.lines = LINES;
     orch.status = "playing";
-    orch.setTimeline(TIMELINE); // Mode A
+    orch.setTimeline(null);
     let called = false;
     orch.onState = () => { called = true; };
     orch.resyncDisplay();
@@ -350,7 +278,7 @@ describe("Orchestrator Mode B (acoustic timeline, continuous shared-audio clock)
   it("natural end-of-file still finishes playback (no per-line boundary timer of its own)", async () => {
     const orch = new Orchestrator();
     orch.configure({ autoAdvance: true });
-    orch.setTimeline(TIMELINE, { strategy: "acoustic" });
+    orch.setTimeline(TIMELINE);
     let ended = false;
     orch.onEnd = () => { ended = true; };
 
@@ -361,8 +289,8 @@ describe("Orchestrator Mode B (acoustic timeline, continuous shared-audio clock)
 
   // Progressive WhisperX alignment: an estimate plays immediately, real
   // per-line timings replace it live as the local align server streams them
-  // in. The Mode B tick loop must re-read entries every frame (not a
-  // snapshot captured once at play-start) for that to take effect without a
+  // in. The tick loop must re-read entries every frame (not a snapshot
+  // captured once at play-start) for that to take effect without a
   // pause/resume — this exercises the exact mechanism directly, since the
   // FakeAudio test double's fixed 15ms auto-end fires before jsdom's ~16.7ms
   // rAF interval ever would, so a real elapsed-time tick can't be observed
@@ -372,7 +300,7 @@ describe("Orchestrator Mode B (acoustic timeline, continuous shared-audio clock)
     orch.configure({ autoAdvance: true });
     // One coarse "estimate" entry spanning the whole book, standing in for
     // line 0 only — nothing yet distinguishes line 1's real start.
-    orch.setTimeline({ 0: { startMs: 0, endMs: 100000, durationMs: 100000 } }, { strategy: "acoustic" });
+    orch.setTimeline({ 0: { startMs: 0, endMs: 100000, durationMs: 100000 } });
 
     const playDone = orch.play([LINES[0], LINES[1]], 0);
     await waitFor(3);
@@ -399,7 +327,7 @@ describe("Orchestrator Mode B (acoustic timeline, continuous shared-audio clock)
 
   it("extendTimeline() is a no-op for falsy/empty input (doesn't clear an existing timeline)", () => {
     const orch = new Orchestrator();
-    orch.setTimeline(TIMELINE, { strategy: "acoustic" });
+    orch.setTimeline(TIMELINE);
     orch.extendTimeline(null);
     orch.extendTimeline({});
     expect(orch.lineTimings).toEqual(TIMELINE);
@@ -407,14 +335,14 @@ describe("Orchestrator Mode B (acoustic timeline, continuous shared-audio clock)
 
   it("extendTimeline() merges new entries while preserving untouched ones", () => {
     const orch = new Orchestrator();
-    orch.setTimeline({ 0: TIMELINE[0] }, { strategy: "acoustic" });
+    orch.setTimeline({ 0: TIMELINE[0] });
     orch.extendTimeline({ 1: TIMELINE[1] });
     expect(orch.lineTimings).toEqual({ 0: TIMELINE[0], 1: TIMELINE[1] });
   });
 
   it("extendTimeline() overwrites an existing entry for the same line (refines an estimate with a real timing)", () => {
     const orch = new Orchestrator();
-    orch.setTimeline({ 0: { startMs: 0, endMs: 100000, durationMs: 100000 } }, { strategy: "acoustic" });
+    orch.setTimeline({ 0: { startMs: 0, endMs: 100000, durationMs: 100000 } });
     orch.extendTimeline({ 0: { startMs: 0, endMs: 1200, durationMs: 1200 } });
     expect(orch.lineTimings[0]).toEqual({ startMs: 0, endMs: 1200, durationMs: 1200 });
   });
@@ -583,5 +511,47 @@ describe("Orchestrator gap (narrator filler) segments", () => {
     orch.setTimeline(TIMELINE, { strategy: "acoustic" }, [GAP]);
     expect(() => orch.seekToGap(GAP.id)).not.toThrow();
     orch.stop();
+  });
+
+  it("_resolvePosition() marks a gap before the pinned line's own start as leading", () => {
+    const orch = new Orchestrator();
+    orch.lines = LINES;
+    orch.index = 0;
+    const leadingGap = { id: "gap-lead", startMs: 0, endMs: 50, text: "This is Audible presents..." };
+    // Line 0 doesn't actually start until 100ms in — the leading gap covers
+    // the audio before that.
+    const timelineWithLeadIn = { 0: { startMs: 100, endMs: 200, durationMs: 100 } };
+    orch.setTimeline(timelineWithLeadIn, { strategy: "acoustic" }, [leadingGap]);
+    orch._resolvePosition(10); // inside the leading gap's [0,50) span
+    expect(orch.activeSynthetic?.syntheticId).toBe(leadingGap.id);
+    expect(orch.activeSynthetic?.leading).toBe(true);
+  });
+
+  it("_resolvePosition() marks a mid-book gap (after the pinned line's own start) as not leading", () => {
+    const orch = new Orchestrator();
+    orch.lines = LINES;
+    orch.index = 1; // pinned at line 1 (startMs 100), GAP sits at 150-180
+    orch.setTimeline(TIMELINE, { strategy: "acoustic" }, [GAP]);
+    orch._resolvePosition(160); // inside GAP's span
+    expect(orch.activeSynthetic?.syntheticId).toBe(GAP.id);
+    expect(orch.activeSynthetic?.leading).toBe(false);
+  });
+
+  it("_resolvePosition() never auto-pauses at a line or gap boundary, even with autoAdvance: false", () => {
+    const orch = new Orchestrator();
+    orch.configure({ autoAdvance: false });
+    orch.lines = LINES;
+    orch.index = 0;
+    orch.status = "playing";
+    orch.setTimeline(TIMELINE, { strategy: "acoustic" }, [GAP]);
+
+    expect(orch._resolvePosition(0)).toBe(true); // line 0
+    expect(orch.status).toBe("playing");
+    expect(orch._resolvePosition(160)).toBe(true); // inside GAP
+    expect(orch.status).toBe("playing");
+    expect(orch.activeSynthetic?.syntheticId).toBe(GAP.id);
+    expect(orch._resolvePosition(200)).toBe(true); // line 2, past the gap
+    expect(orch.status).toBe("playing");
+    expect(orch.index).toBe(2);
   });
 });

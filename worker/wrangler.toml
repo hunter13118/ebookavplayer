@@ -42,6 +42,19 @@ queue = "vae-jobs"
 queue = "vae-jobs"
 max_batch_size = 1
 max_batch_timeout = 30
+# A single ingest/continue-extract message runs its ENTIRE book's extraction
+# (every chapter, BookNLP/annotate/LLM enrichment) inside one long-lived
+# handler invocation before acking — tens of minutes for a real LLM-fallback
+# book. Without this, max_concurrency defaults to 1, so a brand-new upload's
+# message sits queued behind whatever book is already extracting, and its
+# "instant mechanical baseline" never actually lands until the earlier job
+# finishes — the exact bug where a fresh epub+m4b upload sat at "queued 0%"
+# for the whole time another book was mid-annotate, so the m4b auto-attach
+# (which only fires once the book is open in the Player) silently never ran.
+# Raising this lets independent books' jobs run side by side instead of
+# strictly FIFO; pack-build messages (VAE_PACK_QUEUE, same physical queue)
+# benefit the same way.
+max_concurrency = 4
 
 # Separate physical queue for parallel per-chapter imaging (see
 # chapter-extract-pipeline.js's onChapterComplete and

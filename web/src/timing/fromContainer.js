@@ -53,11 +53,15 @@ export function resolveChapterDurationsFromContainer(slidesByChapter, containerI
  * @param {(newGaps: Array<{id:string,startMs:number,endMs:number,text:string}>) => void} [input.onGapsReady]
  *        whisperx path only — fires per newly-resolved batch of gap
  *        ("narrator filler") segments.
+ * @param {number} [input.resumeMs]  whisperx path only — resume an
+ *        interrupted alignment from this audio offset. `slidesByChapter`
+ *        must already be trimmed to the not-yet-resolved lines (see
+ *        whisperxAlignerClient.js).
  * @param {typeof fetch} [input.fetchImpl]  Injectable for tests (whisperx path only).
  * @returns {Promise<import('./types.js').TimingResult & { containerInfo: import('./types.js').ContainerInfo }>}
  */
 export async function computeTimelineFromM4b({
-  blob, slidesByChapter, algorithmId, connection, onChapterProgress, onLinesReady, onGapsReady, fetchImpl,
+  blob, slidesByChapter, algorithmId, connection, onChapterProgress, onLinesReady, onGapsReady, resumeMs, fetchImpl,
 }) {
   const containerInfo = await scan(blob);
 
@@ -72,7 +76,7 @@ export async function computeTimelineFromM4b({
     // split like the text-heuristic algorithms below. containerInfo isn't
     // needed here: real boundaries fall out of the acoustic match itself.
     const result = await computeTimeline("whisperx", {
-      blob, slidesByChapter, connection, onChapterProgress, onLinesReady, onGapsReady, fetchImpl,
+      blob, slidesByChapter, connection, onChapterProgress, onLinesReady, onGapsReady, resumeMs, fetchImpl,
     });
     return { ...result, containerInfo };
   }

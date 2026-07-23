@@ -3,9 +3,10 @@
  */
 import { freemiumExtractBook } from "./freemium-extract.js";
 import { finalizeAnalysisChapters } from "./chapter-assign.js";
+import { repairChapterVerbatimCoverage } from "./verbatim-coverage.js";
 
 export async function runBookExtractPipeline(
-  { book_id, title, author, body_text },
+  { book_id, title, author, body_text, text_source = "epub" },
   { env, preferProvider, onProgress, epubChapters },
 ) {
   const { analysis: rawAnalysis, provider, model } = await freemiumExtractBook(
@@ -28,8 +29,25 @@ export async function runBookExtractPipeline(
     });
   }
 
+  // Verbatim-coverage repair — only meaningful when there's a real EPUB's own
+  // verbatim text to diff against (freemiumExtractBook's LLM extraction can
+  // drop words, e.g. an attribution tag, despite being told not to). Uses
+  // epubChapters' own `.text` fields, NOT the raw `body_text` string — that's
+  // formatted with synthetic "## Chapter N: Title" headers (epub-text.js's
+  // formatBodyText) which aren't real prose and would otherwise get
+  // "repaired" back in as bogus narrator lines. Skipped for the m4b-first
+  // transcript path (text_source: "m4b_transcript") — there's no separate
+  // ground truth to diff against there; body_text IS the ASR transcript
+  // already, and there are no epubChapters for it either.
+  if (text_source === "epub" && epubChapters?.length) {
+    const sourceText = epubChapters.map((c) => c.text || "").join("\n\n");
+    const { scenes: repairedScenes } = repairChapterVerbatimCoverage(analysis.scenes || [], sourceText);
+    analysis = { ...analysis, scenes: repairedScenes };
+  }
+
   analysis.title = title;
   analysis.author = author;
+  analysis.text_source = text_source;
   analysis = finalizeAnalysisChapters(analysis, { epubChapters });
   return { analysis, provider, model };
 }

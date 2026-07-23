@@ -192,7 +192,7 @@ export async function handleIllustrationCharacterMatchMessage(message, env) {
 
     const parsed = extractEpubText(bytes);
     const epubExtract = extractEpubImages(bytes, {});
-    const illustrationsByChapterPos = matchIllustrationsToChapters(
+    const { byChapterPos: illustrationsByChapterPos } = matchIllustrationsToChapters(
       parsed.orderedPaths, parsed.chapters, epubExtract.imageMeta,
     );
 

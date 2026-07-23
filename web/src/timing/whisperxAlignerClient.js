@@ -34,6 +34,13 @@ export const WHISPERX_MARKER = "whisperx-forced-align";
 /**
  * Read a fetch Response body as NDJSON, calling onLine for each parsed object
  * as soon as its line completes (not waiting for the whole stream).
+ *
+ * `onLine` is awaited before the next line is processed. Callers persist a
+ * checkpoint per row (Player.jsx's persistProgress) into the SAME local
+ * alignCache record on every chunk — letting two rows' writes race was a
+ * real bug (last-write-wins could silently revert an already-saved line or
+ * drop the resume checkpoint, both indistinguishable from "resume didn't
+ * work" — see transcribeClient.js's identical fix for the M4B-first flow).
  */
 async function readNdjson(res, onLine) {
   const reader = res.body?.getReader?.();
@@ -42,7 +49,7 @@ async function readNdjson(res, onLine) {
     // to reading the whole text at once and splitting it.
     const text = await res.text();
     for (const line of text.split("\n")) {
-      if (line.trim()) onLine(JSON.parse(line));
+      if (line.trim()) await onLine(JSON.parse(line));
     }
     return;
   }
@@ -57,10 +64,10 @@ async function readNdjson(res, onLine) {
     while ((nl = buffer.indexOf("\n")) >= 0) {
       const line = buffer.slice(0, nl);
       buffer = buffer.slice(nl + 1);
-      if (line.trim()) onLine(JSON.parse(line));
+      if (line.trim()) await onLine(JSON.parse(line));
     }
   }
-  if (buffer.trim()) onLine(JSON.parse(buffer));
+  if (buffer.trim()) await onLine(JSON.parse(buffer));
 }
 
 /**
@@ -85,11 +92,18 @@ async function readNdjson(res, onLine) {
  *        audio-only content with no book-line counterpart (an ad-libbed
  *        intro, a spoken chapter title, a publisher bumper). Separate from
  *        onLinesReady since gaps aren't keyed by lineIndex.
+ * @param {number} [input.resumeMs]  Skip straight to this audio offset — a
+ *        prior run already covered everything before it. `slidesByChapter`
+ *        must ALREADY be trimmed to just the not-yet-resolved lines by the
+ *        caller (Player.jsx) — the aligner matches audio against `lines` in
+ *        order from its own index 0, so sending the full book here while
+ *        skipping audio would match mid-book audio against the BEGINNING of
+ *        the book text.
  * @param {typeof fetch} [input.fetchImpl]           Injectable for tests.
  * @returns {Promise<import('./types.js').TimingResult>}
  */
 export async function whisperxAlignerClient({
-  blob, slidesByChapter, connection, onChapterProgress, onLinesReady, onGapsReady, fetchImpl,
+  blob, slidesByChapter, connection, onChapterProgress, onLinesReady, onGapsReady, resumeMs = 0, fetchImpl,
 }) {
   const doFetch = fetchImpl || (typeof fetch !== "undefined" ? fetch : null);
   if (!doFetch) throw new Error("whisperxAlignerClient: no fetch implementation available");
@@ -104,6 +118,7 @@ export async function whisperxAlignerClient({
   const form = new FormData();
   form.append("m4b", blob, "audiobook");
   form.append("lines", JSON.stringify(linesPayload));
+  if (resumeMs > 0) form.append("resume_ms", String(Math.round(resumeMs)));
 
   const base = String(connection.baseUrl).replace(/\/$/, "");
   const res = await doFetch(`${base}/align`, { method: "POST", body: form });
@@ -114,7 +129,7 @@ export async function whisperxAlignerClient({
   let alignMeta = {};
   let sawDone = false;
   let streamErr = null;
-  await readNdjson(res, (row) => {
+  await readNdjson(res, async (row) => {
     if (row.status === "error") {
       streamErr = row.error || "alignment failed";
       return;
@@ -127,7 +142,12 @@ export async function whisperxAlignerClient({
         lineTimingsByIdx.set(line.idx, timing);
         partial[line.idx] = { ...timing, durationMs: timing.endMs - timing.startMs };
       }
-      if (Object.keys(partial).length) onLinesReady?.(partial);
+      // Awaited in order — onLinesReady/onGapsReady/onChapterProgress all
+      // write the SAME local pack record (persistProgress in Player.jsx);
+      // running them concurrently, or racing across rows, risks a stale
+      // read-modify-write clobbering another's write (see readNdjson's doc
+      // comment above).
+      if (Object.keys(partial).length) await onLinesReady?.(partial);
 
       const newGaps = [];
       for (const g of row.gaps || []) {
@@ -135,9 +155,9 @@ export async function whisperxAlignerClient({
         gaps.push(entry);
         newGaps.push(entry);
       }
-      if (newGaps.length) onGapsReady?.(newGaps);
+      if (newGaps.length) await onGapsReady?.(newGaps);
 
-      onChapterProgress?.(row.processed_ms, row.total_ms);
+      await onChapterProgress?.(row.processed_ms, row.total_ms);
       return;
     }
     if (row.status === "done") {

@@ -170,12 +170,14 @@ your own hardware first.
 | Tests fail with "module not found" | Re-run `npm install` at root **and** in `web/` |
 | Web dev server proxy errors | Check `target` in [web/vite.config.js](web/vite.config.js) points at `:8600` |
 | `web/src/timing/whisperxAlignerClient` calls fail | The local align bridge isn't running — see [scripts/local-align-server/server.py](scripts/local-align-server/server.py) (Python, standalone WhisperX ASR server, separate from both the worker and `legacy/server/`) |
+| A book with `VAE_BOOKNLP_URL` set stalls or falls straight through to the LLM path | The local BookNLP server isn't running, or crashed on this chapter — check `scripts/local-booknlp-server/server.py`'s logs; the pipeline treats a BookNLP failure as "fall back to the LLM from here," not a hard error, so the book still finishes, just without the mechanical pass past that point |
 | `.env` edits don't take effect in `dev:worker` | You're editing `worker/.dev.vars` directly — edit root `.env` instead, `sync-dev-vars.mjs` regenerates it |
 | Character merge doesn't persist | Confirm the KV binding in [worker/wrangler.toml:31](worker/wrangler.toml#L31) is configured |
 | A book is stuck showing "Processing" with no progress (e.g. after a dev server restart or crash mid-extraction) | Library → **⋯** → select the book → **Cancel processing**. Can't interrupt an already-running queue consumer invocation (no cancel primitive), but it marks the dead job terminal and resets the book to "partial" (resumable, if any chapters finished) or "error" — see `onCancelProcessingPost` in [worker/api/v1/book-actions.js](worker/api/v1/book-actions.js) |
 | Opening a book that's *actively* extracting (`status: "processing"`) shows a "Caching…" spinner that never resolves | Fixed 2026-07-08 — `openBook` in `web/src/App.jsx` used to always try to build a fresh offline pack first, which queues behind the still-running extraction job (same shared-queue issue as the row above) with no way to finish. Now skipped entirely for a still-processing book — reads directly from the live connection instead, no offline pack needed. See `needsOfflineCache` in [web/src/offline/bookSource.js](web/src/offline/bookSource.js) |
 | Graphify bootstrap fails | Install Ollama locally, or use `--backend web` (needs an API key) |
 | Local Ollama extraction feels slow with `VAE_EXTRACT_CONCURRENCY` > 1 | Expected on Apple Silicon per the benchmark above — lower it to 1, don't raise it |
+| Uploading a new book while another is actively extracting leaves the new one stuck at "queued 0%" for a long time, and a companion `.m4b` picked alongside it doesn't seem to attach | Same shared-`vae-jobs`-queue issue as the two rows above, one level earlier: one ingest/continue-extract message runs its WHOLE book (every chapter, incl. BookNLP/annotate/LLM fallback) before acking, so a second message queues fully behind it — `worker/wrangler.toml`'s `[[queues.consumers]]` for `vae-jobs` sets `max_concurrency = 4` for this reason, but `wrangler dev`'s local queue emulation appears to still process one message at a time regardless (confirmed by testing — a second upload's mechanical baseline never starts while another book's extraction is running, even with this set); the setting is real Cloudflare Queues behavior once actually deployed. For local testing, either wait for the running book to finish/pause it, or expect a fresh upload's "open almost instantly" promise to only hold when the queue is otherwise idle. The `.m4b` itself is never lost, though — `App.jsx`'s `handleEpubUpload` now calls `storeM4b` durably the moment the file is picked (before waiting on the book), and `Player.jsx`'s `loadM4b`-on-mount effect auto-attaches it whenever the book is eventually opened, even across a reload |
 
 ---
 
@@ -220,14 +222,92 @@ Full design: [docs/CHARACTER_ENRICHMENT.md](docs/CHARACTER_ENRICHMENT.md).
 
 ## Optional: local WhisperX align server
 
-Backs the `whisperx-local` timing tier ([web/src/timing/whisperxAlignerClient.js](web/src/timing/whisperxAlignerClient.js)):
+Backs the `whisperx-local` timing tier ([web/src/timing/whisperxAlignerClient.js](web/src/timing/whisperxAlignerClient.js))
+**and** the M4B-first flow's speech-to-text ([docs/M4B_FIRST_FLOW.md](docs/M4B_FIRST_FLOW.md)).
+
+WhisperX pulls torch, which has **no Python 3.14 wheels** — this repo's `venv/`
+is 3.14, so the align server gets its own **3.12** venv via `uv`:
 
 ```bash
-python3 scripts/local-align-server/server.py
-# Exposes GET /health, used by the whisperx-local timing strategy
+cd scripts/local-align-server
+UV_SYSTEM_CERTS=1 uv venv --python 3.12 .venv
+UV_SYSTEM_CERTS=1 uv pip install --python .venv/bin/python whisperx fastapi "uvicorn[standard]" python-multipart
+.venv/bin/python server.py
+# GET /health, POST /align (whisperx-local timing), POST /transcribe (M4B-first) on :7861
 ```
 
+`UV_SYSTEM_CERTS=1` is required on this machine — the MDM intercepts TLS, so uv
+must trust the macOS keychain root. The `libtorchcodec` warning on startup is
+harmless (WhisperX decodes via the ffmpeg CLI). Add `http://127.0.0.1:7861` as a
+connection in Settings > Backends.
+
 Tested by [tests/test_local_align_server.py](tests/test_local_align_server.py).
+
+## Optional: local BookNLP server (mechanical dialogue attribution)
+
+A purely mechanical (zero-LLM-cost) alternative to the freemium LLM
+extraction pass for character/dialogue/narration splitting and speaker
+attribution — real coreference resolution + a small BERT classifier, not a
+language model call. Full design: the plan this implements,
+`~/.claude/plans/declarative-plotting-flamingo.md` ("BookNLP mechanical pass
+(Slice 1)").
+
+BookNLP pulls torch (same "no Python 3.14 wheels" reason as the align server
+above), so it gets its own **3.12** venv via `uv` too:
+
+```bash
+cd scripts/local-booknlp-server
+UV_SYSTEM_CERTS=1 uv venv --python 3.12 .venv
+UV_SYSTEM_CERTS=1 uv pip install --python .venv/bin/python booknlp "setuptools<81" truststore fastapi "uvicorn[standard]" python-multipart
+UV_SYSTEM_CERTS=1 uv pip install --python .venv/bin/python "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"
+.venv/bin/python server.py
+# GET /health, POST /process (per-chapter mechanical dialogue attribution) on :7862
+```
+
+Three real environment issues, all handled by the server itself (see
+`server.py`'s module docstring for the full why):
+- `UV_SYSTEM_CERTS=1` is required for the same MDM-intercepted-TLS reason as
+  the align server, but it only covers `uv`'s own installs — BookNLP's OWN
+  model-download bootstrap (plain `urllib`) needs `truststore` instead
+  (already installed above; `server.py` calls `truststore.inject_into_ssl()`
+  before importing `booknlp`).
+- `setuptools<81` — newer setuptools dropped `pkg_resources`, which BookNLP
+  still imports directly.
+- spaCy's own `en_core_web_sm` model needs installing via its direct wheel
+  URL (above), not `python -m spacy download` — that command's own
+  compatibility check hits the same MDM/TLS wall and can't be routed through
+  `truststore`.
+
+Unlike the align server, this is **not** browser-driven — the worker calls
+it directly from `chapter-extract-pipeline.js` (chapter text already lives
+on the worker; there's no on-device blob to route through the client). Set
+`VAE_BOOKNLP_URL=http://127.0.0.1:7862` in root `.env` (synced to
+`worker/.dev.vars` — see the `.env` troubleshooting row below) to actually
+use it for new/resumed extractions; leaving it unset keeps today's
+mechanical-then-LLM pipeline unchanged. Optionally also add
+`http://127.0.0.1:7862` as a connection in Settings > Backends purely for
+health-check visibility — it has no "role" to assign there, unlike the align
+server's Audiobook-sync picker.
+
+Tested by [tests/test_local_booknlp_server.py](tests/test_local_booknlp_server.py)
+(pure string helpers only — run via the server's own venv:
+`scripts/local-booknlp-server/.venv/bin/python -m pytest tests/test_local_booknlp_server.py`).
+
+### Annotate-in-place LLM enrichment (Phase 2)
+
+For chapters BookNLP doesn't reach (or when `VAE_BOOKNLP_URL` is unset
+entirely), set `VAE_ANNOTATE_LLM=true` to have the LLM enrich chapters
+WITHOUT regenerating text: it only declares the
+character roster and assigns a speaker to each already-split mechanical
+dialogue line by idx, on the exact verbatim lines `mechanical-script.js`
+already produced (including its own quote-boundary splitting — a sentence
+like `Kosuke said, "Let's go."` arrives at the LLM already split into a
+narration line and a dialogue line; the model never re-splits or rewrites
+either). Full per-chapter fallback order: **BookNLP** (if `VAE_BOOKNLP_URL`
+is set) → **annotate** (if `VAE_ANNOTATE_LLM=true`) → **full-regeneration**
+extraction (today's original behavior, always the last resort) — each tier
+stops cleanly at the first chapter it can't handle so the next tier resumes
+exactly where it left off. Off by default, same as `VAE_BOOKNLP_URL`.
 
 ## Optional: local image gen server (`local_sd` tier)
 

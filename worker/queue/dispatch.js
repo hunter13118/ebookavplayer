@@ -118,6 +118,18 @@ export async function onQueueBatch(batch, env) {
 
       }
 
+      if (kind === "ingest-text") {
+
+        await emitStarted(env, message);
+
+        const { handleIngestTextMessage } = await import("./ingest-text-consumer.js");
+
+        await handleIngestTextMessage(message, env);
+
+        continue;
+
+      }
+
       if (kind === "expression-repass") {
 
         await emitStarted(env, message);

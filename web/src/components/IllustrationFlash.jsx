@@ -5,9 +5,13 @@ export const ILLUSTRATION_FLASH_MS = 5000;
 export const ILLUSTRATION_FADE_MS = 500;
 
 /** Full-stage EPUB insert — fade in, hold, fade out. dismissSignal bumps to exit early.
- *  autoDismiss=false keeps the image until tap or dismissSignal (gallery picks). */
+ *  autoDismiss=false keeps the image until tap or dismissSignal (gallery picks).
+ *  holdMs overrides how long the image holds before auto-dismissing (default
+ *  ILLUSTRATION_FLASH_MS) — the reader view's gallery/inline illustrations use
+ *  a longer hold (10s) than cinematic's default 5s, tap/scroll still skips
+ *  early regardless of holdMs. */
 export default function IllustrationFlash({
-  url, lineKey, active, dismissSignal, onDone, onTap, autoDismiss = true,
+  url, lineKey, active, dismissSignal, onDone, onTap, autoDismiss = true, holdMs = ILLUSTRATION_FLASH_MS,
 }) {
   const doneRef = useRef(onDone);
   doneRef.current = onDone;
@@ -39,7 +43,7 @@ export default function IllustrationFlash({
       }, delay);
     };
     if (autoDismiss) {
-      scheduleExit(ILLUSTRATION_FLASH_MS);
+      scheduleExit(holdMs);
     }
 
     return () => {
@@ -47,7 +51,7 @@ export default function IllustrationFlash({
       clearTimeout(exitTimer);
       clearTimeout(hideTimer);
     };
-  }, [active, url, lineKey, autoDismiss]);
+  }, [active, url, lineKey, autoDismiss, holdMs]);
 
   useEffect(() => {
     if (!dismissSignal || !shown) return undefined;
@@ -61,12 +65,23 @@ export default function IllustrationFlash({
 
   if (!shown || !url) return null;
 
+  // Scroll/swipe dismisses just like a tap — "get back to the text sooner"
+  // shouldn't require a precise tap target. Guarded on `opaque` so a fully
+  // faded-out image (already dismissing) doesn't keep re-firing onTap for
+  // every wheel/touch event in the same gesture.
+  const dismissByGesture = (e) => {
+    e.stopPropagation();
+    if (opaque) onTap?.();
+  };
+
   return (
     <div
       className={`vae-illustration-flash${opaque ? " show" : ""}`}
       data-testid="illustration-flash"
       aria-hidden
       onClick={(e) => { e.stopPropagation(); onTap?.(); }}
+      onWheel={dismissByGesture}
+      onTouchMove={dismissByGesture}
     >
       <img src={mediaImageSrc(url)} alt="" draggable={false} />
     </div>
